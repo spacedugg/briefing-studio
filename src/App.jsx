@@ -11,7 +11,7 @@ const inpS = { width: "100%", padding: "12px 16px", borderRadius: 12, border: "1
 
 const HK = "briefing_history", MH = 3;
 function loadH() { try { return JSON.parse(localStorage.getItem(HK) || "[]"); } catch { return []; } }
-function saveH(d) { const h = loadH(); h.unshift({ id: Date.now(), name: d.product?.name || "?", brand: d.product?.brand || "", date: new Date().toLocaleDateString("de-DE"), data: d }); if (h.length > MH) h.pop(); try { localStorage.setItem(HK, JSON.stringify(h)); } catch {} }
+function saveH(d, asin) { const h = loadH(); h.unshift({ id: Date.now(), name: d.product?.name || "?", brand: d.product?.brand || "", asin: asin || d.product?.sku || "", date: new Date().toLocaleDateString("de-DE"), data: d }); if (h.length > MH) h.pop(); try { localStorage.setItem(HK, JSON.stringify(h)); } catch {} }
 
 // ═══════ PROMPT ═══════
 const buildPrompt = (asin, mp, pi, ft) => {
@@ -51,8 +51,10 @@ BEWERTUNGEN:
 
 BILDLOGIK:
 - Main Image: Kein Text. 3 Eyecatcher-Vorschlaege (Verpackung/Props/Badges/Hangtags).
-- PT01: Klickbestaetigung. PT02: Differenzierung. PT03: Traumzustand/Lifestyle.
-- PT04-PT06: Einwandbehandlung.
+- PT01 (WICHTIGSTE REGEL): Das erste Bild nach dem Hauptbild. Der Kunde hat geklickt und muss SOFORT verstehen: 1) Was ist dieses Produkt genau? 2) Welches Problem loest es / welchen Wunschzustand erzeugt es? Die Headline MUSS den STAERKSTEN Kauftrigger aus der Analyse aufgreifen. NICHT irgendein Feature wie Portionsanzahl oder Geschmacksrichtung, sondern DEN Grund warum Kunden kaufen. Beispiel Eistee-Pulver: Wenn der staerkste Kauftrigger "gesunde Alternative zu Softdrinks" ist, dann muss die Headline das widerspiegeln (z.B. "Gesund statt Zucker", "Dein Softdrink-Ersatz"), NICHT "50 Portionen" oder "Pfirsichgeschmack".
+- PT02: Differenzierung. Zweitwichtigstes Kaufargument.
+- PT03: Traumzustand/Lifestyle. Emotional.
+- PT04-PT06: Einwandbehandlung basierend auf negativen Reviews.
 - Bei Lifestyle-Bildern ohne Text-Overlay: concept und visual DETAILLIERT beschreiben.
 
 Negative Reviews: status solved/unclear/neutral + 1-2 Kundenzitate + Implikation.
@@ -82,6 +84,20 @@ async function runAnalysis(asin, mp, pi, ft, onS) {
   try { p = JSON.parse(cl); } catch { const m = cl.match(/\{[\s\S]*\}/); if (m) { try { p = JSON.parse(m[0]); } catch { throw new Error("JSON Parse-Fehler."); } } else throw new Error("Kein JSON."); }
   if (!p.product || !p.images) throw new Error("Schema ungueltig.");
   return p;
+}
+
+// Fetch Amazon listing images as base64
+async function fetchListingImages(asin, marketplace) {
+  if (!asin || !asin.trim()) return [];
+  try {
+    const r = await fetch("/api/fetch-images", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asin: asin.trim(), marketplace }),
+    });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return d.images || [];
+  } catch { return []; }
 }
 
 // ═══════ COMPONENTS ═══════
@@ -131,7 +147,7 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad }) {
               {loading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 10, height: 10, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: 99, animation: "spin 0.7s linear infinite" }} /><span style={{ fontSize: 12, color: V.violet, fontWeight: 600 }}>{status}</span></div>}
             </div>
           </GC>
-          {hist.length > 0 && <GC style={{ padding: 0 }}><div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl></div><div style={{ padding: "8px 12px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 10, cursor: "pointer" }} onClick={() => onLoad(h.data)} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC>}
+          {hist.length > 0 && <GC style={{ padding: 0 }}><div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl></div><div style={{ padding: "8px 12px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 10, cursor: "pointer" }} onClick={() => onLoad(h.data, h.asin)} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC>}
         </div>
       </div>
     </div>
@@ -143,13 +159,14 @@ function OverwriteWarn({ name, onOk, onNo }) {
 }
 
 // ═══════ BILD-BRIEFING ═══════
-function BildBriefing({ D, hlC, setHlC }) {
+function BildBriefing({ D, hlC, setHlC, listingImgs }) {
   const [sel, setSel] = useState(0);
   if (!D.images?.length) return null;
   const img = D.images[sel], te = img?.texts;
   const hls = te?.headlines || (te?.headline ? [te.headline] : []);
   const ci = hlC[img.id] ?? 0, curHl = hls[ci] || hls[0] || "";
   const allTxt = te ? [curHl, te.subheadline, ...(te.bullets || []), ...(te.badges || []), ...(te.callouts || [])].filter(Boolean).join("\n") : "";
+  const curListingImg = listingImgs && listingImgs[sel] ? listingImgs[sel].base64 : null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>{D.images.map((im, i) => {
@@ -163,6 +180,7 @@ function BildBriefing({ D, hlC, setHlC }) {
           {te && <CopyBtn text={allTxt} label="Alle Texte" />}
         </div>
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
+          {curListingImg && <div style={{ ...gS, padding: 12, display: "flex", gap: 14, alignItems: "flex-start" }}><img src={curListingImg} alt={img.label} style={{ width: 80, height: 80, objectFit: "contain", borderRadius: 8, background: "#fff", border: "1px solid rgba(0,0,0,0.06)" }} /><div><Lbl c={V.rose}>Aktuelles Listing-Bild</Lbl><p style={{ fontSize: 11, color: V.textDim, margin: 0, lineHeight: 1.4 }}>So sieht das {img.label} aktuell auf Amazon aus. Das neue Briefing rechts ersetzt dieses Bild.</p></div></div>}
           {img.concept && <div><Lbl c={V.blue}>Bildkonzept</Lbl><p style={{ fontSize: 13, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.concept}</p></div>}
           {img.rationale && <div style={{ background: `${V.violet}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.violet}12` }}><Lbl c={V.violet}>Strategische Begründung</Lbl><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.rationale}</p></div>}
 
@@ -258,73 +276,213 @@ function BriefExport({ D, hlC, onClose }) {
   return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", backdropFilter: "blur(8px)", zIndex: 200, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={onClose}><div style={{ ...glass, width: "100%", maxWidth: 820, maxHeight: "90vh", display: "flex", flexDirection: "column", background: "rgba(255,255,255,0.88)" }} onClick={e => e.stopPropagation()}><div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 16, fontWeight: 800, color: V.ink }}>Designer-Briefing</span><div style={{ display: "flex", gap: 6 }}><button onClick={() => { navigator.clipboard.writeText(t); sc(true); setTimeout(() => sc(false), 2000); }} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: cp ? V.emerald : `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>{cp ? "Kopiert" : "Alles kopieren"}</button><button onClick={onClose} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.5)", color: V.textDim, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>Schließen</button></div></div><div style={{ padding: 18, flex: 1, overflow: "auto" }}><textarea value={t} onChange={e => st(e.target.value)} style={{ width: "100%", minHeight: 500, padding: 18, borderRadius: 14, border: "1px solid rgba(0,0,0,0.06)", background: "rgba(255,255,255,0.5)", fontFamily: "'JetBrains Mono',monospace", fontSize: 12, lineHeight: 1.75, color: V.text, resize: "vertical", outline: "none", boxSizing: "border-box" }} spellCheck={false} /></div></div></div>;
 }
 
-// ═══════ PDF (imported jsPDF) ═══════
-function exportPDF(D) {
+// ═══════ PDF (temoa CI) ═══════
+function exportPDF(D, listingImgs) {
   const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: [338.67, 190.5] });
   const W = 338.67, H = 190.5;
-  const tc = { or: "#FF9903", re: "#FF3130", na: "#023048", ic: "#CEE7F5", bg: "#F8F9FB", tm: "#5A6B80", td: "#8E9AAD", gr: "#1A8754" };
-  const cb = () => { const b = 1.5; pdf.setFillColor(tc.or); pdf.rect(0, H - b, W / 4, b, "F"); pdf.setFillColor(tc.re); pdf.rect(W / 4, H - b, W / 4, b, "F"); pdf.setFillColor(tc.na); pdf.rect(W / 2, H - b, W / 4, b, "F"); pdf.setFillColor(tc.ic); pdf.rect(W * 3 / 4, H - b, W / 4, b, "F"); };
-  const ft = (n, t) => { pdf.setFontSize(6); pdf.setTextColor(tc.td); pdf.text("temoa GmbH", 20, H - 8); pdf.text(n + "/" + t, W - 20, H - 8, { align: "right" }); };
-  const lb = (t, x, y, c) => { pdf.setFontSize(6.5); pdf.setTextColor(c || tc.or); pdf.setFont("helvetica", "bold"); pdf.text(t.toUpperCase(), x, y); };
-  const hd = (t, x, y, sz) => { pdf.setFontSize(sz || 22); pdf.setTextColor(tc.na); pdf.setFont("helvetica", "bold"); pdf.text(String(t || ""), x, y); };
-  const bd = (t, x, y, mw) => { pdf.setFontSize(8); pdf.setTextColor(tc.tm); pdf.setFont("helvetica", "normal"); pdf.text(pdf.splitTextToSize(String(t || ""), mw || 140), x, y); };
-  const rr = (x, y, w, h, r, c) => { pdf.setFillColor(c); pdf.roundedRect(x, y, w, h, r, r, "F"); };
-  const a = D.audience || {}, rv = D.reviews || { positive: [], negative: [] }, k = D.keywords || { volume: [], purchase: [] }, co = D.competitive || { gaps: [] };
+  // temoa CI colors
+  const C = { re: "#FF3130", or: "#FF9903", na: "#023048", lb: "#CEE7F5", bk: "#000000", gr: "#8E9AAD", wh: "#FFFFFF", bg: "#F8F9FB" };
+  // Bottom color bar (4 segments)
+  const colorBar = () => { const b = 2; pdf.setFillColor(C.re); pdf.rect(0, H - b, W / 4, b, "F"); pdf.setFillColor(C.or); pdf.rect(W / 4, H - b, W / 4, b, "F"); pdf.setFillColor(C.na); pdf.rect(W / 2, H - b, W / 4, b, "F"); pdf.setFillColor(C.lb); pdf.rect(W * 3 / 4, H - b, W / 4, b, "F"); };
+  // Top red bar
+  const topBar = () => { pdf.setFillColor(C.re); pdf.rect(0, 0, W, 3, "F"); };
+  // Footer
+  const footer = (n, t) => { pdf.setFontSize(6.5); pdf.setTextColor(C.gr); pdf.text("temoa", 20, H - 8); pdf.text(n + " / " + t, W - 20, H - 8, { align: "right" }); };
+  // Logo dots (simplified: 4 colored squares)
+  const logoDots = (x, y) => { const s = 2.5, g = 0.8; pdf.setFillColor(C.re); pdf.rect(x, y, s, s, "F"); pdf.setFillColor(C.or); pdf.rect(x + s + g, y, s, s, "F"); pdf.setFillColor(C.na); pdf.rect(x, y + s + g, s, s, "F"); pdf.setFillColor(C.lb); pdf.rect(x + s + g, y + s + g, s, s, "F"); };
+  // Shapes as decoration
+  const shapeCircle = (x, y, r, c) => { pdf.setFillColor(c); pdf.circle(x, y, r, "F"); };
+  const shapeHalf = (x, y, r, c) => { pdf.setFillColor(c); pdf.circle(x, y, r, "F"); pdf.setFillColor(C.wh); pdf.rect(x - r, y, r * 2, r, "F"); };
+  // Helpers
+  const h1 = (t, x, y, sz) => { pdf.setFontSize(sz || 28); pdf.setTextColor(C.bk); pdf.setFont("helvetica", "bold"); pdf.text(String(t || ""), x, y); };
+  const h2 = (t, x, y) => { pdf.setFontSize(14); pdf.setTextColor(C.bk); pdf.setFont("helvetica", "bold"); pdf.text(String(t || ""), x, y); };
+  const redText = (t, x, y, sz) => { pdf.setFontSize(sz || 14); pdf.setTextColor(C.re); pdf.setFont("helvetica", "bold"); pdf.text(String(t || ""), x, y); };
+  const body = (t, x, y, mw) => { pdf.setFontSize(9); pdf.setTextColor("#5A6B80"); pdf.setFont("helvetica", "normal"); pdf.text(pdf.splitTextToSize(String(t || ""), mw || 140), x, y); };
+  const label = (t, x, y, c) => { pdf.setFontSize(7); pdf.setTextColor(c || C.or); pdf.setFont("helvetica", "bold"); pdf.text(t.toUpperCase(), x, y); };
+  const pill = (t, x, y, w, h, c) => { pdf.setFillColor(c); pdf.roundedRect(x, y, w, h, 2, 2, "F"); pdf.setFontSize(10); pdf.setTextColor(C.wh); pdf.setFont("helvetica", "bold"); pdf.text(String(t), x + w / 2, y + h / 2 + 3.5, { align: "center" }); };
+  const a = D.audience || {}, rv = D.reviews || { positive: [], negative: [] }, k = D.keywords || { volume: [], purchase: [] }, co = D.competitive || { gaps: [] }, lw = D.listingWeaknesses || [];
+  const hasImgs = listingImgs && listingImgs.length > 0;
+  const TP = hasImgs ? 7 : 6;
 
-  lb("temoa · Datenbasierte Listing-Analyse", 20, 22); hd(D.product?.name, 20, 38, 26); bd(D.product?.position, 20, 48, 240);
-  [{ v: String(rv.positive.length + rv.negative.length), l: "Bewertungsthemen" }, { v: String((k.volume || []).length + (k.purchase || []).length), l: "Keywords" }, { v: String((D.images || []).length), l: "Bildslots" }].forEach((x, i) => { const kx = 20 + i * 70; rr(kx, 90, 62, 36, 3, tc.bg); pdf.setFontSize(18); pdf.setTextColor(tc.or); pdf.setFont("helvetica", "bold"); pdf.text(x.v, kx + 8, 108); pdf.setFontSize(6.5); pdf.setTextColor(tc.tm); pdf.setFont("helvetica", "normal"); pdf.text(x.l, kx + 8, 116); });
-  cb(); ft(1, 5);
+  // ═══ SLIDE 1: Title ═══
+  logoDots(20, H - 16);
+  shapeCircle(W - 40, 50, 45, C.na);
+  shapeCircle(W - 10, H - 20, 35, C.re);
+  h1("Datenbasierte", 50, 75, 36);
+  h1("Listing-Analyse", 50, 95, 36);
+  pdf.setFontSize(14); pdf.setTextColor("#5A6B80"); pdf.setFont("helvetica", "normal");
+  pdf.text(String(D.product?.name || ""), 50, 115);
+  pdf.setFontSize(10); pdf.text(String((D.product?.brand || "") + " | " + (D.product?.marketplace || "")), 50, 125);
+  colorBar(); footer(1, TP);
 
-  pdf.addPage(); lb("Zielgruppe & Kaufausloeser", 20, 22); hd("Was treibt den Kauf?", 20, 36, 20);
-  rr(20, 46, 140, 32, 3, "#ECFDF5"); lb("KERNWUNSCH", 26, 54, tc.gr); bd(a.desire, 26, 60, 128);
-  rr(20, 82, 140, 32, 3, "#FFF0F0"); lb("KERNANGST", 26, 90, tc.re); bd(a.fear, 26, 96, 128);
-  lb("KAUFAUSLOESER", 174, 50, tc.or);
-  (a.triggers || []).slice(0, 6).forEach((t, i) => { pdf.setFontSize(7.5); pdf.setTextColor(tc.or); pdf.setFont("helvetica", "bold"); pdf.text(String(i + 1) + ".", 174, 58 + i * 10); pdf.setTextColor(tc.tm); pdf.setFont("helvetica", "normal"); pdf.text(pdf.splitTextToSize(t, 120), 184, 58 + i * 10); });
-  cb(); ft(2, 5);
+  // ═══ SLIDE 2: Zielgruppe & Kaufauslöser ═══
+  pdf.addPage(); topBar();
+  h1("Zielgruppe &", 20, 28, 24); redText("Kaufauslöser", 126, 28, 24);
+  // Left: Persona box
+  pdf.setFillColor(C.bg); pdf.roundedRect(20, 40, 150, 50, 3, 3, "F");
+  label("PERSONA", 28, 50, C.na); body(a.persona, 28, 56, 134);
+  // Desire/Fear
+  pdf.setFillColor("#ECFDF5"); pdf.roundedRect(20, 96, 150, 22, 3, 3, "F");
+  label("KERNWUNSCH", 28, 106, "#1A8754"); body(a.desire, 28, 112, 134);
+  pdf.setFillColor("#FFF0F0"); pdf.roundedRect(20, 122, 150, 22, 3, 3, "F");
+  label("KERNANGST", 28, 132, C.re); body(a.fear, 28, 138, 134);
+  // Right: Triggers
+  label("KAUFAUSLÖSER", 186, 50, C.or);
+  (a.triggers || []).slice(0, 6).forEach((t, i) => {
+    const ry = 58 + i * 13;
+    pdf.setFontSize(12); pdf.setTextColor(C.or); pdf.setFont("helvetica", "bold"); pdf.text(String(i + 1) + ".", 186, ry);
+    pdf.setFontSize(8.5); pdf.setTextColor(i === 0 ? C.bk : "#5A6B80"); pdf.setFont("helvetica", i === 0 ? "bold" : "normal"); pdf.text(pdf.splitTextToSize(t, 120), 196, ry);
+  });
+  colorBar(); footer(2, TP);
 
-  pdf.addPage(); lb("Bewertungsanalyse", 20, 22); hd("Was Kunden sagen", 20, 36, 20);
-  lb("POSITIV", 20, 50, tc.gr); const mp = Math.max(...rv.positive.map(x => x.pct || 0), 1); rv.positive.slice(0, 5).forEach((x, i) => { const ry = 56 + i * 14; pdf.setFontSize(7); pdf.setTextColor(tc.tm); pdf.setFont("helvetica", "normal"); pdf.text(String(x.theme), 20, ry, { maxWidth: 90 }); rr(115, ry - 3, 40, 3, 1, "#E8EAF0"); rr(115, ry - 3, (x.pct / mp) * 40, 3, 1, tc.gr); pdf.setFontSize(6); pdf.setTextColor(tc.td); pdf.text("~" + x.pct + "%", 158, ry); });
-  lb("NEGATIV", 186, 50, tc.re); const mn = Math.max(...rv.negative.map(x => x.pct || 0), 1); rv.negative.slice(0, 5).forEach((x, i) => { const ry = 56 + i * 14; pdf.setFontSize(7); pdf.setTextColor(tc.tm); pdf.setFont("helvetica", "normal"); pdf.text(String(x.theme), 186, ry, { maxWidth: 90 }); rr(280, ry - 3, 40, 3, 1, "#E8EAF0"); rr(280, ry - 3, (x.pct / mn) * 40, 3, 1, tc.re); pdf.setFontSize(6); pdf.setTextColor(tc.td); pdf.text("~" + x.pct + "%", 323, ry); });
-  cb(); ft(3, 5);
+  // ═══ SLIDE 3: Bewertungen ═══
+  pdf.addPage(); topBar();
+  h1("Bewertungs", 20, 28, 24); redText("analyse", 107, 28, 24);
+  const mp = Math.max(...rv.positive.map(x => x.pct || 0), 1);
+  const mn = Math.max(...rv.negative.map(x => x.pct || 0), 1);
+  label("POSITIV", 20, 46, "#1A8754");
+  rv.positive.slice(0, 6).forEach((x, i) => { const ry = 54 + i * 12; pdf.setFontSize(7.5); pdf.setTextColor("#5A6B80"); pdf.text(String(x.theme), 20, ry, { maxWidth: 80 }); pdf.setFillColor("#E8EAF0"); pdf.roundedRect(105, ry - 3, 50, 4, 1, 1, "F"); pdf.setFillColor("#1A8754"); pdf.roundedRect(105, ry - 3, (x.pct / mp) * 50, 4, 1, 1, "F"); pdf.setFontSize(6.5); pdf.text("~" + x.pct + "%", 158, ry); });
+  label("NEGATIV", 186, 46, C.re);
+  rv.negative.slice(0, 6).forEach((x, i) => { const ry = 54 + i * 12; pdf.setFontSize(7.5); pdf.setTextColor("#5A6B80"); pdf.text(String(x.theme), 186, ry, { maxWidth: 80 }); pdf.setFillColor("#E8EAF0"); pdf.roundedRect(270, ry - 3, 50, 4, 1, 1, "F"); pdf.setFillColor(C.re); pdf.roundedRect(270, ry - 3, (x.pct / mn) * 50, 4, 1, 1, "F"); pdf.setFontSize(6.5); pdf.text("~" + x.pct + "%", 323, ry); });
+  // Listing weaknesses if present
+  if (lw.length > 0) { label("LISTING-SCHWACHSTELLEN", 20, 136, C.re); lw.slice(0, 3).forEach((w, i) => { pdf.setFontSize(7.5); pdf.setTextColor(C.bk); pdf.setFont("helvetica", "bold"); pdf.text(String(w.weakness), 20, 144 + i * 10, { maxWidth: 140 }); pdf.setTextColor(C.or); pdf.setFont("helvetica", "normal"); pdf.text("→ " + String(w.briefingAction), 165, 144 + i * 10, { maxWidth: 150 }); }); }
+  colorBar(); footer(3, TP);
 
-  pdf.addPage(); lb("Keywords & Differenzierung", 20, 22); hd("Was Kunden suchen", 20, 36, 20);
-  lb("TOP KEYWORDS", 20, 50, tc.na); (k.volume || []).slice(0, 8).forEach((kw, i) => { const col = i % 4, row = Math.floor(i / 4); rr(20 + col * 38, 56 + row * 12, 35, 8, 2, "#0230480D"); pdf.setFontSize(6.5); pdf.setTextColor(tc.na); pdf.setFont("helvetica", "bold"); pdf.text(String(kw.kw), 22 + col * 38, 56 + row * 12 + 5.5); });
-  lb("KAUFABSICHT", 20, 88, tc.or); (k.purchase || []).slice(0, 6).forEach((kw, i) => { const col = i % 3, row = Math.floor(i / 3); rr(20 + col * 52, 94 + row * 12, 49, 8, 2, "#FF990310"); pdf.setFontSize(6.5); pdf.setTextColor(tc.or); pdf.setFont("helvetica", "bold"); pdf.text(String(kw.kw), 22 + col * 52, 94 + row * 12 + 5.5, { maxWidth: 45 }); });
-  lb("MARKTLUECKEN", 200, 50, tc.na); (co.gaps || []).slice(0, 4).forEach((g, i) => { pdf.setFontSize(7); pdf.setTextColor(tc.tm); pdf.setFont("helvetica", "normal"); pdf.text(pdf.splitTextToSize(g, 120), 207, 58 + i * 14); });
-  cb(); ft(4, 5);
+  // ═══ SLIDE 4: Keywords ═══
+  pdf.addPage(); topBar();
+  h1("Keywords &", 20, 28, 24); redText("Differenzierung", 110, 28, 24);
+  label("TOP KEYWORDS (SUCHVOLUMEN)", 20, 46, C.na);
+  (k.volume || []).slice(0, 10).forEach((kw, i) => { const col = i % 5, row = Math.floor(i / 5); pdf.setFillColor(C.na + "12"); pdf.roundedRect(20 + col * 60, 52 + row * 14, 56, 10, 2, 2, "F"); pdf.setFontSize(7); pdf.setTextColor(C.na); pdf.setFont("helvetica", "bold"); pdf.text(String(kw.kw), 24 + col * 60, 52 + row * 14 + 6.5, { maxWidth: 52 }); });
+  label("KAUFABSICHT", 20, 88, C.or);
+  (k.purchase || []).slice(0, 8).forEach((kw, i) => { const col = i % 4, row = Math.floor(i / 4); pdf.setFillColor(C.or + "12"); pdf.roundedRect(20 + col * 75, 94 + row * 14, 71, 10, 2, 2, "F"); pdf.setFontSize(7); pdf.setTextColor(C.or); pdf.setFont("helvetica", "bold"); pdf.text(String(kw.kw), 24 + col * 75, 94 + row * 14 + 6.5, { maxWidth: 67 }); });
+  label("MARKTLÜCKEN", 20, 128, C.na);
+  (co.gaps || []).slice(0, 4).forEach((g, i) => { pdf.setFontSize(8); pdf.setTextColor(C.or); pdf.setFont("helvetica", "bold"); pdf.text("◆", 20, 136 + i * 12); pdf.setTextColor("#5A6B80"); pdf.setFont("helvetica", "normal"); pdf.text(pdf.splitTextToSize(g, 280), 28, 136 + i * 12); });
+  colorBar(); footer(4, TP);
 
-  pdf.addPage(); lb("Bildstrategie", 20, 22); hd((D.images || []).length + " Bilder. Jedes datenbasiert.", 20, 36, 20);
-  (D.images || []).forEach((im, i) => { const col = i % 4, row = Math.floor(i / 4), bx = 20 + col * 76, by = 48 + row * 50; rr(bx, by, 72, 44, 3, tc.bg); pdf.setFontSize(7); pdf.setTextColor(tc.or); pdf.setFont("helvetica", "bold"); pdf.text(String(im.label || ""), bx + 6, by + 10); pdf.setFontSize(6); pdf.setTextColor(tc.na); pdf.text(String(im.role || ""), bx + 6, by + 16); pdf.setFontSize(6.5); pdf.setTextColor(tc.tm); pdf.setFont("helvetica", "normal"); const hl = im.texts?.headlines?.[0] || im.texts?.headline || "Nur visuell"; pdf.text(pdf.splitTextToSize(hl, 60), bx + 6, by + 24); });
-  rr(20, 150, W - 40, 24, 3, "#EBF3F8"); pdf.setFontSize(8); pdf.setTextColor(tc.na); pdf.setFont("helvetica", "normal"); pdf.text("Jedes Bild basiert auf Datenanalyse: Bewertungen, Keywords, Wettbewerb.", 28, 164, { maxWidth: W - 56 });
-  cb(); ft(5, 5);
-  pdf.save("temoa_analyse_" + (D.product?.sku || "export") + ".pdf");
+  // ═══ SLIDE 5: Bildstrategie ═══
+  pdf.addPage(); topBar();
+  h1("Bild", 20, 28, 24); redText("strategie", 52, 28, 24);
+  body((D.images || []).length + " datenbasierte Bilder für maximale Conversion", 20, 38, 300);
+  (D.images || []).forEach((im, i) => {
+    const col = i % 4, row = Math.floor(i / 4);
+    const bx = 20 + col * 78, by = 48 + row * 58;
+    const bgc = i === 0 ? C.re : [C.or, C.na, C.lb, C.re, C.or, C.na, C.lb][i] || C.bg;
+    pdf.setFillColor(bgc); pdf.roundedRect(bx, by, 74, 52, 3, 3, "F");
+    pdf.setFontSize(9); pdf.setTextColor(C.wh); pdf.setFont("helvetica", "bold"); pdf.text(String(im.label || ""), bx + 6, by + 12);
+    pdf.setFontSize(6.5); pdf.text(String(im.role || ""), bx + 6, by + 18);
+    pdf.setFontSize(7); pdf.setFont("helvetica", "normal");
+    const hl = im.texts?.headlines?.[0] || im.texts?.headline || "Nur visuell";
+    pdf.text(pdf.splitTextToSize(hl, 62), bx + 6, by + 26);
+  });
+  colorBar(); footer(5, TP);
+
+  // ═══ SLIDE 6 (conditional): Aktuelles Listing — Bilder ═══
+  if (hasImgs) {
+    pdf.addPage(); topBar();
+    h1("Aktuelles", 20, 28, 24); redText("Listing", 100, 28, 24);
+    body("Aktuelle Amazon-Galleriebilder des Produkts", 20, 38, 300);
+
+    const imgs = listingImgs.slice(0, 7);
+    // Layout: up to 7 images in a grid
+    // Row 1: Main image large + 3 small
+    // Row 2: 3 small
+    const labels = ["Main", "PT01", "PT02", "PT03", "PT04", "PT05", "PT06"];
+
+    if (imgs.length > 0) {
+      // Main image — large on the left
+      try {
+        const mainImg = imgs[0];
+        if (mainImg.base64) {
+          const fmt = mainImg.base64.includes("image/png") ? "PNG" : "JPEG";
+          pdf.addImage(mainImg.base64, fmt, 20, 46, 72, 72);
+          pdf.setFontSize(7); pdf.setTextColor(C.re); pdf.setFont("helvetica", "bold");
+          pdf.text("Main Image", 20, 123);
+        }
+      } catch {}
+
+      // PT01-PT03 — right of main
+      for (let i = 1; i <= 3 && i < imgs.length; i++) {
+        try {
+          const img = imgs[i];
+          if (img.base64) {
+            const fmt = img.base64.includes("image/png") ? "PNG" : "JPEG";
+            const ix = 100 + (i - 1) * 56;
+            pdf.addImage(img.base64, fmt, ix, 46, 50, 50);
+            pdf.setFontSize(6.5); pdf.setTextColor(C.na); pdf.setFont("helvetica", "bold");
+            pdf.text(labels[i] || "", ix, 100);
+          }
+        } catch {}
+      }
+
+      // PT04-PT06 — bottom row
+      for (let i = 4; i <= 6 && i < imgs.length; i++) {
+        try {
+          const img = imgs[i];
+          if (img.base64) {
+            const fmt = img.base64.includes("image/png") ? "PNG" : "JPEG";
+            const ix = 100 + (i - 4) * 56;
+            pdf.addImage(img.base64, fmt, ix, 106, 50, 50);
+            pdf.setFontSize(6.5); pdf.setTextColor(C.na); pdf.setFont("helvetica", "bold");
+            pdf.text(labels[i] || "", ix, 160);
+          }
+        } catch {}
+      }
+    }
+
+    colorBar(); footer(6, TP);
+  }
+
+  // ═══ LAST SLIDE: Nächste Schritte ═══
+  pdf.addPage(); topBar();
+  shapeCircle(W - 40, H - 30, 40, C.na);
+  shapeCircle(W - 90, 30, 25, C.re);
+  h1("Nächste", 40, 75, 32); h1("Schritte", 40, 95, 32);
+  const steps = ["Briefing-Freigabe durch Kunden", "Bildproduktion durch Design-Team", "A/B Testing & Optimierung"];
+  steps.forEach((s, i) => { pdf.setFontSize(11); pdf.setTextColor(C.or); pdf.setFont("helvetica", "bold"); pdf.text(String(i + 1) + ".", 40, 116 + i * 14); pdf.setTextColor("#5A6B80"); pdf.setFont("helvetica", "normal"); pdf.text(s, 52, 116 + i * 14); });
+  logoDots(20, H - 16);
+  colorBar(); footer(TP, TP);
+
+  pdf.save("temoa_analyse_" + (D.product?.sku || D.product?.name?.replace(/\s+/g, "_") || "export") + ".pdf");
 }
 
 // ═══════ MAIN ═══════
 const TABS = [{ id: "b", l: "Bild-Briefing" }, { id: "r", l: "Bewertungen" }, { id: "a", l: "Analyse" }];
 export default function App() {
-  const [data, setData] = useState(null), [tab, setTab] = useState("b"), [brandLogo, setBL] = useState(null), [showExp, setSE] = useState(false), [pdfL, setPL] = useState(false), [loading, setL] = useState(false), [status, setSt] = useState(""), [error, setE] = useState(null), [showNew, setSN] = useState(false), [pending, setP] = useState(null), [hlC, setHlC] = useState({});
+  const [data, setData] = useState(null), [tab, setTab] = useState("b"), [brandLogo, setBL] = useState(null), [showExp, setSE] = useState(false), [pdfL, setPL] = useState(false), [loading, setL] = useState(false), [status, setSt] = useState(""), [error, setE] = useState(null), [showNew, setSN] = useState(false), [pending, setP] = useState(null), [hlC, setHlC] = useState({}), [curAsin, setCurAsin] = useState(""), [showHist, setShowHist] = useState(false), [listingImgs, setListingImgs] = useState([]);
   const fR = useRef(null);
-  const go = useCallback(async (a, m, p, f) => { setL(true); setE(null); setSt("Starte..."); try { const r = await runAnalysis(a, m, p, f, setSt); setData(r); setTab("b"); setSN(false); setHlC({}); saveH(r); } catch (e) { setE(e.message); } setL(false); setSt(""); }, []);
+  const go = useCallback(async (a, m, p, f) => {
+    setL(true); setE(null); setSt("Starte...");
+    try {
+      // Run analysis and image fetch in parallel
+      const [result, imgs] = await Promise.all([
+        runAnalysis(a, m, p, f, setSt),
+        a && a.trim() ? (setSt("Lade Listing-Bilder..."), fetchListingImages(a, m)) : Promise.resolve([]),
+      ]);
+      setData(result); setTab("b"); setSN(false); setHlC({}); setCurAsin(a || ""); setListingImgs(imgs); saveH(result, a);
+    } catch (e) { setE(e.message); }
+    setL(false); setSt("");
+  }, []);
   const goNew = useCallback((a, m, p, f) => { data ? setP({ a, m, p, f }) : go(a, m, p, f); }, [data, go]);
-  if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={d => { setData(d); setTab("b"); setHlC({}); }} />;
+  if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setCurAsin(asin || ""); }} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
       <div style={{ ...glass, position: "sticky", top: 0, zIndex: 100, borderRadius: 0, borderLeft: "none", borderRight: "none", borderTop: "none" }}><div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", height: 58, flexWrap: "wrap", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}><div style={{ background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontSize: 18, fontWeight: 900 }}>Briefing Studio</div><div style={{ width: 1, height: 22, background: "rgba(0,0,0,0.1)" }} /><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 700, color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{data.product?.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{data.product?.brand}</div></div></div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}><div style={{ background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontSize: 18, fontWeight: 900 }}>Briefing Studio</div><div style={{ width: 1, height: 22, background: "rgba(0,0,0,0.1)" }} /><div style={{ minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 700, color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{data.product?.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{data.product?.brand}{curAsin ? ` · ${curAsin}` : ""}</div></div></div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
             <button onClick={() => setSN(true)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Neues Briefing</button>
+            <button onClick={() => setShowHist(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, position: "relative" }}>Verlauf</button>
             <input ref={fR} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = ev => setBL(ev.target.result); r.readAsDataURL(f); } }} />
             <button onClick={() => fR.current?.click()} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>{brandLogo ? "Logo ändern" : "Kundenlogo"}</button>
             <button onClick={() => setSE(true)} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30` }}>Designer-Briefing</button>
-            <button onClick={() => { setPL(true); try { exportPDF(data); } catch (e) { alert("PDF: " + e.message); } setPL(false); }} style={{ ...gS, padding: "8px 14px", fontSize: 10, fontWeight: 700, color: V.textMed, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Kunden-PDF</button>
+            <button onClick={() => { setPL(true); try { exportPDF(data, listingImgs); } catch (e) { alert("PDF: " + e.message); } setPL(false); }} style={{ ...gS, padding: "8px 14px", fontSize: 10, fontWeight: 700, color: V.textMed, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Kunden-PDF</button>
           </div>
         </div>
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
       </div></div>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 80px", position: "relative", zIndex: 1 }}>
-        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} />}
+        {showHist && (() => { const hist = loadH(); return hist.length > 0 ? <GC style={{ padding: 0, marginBottom: 14 }}><div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl><button onClick={() => setShowHist(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div><div style={{ padding: "6px 10px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px", borderRadius: 10, cursor: "pointer" }} onClick={() => { setData(h.data); setTab("b"); setHlC({}); setCurAsin(h.asin || ""); setShowHist(false); }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC> : <GC style={{ padding: 16, marginBottom: 14, textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Noch keine gespeicherten Briefings.</span></GC>; })()}
+        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} listingImgs={listingImgs} />}
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} />}
       </div>
