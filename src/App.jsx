@@ -14,12 +14,25 @@ function loadH() { try { return JSON.parse(localStorage.getItem(HK) || "[]"); } 
 function saveH(d, asin) { const h = loadH(); h.unshift({ id: Date.now(), name: d.product?.name || "?", brand: d.product?.brand || "", asin: asin || d.product?.sku || "", date: new Date().toLocaleDateString("de-DE"), data: d }); if (h.length > MH) h.pop(); try { localStorage.setItem(HK, JSON.stringify(h)); } catch {} }
 
 // ═══════ PROMPT ═══════
-const buildPrompt = (asin, mp, pi, ft) => {
+const buildPrompt = (asin, mp, pi, ft, productData) => {
   const hasA = asin && asin.trim();
+  const pd = productData || {};
+  let scraped = "";
+  if (pd.title || pd.brand || pd.price || pd.bullets?.length) {
+    scraped = "\n\nGESCRAPTE AMAZON-DATEN (echte Listing-Daten, bereits verifiziert):\n";
+    if (pd.title) scraped += `Titel: ${pd.title}\n`;
+    if (pd.brand) scraped += `Marke: ${pd.brand}\n`;
+    if (pd.price) scraped += `Preis: ${pd.price}\n`;
+    if (pd.rating) { scraped += `Bewertung: ${pd.rating}/5`; if (pd.reviewCount) scraped += ` (${pd.reviewCount} Bewertungen)`; scraped += "\n"; }
+    if (pd.bsr) { scraped += `Bestseller-Rang: #${pd.bsr}`; if (pd.category) scraped += ` in ${pd.category}`; scraped += "\n"; }
+    if (pd.bullets?.length) scraped += `Bullet Points:\n${pd.bullets.map(b => "- " + b).join("\n")}\n`;
+    if (pd.description) scraped += `Beschreibung: ${pd.description.substring(0, 500)}\n`;
+    scraped += "\nNutze diese echten Daten als Basis fuer die Analyse. Recherchiere zusaetzlich Wettbewerber und Kategorie-Reviews.\n";
+  }
   return `Du bist ein erfahrener Amazon Listing Analyst. Analysiere gruendlich mit Web Search und liefere NUR valides JSON.
 
 INPUT: ${hasA ? "ASIN: " + asin + " auf " : ""}${mp || "Amazon.de"}
-${pi ? "Produkt: " + pi : ""}${ft ? "\nZusatz: " + ft : ""}
+${pi ? "Produkt: " + pi : ""}${ft ? "\nZusatz: " + ft : ""}${scraped}
 
 SCHRITTE: 1) Produkt+Wettbewerber suchen 2) Kategorie-Reviews analysieren 3) Keywords recherchieren ${hasA ? "4) Listing-Schwachstellen finden " : ""}5) 7-Bild-Briefing
 
@@ -67,37 +80,78 @@ ANTWORT: NUR JSON. Keine Backticks. Kein Markdown.
 {"product":{"name":"","brand":"","sku":"","marketplace":"","category":"","price":"","position":""},"audience":{"persona":"","desire":"","fear":"","triggers":["wichtigster zuerst"],"balance":""},"listingWeaknesses":${hasA ? '[{"weakness":"","impact":"high|medium|low","briefingAction":""}]' : 'null'},"reviews":{"source":"","estimated":true,"positive":[{"theme":"","pct":0}],"negative":[{"theme":"","pct":0,"quotes":[""],"status":"solved","implication":""}]},"keywords":{"volume":[{"kw":"","used":true}],"purchase":[{"kw":"","used":false}],"badges":[{"kw":"","note":"","requiresApplication":true}]},"competitive":{"patterns":"","gaps":[""]},"images":[{"id":"main","label":"Main Image","role":"SERP/CTR","concept":"english - DETAILLIERT","rationale":"english","eyecatchers":[{"idea":"deutsch","risk":"low|medium"},{"idea":"","risk":""},{"idea":"","risk":""}],"texts":null,"visual":"english - DETAILLIERT"},{"id":"pt01","label":"PT01","role":"","concept":"english","rationale":"english","texts":{"headlines":["Feature direkt","Kundenvorteil","Kreativ"],"subheadline":"oder null","bullets":["oder null"],"badges":["oder null"],"callouts":["oder null"],"footnotes":["*text oder null"]},"visual":"english"},{"id":"pt02","label":"PT02","role":"","concept":"","rationale":"","texts":{"headlines":["","",""],"subheadline":"","bullets":null,"badges":null,"callouts":null,"footnotes":null},"visual":""},{"id":"pt03","label":"PT03","role":"","concept":"DETAILLIERT wenn Lifestyle","rationale":"","texts":{"headlines":["","",""],"subheadline":null,"bullets":null,"badges":null,"callouts":null,"footnotes":null},"visual":"DETAILLIERT wenn Lifestyle"},{"id":"pt04","label":"PT04","role":"","concept":"","rationale":"","texts":{"headlines":["","",""],"subheadline":"","bullets":[""],"badges":null,"callouts":null,"footnotes":null},"visual":""},{"id":"pt05","label":"PT05","role":"","concept":"","rationale":"","texts":{"headlines":["","",""],"subheadline":"","bullets":null,"badges":null,"callouts":null,"footnotes":null},"visual":""},{"id":"pt06","label":"PT06","role":"","concept":"","rationale":"","texts":{"headlines":["","",""],"subheadline":"","bullets":[""],"badges":[""],"callouts":null,"footnotes":null},"visual":""}]}`;
 };
 
+// ═══════ JSON EXTRACTION ═══════
+function extractJSON(text) {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\" && inStr) { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === "{") depth++;
+    if (c === "}") { depth--; if (depth === 0) return text.substring(start, i + 1); }
+  }
+  return null;
+}
+
 // ═══════ API ═══════
-async function runAnalysis(asin, mp, pi, ft, onS) {
-  onS("Suche Produktdaten...");
+async function runAnalysis(asin, mp, pi, ft, onS, productData) {
+  onS("Sende Analyse-Anfrage...");
   let r;
-  try { r = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 8000, messages: [{ role: "user", content: buildPrompt(asin, mp, pi, ft) }], tools: [{ type: "web_search_20250305", name: "web_search" }] }) }); }
-  catch { throw new Error("Netzwerkfehler: API nicht erreichbar."); }
+  try {
+    r = await fetch("/api/analyze", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 16000,
+        system: "Du bist ein Amazon Listing Analyst API. Antworte IMMER ausschliesslich mit validem JSON. Kein Markdown, keine Codeblöcke, kein erklaerter Text vor oder nach dem JSON. Deine Antwort MUSS mit { beginnen und mit } enden.",
+        messages: [{ role: "user", content: buildPrompt(asin, mp, pi, ft, productData) }],
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
+      }),
+    });
+  } catch { throw new Error("Netzwerkfehler: API nicht erreichbar."); }
   if (!r.ok) { let m = "API " + r.status; try { const e = await r.json(); m += ": " + (e.error?.message || ""); } catch {} throw new Error(m); }
-  onS("Analysiere Bewertungen...");
+  onS("Analysiere Ergebnisse...");
   const d = await r.json();
-  const txt = d.content?.map(i => i.type === "text" ? i.text : "").filter(Boolean).join("\n");
-  if (!txt) throw new Error("Keine Antwort.");
+  if (d.stop_reason === "max_tokens") throw new Error("Antwort wurde abgeschnitten (Token-Limit). Bitte versuche es erneut.");
+  const textBlocks = (d.content || []).filter(i => i.type === "text").map(i => i.text).filter(Boolean);
+  if (!textBlocks.length) throw new Error("Keine Antwort erhalten.");
   onS("Erstelle Briefing...");
-  const cl = txt.replace(/```json|```/g, "").trim();
-  let p;
-  try { p = JSON.parse(cl); } catch { const m = cl.match(/\{[\s\S]*\}/); if (m) { try { p = JSON.parse(m[0]); } catch { throw new Error("JSON Parse-Fehler."); } } else throw new Error("Kein JSON."); }
-  if (!p.product || !p.images) throw new Error("Schema ungueltig.");
+  let p = null;
+  // Strategy 1: Try each text block individually
+  for (const block of textBlocks) {
+    const cl = block.replace(/```json\s*|```\s*/g, "").trim();
+    try { p = JSON.parse(cl); break; } catch {}
+    const ex = extractJSON(cl);
+    if (ex) { try { p = JSON.parse(ex); break; } catch {} }
+  }
+  // Strategy 2: Join all blocks and try
+  if (!p) {
+    const full = textBlocks.join("\n").replace(/```json\s*|```\s*/g, "").trim();
+    try { p = JSON.parse(full); } catch {}
+    if (!p) { const ex = extractJSON(full); if (ex) { try { p = JSON.parse(ex); } catch {} } }
+    if (!p) { const m = full.match(/\{[\s\S]*\}/); if (m) { try { p = JSON.parse(m[0]); } catch {} } }
+  }
+  if (!p) throw new Error("JSON konnte nicht geparst werden. Bitte versuche es erneut.");
+  if (!p.product || !p.images) throw new Error("Unvollstaendige Antwort: 'product' oder 'images' fehlt. Bitte erneut versuchen.");
   return p;
 }
 
-// Fetch Amazon listing images as base64
-async function fetchListingImages(asin, marketplace) {
-  if (!asin || !asin.trim()) return [];
+// Scrape Amazon product data + images
+async function scrapeProduct(asin, marketplace) {
+  if (!asin || !asin.trim()) return { images: [], productData: {} };
   try {
     const r = await fetch("/api/fetch-images", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ asin: asin.trim(), marketplace }),
     });
-    if (!r.ok) return [];
+    if (!r.ok) return { images: [], productData: {} };
     const d = await r.json();
-    return d.images || [];
-  } catch { return []; }
+    return { images: d.images || [], productData: d.productData || {} };
+  } catch { return { images: [], productData: {} }; }
 }
 
 // ═══════ COMPONENTS ═══════
@@ -453,12 +507,12 @@ export default function App() {
   const go = useCallback(async (a, m, p, f) => {
     setL(true); setE(null); setSt("Starte...");
     try {
-      // Run analysis and image fetch in parallel
-      const [result, imgs] = await Promise.all([
-        runAnalysis(a, m, p, f, setSt),
-        a && a.trim() ? (setSt("Lade Listing-Bilder..."), fetchListingImages(a, m)) : Promise.resolve([]),
-      ]);
-      setData(result); setTab("b"); setSN(false); setHlC({}); setCurAsin(a || ""); setListingImgs(imgs); saveH(result, a);
+      // Step 1: Scrape Amazon data first (if ASIN provided)
+      let scrapeResult = { images: [], productData: {} };
+      if (a && a.trim()) { setSt("Lade Amazon-Daten..."); scrapeResult = await scrapeProduct(a, m); }
+      // Step 2: Run AI analysis with scraped product data
+      const result = await runAnalysis(a, m, p, f, setSt, scrapeResult.productData);
+      setData(result); setTab("b"); setSN(false); setHlC({}); setCurAsin(a || ""); setListingImgs(scrapeResult.images); saveH(result, a);
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, []);
