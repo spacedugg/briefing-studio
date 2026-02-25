@@ -19,65 +19,30 @@ const buildPrompt = (asin, mp, pi, ft, productData) => {
   const pd = productData || {};
   let scraped = "";
   if (pd.title || pd.brand || pd.price || pd.bullets?.length) {
-    scraped = "\n\nGESCRAPTE AMAZON-DATEN (echte Listing-Daten, bereits verifiziert):\n";
+    scraped = "\nAMAZON-DATEN:\n";
     if (pd.title) scraped += `Titel: ${pd.title}\n`;
     if (pd.brand) scraped += `Marke: ${pd.brand}\n`;
     if (pd.price) scraped += `Preis: ${pd.price}\n`;
-    if (pd.rating) { scraped += `Bewertung: ${pd.rating}/5`; if (pd.reviewCount) scraped += ` (${pd.reviewCount} Bewertungen)`; scraped += "\n"; }
-    if (pd.bsr) { scraped += `Bestseller-Rang: #${pd.bsr}`; if (pd.category) scraped += ` in ${pd.category}`; scraped += "\n"; }
-    if (pd.bullets?.length) scraped += `Bullet Points:\n${pd.bullets.map(b => "- " + b).join("\n")}\n`;
-    if (pd.description) scraped += `Beschreibung: ${pd.description.substring(0, 500)}\n`;
-    scraped += "\nNutze diese echten Daten als Basis fuer die Analyse. Recherchiere zusaetzlich Wettbewerber und Kategorie-Reviews.\n";
+    if (pd.rating) scraped += `Bewertung: ${pd.rating}/5 (${pd.reviewCount || "?"} Reviews)\n`;
+    if (pd.bsr) scraped += `BSR: #${pd.bsr}${pd.category ? " in " + pd.category : ""}\n`;
+    if (pd.bullets?.length) scraped += `Bullets:\n${pd.bullets.slice(0, 5).map(b => "- " + b).join("\n")}\n`;
+    if (pd.description) scraped += `Beschreibung: ${pd.description.substring(0, 300)}\n`;
   }
-  return `Du bist ein erfahrener Amazon Listing Analyst. Analysiere gruendlich mit Web Search und liefere NUR valides JSON.
+  return `Analysiere ${hasA ? "ASIN " + asin + " auf " : ""}${mp || "Amazon.de"}. Erstelle 7-Bild-Briefing.
+${pi ? "Produkt: " + pi : ""}${ft ? "\nHinweise: " + ft : ""}${scraped}
+REGELN:
+- Headlines: max 25 Zeichen, 3 Varianten (1:Feature/USP direkt, 2:Kundenvorteil, 3:Kreativ). Keine Kommas/Gedankenstriche. Konkret statt abstrakt.
+- Bildtexte DE, Concept/Rationale/Visual EN. Keywords integrieren.
+- Lifestyle ohne Text-Overlay: concept+visual DETAILLIERT (Szenerie, Personen, Stimmung, Kamera).
+- Badges als eigenes Array. Fussnoten mit * kennzeichnen.
+- Reviews: relative %, absteigend, deutlich unterschiedlich (nicht alle 30-35%).
+- Blacklist: vulgaer, negative Laendernennung, Wettbewerber-Vergleiche, unbelegte Statistiken.
+- Siegel: nur beantragungspflichtige. Kaufausloeser absteigend. Keywords: used true/false.
 
-INPUT: ${hasA ? "ASIN: " + asin + " auf " : ""}${mp || "Amazon.de"}
-${pi ? "Produkt: " + pi : ""}${ft ? "\nZusatz: " + ft : ""}${scraped}
+BILDER: Main(kein Text, 3 Eyecatcher mit risk:low/medium), PT01(STAERKSTER Kauftrigger), PT02(Differenzierung), PT03(Lifestyle/emotional), PT04-06(Einwandbehandlung neg. Reviews).
 
-SCHRITTE: 1) Produkt+Wettbewerber suchen 2) Kategorie-Reviews analysieren 3) Keywords recherchieren ${hasA ? "4) Listing-Schwachstellen finden " : ""}5) 7-Bild-Briefing
-
-HEADLINE-REGELN (SEHR WICHTIG):
-- Max 25 Zeichen, keine Kommas, keine Gedankenstriche
-- 3 Varianten pro Bild mit VERSCHIEDENEN Strategien:
-  * Variante 1: Feature/USP DIREKT benennen (z.B. "Kapseln statt Pulver", "60kg Tragkraft", "Hergestellt in Koeln")
-  * Variante 2: Konkreter Kundenvorteil, der in 1 Sekunde klar wird (z.B. "Kein Abmessen noetig", "Standfest auf Fliesen")
-  * Variante 3: Emotionaler/kreativer Ansatz, NUR wenn sofort verstaendlich
-- REGEL: Im Zweifel Feature direkt nennen. Wenn der Vorteil zu weit hergeholt ist oder nicht in 1 Sekunde klar wird, lieber das Feature/den USP direkt als Headline verwenden.
-- Vermeide abstrakte/vage Headlines wie "Muehelose Power", "Einfach stark", "Dein Vorteil"
-
-TEXTREGEL-BLACKLIST (niemals verwenden):
-- Keine vulgaeren Ausdruecke
-- Niemals "China" oder andere Laendernamen in negativem Kontext
-- Keine reisserischen Vergleiche mit Wettbewerbern
-- Keine unbelegten Prozentzahlen oder Statistiken in Bildtexten, AUSSER mit korrekter Fussnote
-- Bei Fussnoten: Sternchen (*) direkt an die Aussage UND den Fussnotentext am Ende, z.B. "78% mehr Ausdauer*" mit Fussnote "*bei kurzen intensiven Belastungen, Studie XY"
-
-BILDTEXTE ALLGEMEIN:
-- Alle Bildtexte DEUTSCH, Concept/Rationale/Visual Notes ENGLISCH
-- Keywords natuerlich integrieren
-- Wenn ein Bild NUR eine Headline hat und keine weiteren Texte (Lifestyle-Bild), dann MUSS im "concept" und "visual" Feld GENAU beschrieben werden was im Lifestyle-Bild zu sehen sein soll (Szenerie, Personen, Stimmung, Kamerawinkel etc.)
-- Badges IMMER als eigenes Feld mit Label kennzeichnen (z.B. ["BPA-frei", "CE-zertifiziert"])
-
-BEWERTUNGEN:
-- Relative Haeufigkeiten schaetzen
-- WICHTIG: Die Prozentwerte muessen sich deutlich unterscheiden (nicht alle 30-35%). Sortiere absteigend und verteile realistisch, z.B. haeufigster Punkt 35%, seltenster 5%.
-
-BILDLOGIK:
-- Main Image: Kein Text. 3 Eyecatcher-Vorschlaege (Verpackung/Props/Badges/Hangtags).
-- PT01 (WICHTIGSTE REGEL): Das erste Bild nach dem Hauptbild. Der Kunde hat geklickt und muss SOFORT verstehen: 1) Was ist dieses Produkt genau? 2) Welches Problem loest es / welchen Wunschzustand erzeugt es? Die Headline MUSS den STAERKSTEN Kauftrigger aus der Analyse aufgreifen. NICHT irgendein Feature wie Portionsanzahl oder Geschmacksrichtung, sondern DEN Grund warum Kunden kaufen. Beispiel Eistee-Pulver: Wenn der staerkste Kauftrigger "gesunde Alternative zu Softdrinks" ist, dann muss die Headline das widerspiegeln (z.B. "Gesund statt Zucker", "Dein Softdrink-Ersatz"), NICHT "50 Portionen" oder "Pfirsichgeschmack".
-- PT02: Differenzierung. Zweitwichtigstes Kaufargument.
-- PT03: Traumzustand/Lifestyle. Emotional.
-- PT04-PT06: Einwandbehandlung basierend auf negativen Reviews.
-- Bei Lifestyle-Bildern ohne Text-Overlay: concept und visual DETAILLIERT beschreiben.
-
-Negative Reviews: status solved/unclear/neutral + 1-2 Kundenzitate + Implikation.
-Siegel: NUR beantragungspflichtige.
-Kaufausloeser absteigend.
-Keywords: used true/false markieren.
-
-ANTWORT: NUR JSON. Keine Backticks. Kein Markdown.
-
-{"product":{"name":"","brand":"","sku":"","marketplace":"","category":"","price":"","position":""},"audience":{"persona":"","desire":"","fear":"","triggers":["wichtigster zuerst"],"balance":""},"listingWeaknesses":${hasA ? '[{"weakness":"","impact":"high|medium|low","briefingAction":""}]' : 'null'},"reviews":{"source":"","estimated":true,"positive":[{"theme":"","pct":0}],"negative":[{"theme":"","pct":0,"quotes":[""],"status":"solved","implication":""}]},"keywords":{"volume":[{"kw":"","used":true}],"purchase":[{"kw":"","used":false}],"badges":[{"kw":"","note":"","requiresApplication":true}]},"competitive":{"patterns":"","gaps":[""]},"images":[{"id":"main","label":"Main Image","role":"SERP/CTR","concept":"english - DETAILLIERT","rationale":"english","eyecatchers":[{"idea":"deutsch","risk":"low|medium"},{"idea":"","risk":""},{"idea":"","risk":""}],"texts":null,"visual":"english - DETAILLIERT"},{"id":"pt01","label":"PT01","role":"","concept":"english","rationale":"english","texts":{"headlines":["Feature direkt","Kundenvorteil","Kreativ"],"subheadline":"oder null","bullets":["oder null"],"badges":["oder null"],"callouts":["oder null"],"footnotes":["*text oder null"]},"visual":"english"},{"id":"pt02","label":"PT02","role":"","concept":"","rationale":"","texts":{"headlines":["","",""],"subheadline":"","bullets":null,"badges":null,"callouts":null,"footnotes":null},"visual":""},{"id":"pt03","label":"PT03","role":"","concept":"DETAILLIERT wenn Lifestyle","rationale":"","texts":{"headlines":["","",""],"subheadline":null,"bullets":null,"badges":null,"callouts":null,"footnotes":null},"visual":"DETAILLIERT wenn Lifestyle"},{"id":"pt04","label":"PT04","role":"","concept":"","rationale":"","texts":{"headlines":["","",""],"subheadline":"","bullets":[""],"badges":null,"callouts":null,"footnotes":null},"visual":""},{"id":"pt05","label":"PT05","role":"","concept":"","rationale":"","texts":{"headlines":["","",""],"subheadline":"","bullets":null,"badges":null,"callouts":null,"footnotes":null},"visual":""},{"id":"pt06","label":"PT06","role":"","concept":"","rationale":"","texts":{"headlines":["","",""],"subheadline":"","bullets":[""],"badges":[""],"callouts":null,"footnotes":null},"visual":""}]}`;
+NUR JSON, keine Backticks/Markdown:
+{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[7 Objekte mit id:main/pt01-pt06, label, role, concept(EN), rationale(EN), visual(EN), texts:{headlines:[3],subheadline,bullets[],badges[],callouts[],footnotes[]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
 };
 
 // ═══════ JSON EXTRACTION ═══════
@@ -107,7 +72,7 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData) {
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 16000,
-        system: "Du bist ein Amazon Listing Analyst API. Antworte IMMER ausschliesslich mit validem JSON. Kein Markdown, keine Codeblöcke, kein erklaerter Text vor oder nach dem JSON. Deine Antwort MUSS mit { beginnen und mit } enden.",
+        system: "Amazon Listing Analyst. Antworte NUR mit validem JSON. Kein Markdown/Codeblocks/Text. Antwort beginnt mit { und endet mit }.",
         messages: [{ role: "user", content: buildPrompt(asin, mp, pi, ft, productData) }],
         tools: [{ type: "web_search_20250305", name: "web_search" }],
       }),
