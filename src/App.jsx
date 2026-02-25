@@ -482,7 +482,7 @@ export default function App() {
     setL(false); setSt("");
   }, []);
   const goNew = useCallback((a, m, p, f) => { data ? setP({ a, m, p, f }) : go(a, m, p, f); }, [data, go]);
-  if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setCurAsin(asin || ""); }} />;
+  if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setCurAsin(asin || ""); setSN(false); }} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
       <div style={{ ...glass, position: "sticky", top: 0, zIndex: 100, borderRadius: 0, borderLeft: "none", borderRight: "none", borderTop: "none" }}><div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px" }}>
