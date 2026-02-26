@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { jsPDF } from "jspdf";
 
 const MAX_HL = 25, FN = "'Outfit', system-ui, sans-serif";
@@ -9,12 +9,14 @@ const BG = "linear-gradient(170deg, #f0f0ff 0%, #fff8f0 30%, #f0faf5 60%, #f8f0f
 const Orbs = () => <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0, overflow: "hidden" }}><div style={{ position: "absolute", top: -80, right: -80, width: 350, height: 350, borderRadius: "50%", background: `radial-gradient(circle, ${V.violet}12, transparent 70%)` }} /><div style={{ position: "absolute", bottom: -60, left: -60, width: 300, height: 300, borderRadius: "50%", background: `radial-gradient(circle, ${V.cyan}10, transparent 70%)` }} /></div>;
 const inpS = { width: "100%", padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.6)", fontFamily: FN, fontSize: 13, color: V.ink, outline: "none", boxSizing: "border-box" };
 
-const HK = "briefing_history", MH = 3;
+const HK = "briefing_history", MH = 5;
 function loadH() { try { return JSON.parse(localStorage.getItem(HK) || "[]"); } catch { return []; } }
-function saveH(d, asin) { const h = loadH(); h.unshift({ id: Date.now(), name: d.product?.name || "?", brand: d.product?.brand || "", asin: asin || d.product?.sku || "", date: new Date().toLocaleDateString("de-DE"), data: d }); if (h.length > MH) h.pop(); try { localStorage.setItem(HK, JSON.stringify(h)); } catch {} }
+function saveH(d, asin) { const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 4); const h = loadH(); h.unshift({ id, name: d.product?.name || "?", brand: d.product?.brand || "", asin: asin || d.product?.sku || "", date: new Date().toLocaleDateString("de-DE"), data: d }); if (h.length > MH) h.pop(); try { localStorage.setItem(HK, JSON.stringify(h)); } catch {} return id; }
+function encodeBriefing(d) { try { const json = JSON.stringify(d); const bytes = new TextEncoder().encode(json); const cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")); return new Response(cs).arrayBuffer().then(buf => { let b = ""; const u8 = new Uint8Array(buf); for (let i = 0; i < u8.length; i++) b += String.fromCharCode(u8[i]); return btoa(b).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }); } catch { return Promise.resolve(null); } }
+function decodeBriefing(s) { try { const b64 = s.replace(/-/g, "+").replace(/_/g, "/"); const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")); return new Response(ds).text().then(t => JSON.parse(t)); } catch { return Promise.resolve(null); } }
 
 // ═══════ PROMPT ═══════
-const buildPrompt = (asin, mp, pi, ft, productData) => {
+const buildPrompt = (asin, mp, pi, ft, productData, density) => {
   const hasA = asin && asin.trim();
   const pd = productData || {};
   let scraped = "";
@@ -28,13 +30,17 @@ const buildPrompt = (asin, mp, pi, ft, productData) => {
     if (pd.bullets?.length) scraped += `Bullets:\n${pd.bullets.slice(0, 5).map(b => "- " + b).join("\n")}\n`;
     if (pd.description) scraped += `Beschreibung: ${pd.description.substring(0, 300)}\n`;
   }
+  const densityHint = density === "light" ? "\nTEXTDICHTE: Wenig Text. Kurze Headlines, kurze Bullets (max 4-5 Wörter), weniger Bullets (max 3). Subheadlines optional." : "";
   return `Analysiere ${hasA ? "ASIN " + asin + " auf " : ""}${mp || "Amazon.de"}. Erstelle 7-Bild-Briefing.
-${pi ? "Produkt: " + pi : ""}${ft ? "\nHinweise: " + ft : ""}${scraped}
+${pi ? "Produkt: " + pi : ""}${ft ? "\nHinweise: " + ft : ""}${scraped}${densityHint}
 REGELN:
 - Headlines: max 25 Zeichen, 3 Varianten (1:Feature/USP direkt, 2:Kundenvorteil, 3:Kreativ). Keine Kommas/Gedankenstriche. Konkret statt abstrakt.
+- Subheadlines: 3 Varianten (kurz/erklärend/emotional). Dürfen auch leer bleiben falls nicht nötig.
+- Bullets: Schlüsselwörter mit **fett** markieren (Markdown bold). Jeder Bullet max 1-2 Fettungen.
 - Bildtexte DE, Concept/Rationale/Visual EN. Keywords integrieren.
 - Lifestyle ohne Text-Overlay: concept+visual DETAILLIERT (Szenerie, Personen, Stimmung, Kamera).
-- Badges als eigenes Array. Fussnoten mit * kennzeichnen.
+- Badges: alle Trust-/Qualitäts-Elemente in badges[]. Kein separates callouts-Array - alles in badges[].
+- Fussnoten mit * im referenzierten Text kennzeichnen (z.B. "Laborgetestet*") und Fussnote beginnt mit "* ...".
 - Reviews: relative %, absteigend, deutlich unterschiedlich (nicht alle 30-35%).
 - Blacklist: vulgaer, negative Laendernennung, Wettbewerber-Vergleiche, unbelegte Statistiken.
 - Siegel: nur beantragungspflichtige. Kaufausloeser absteigend. Keywords: used true/false.
@@ -42,7 +48,7 @@ REGELN:
 BILDER: Main(kein Text, 3 Eyecatcher mit risk:low/medium), PT01(STAERKSTER Kauftrigger), PT02(Differenzierung), PT03(Lifestyle/emotional), PT04-06(Einwandbehandlung neg. Reviews).
 
 NUR JSON, keine Backticks/Markdown:
-{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[7 Objekte mit id:main/pt01-pt06, label, role, concept(EN), rationale(EN), visual(EN), texts:{headlines:[3],subheadline,bullets[],badges[],callouts[],footnotes[]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
+{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[7 Objekte mit id:main/pt01-pt06, label, role, concept(EN), rationale(EN), visual(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:["mit **Fett** Markierungen"],badges:[],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
 };
 
 // ═══════ JSON EXTRACTION ═══════
@@ -63,7 +69,7 @@ function extractJSON(text) {
 }
 
 // ═══════ API ═══════
-async function runAnalysis(asin, mp, pi, ft, onS, productData) {
+async function runAnalysis(asin, mp, pi, ft, onS, productData, density) {
   onS("Sende Analyse-Anfrage...");
   let r;
   try {
@@ -73,7 +79,7 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData) {
         model: "claude-sonnet-4-20250514",
         max_tokens: 16000,
         system: "Amazon Listing Analyst. Antworte NUR mit validem JSON. Kein Markdown/Codeblocks/Text. Antwort beginnt mit { und endet mit }.",
-        messages: [{ role: "user", content: buildPrompt(asin, mp, pi, ft, productData) }],
+        messages: [{ role: "user", content: buildPrompt(asin, mp, pi, ft, productData, density) }],
         tools: [{ type: "web_search_20250305", name: "web_search" }],
       }),
     });
@@ -128,8 +134,23 @@ const Lbl = ({ children, c = V.violet }) => <div style={{ fontSize: 10, fontWeig
 const Check = ({ on }) => <span style={{ color: on ? V.emerald : V.textDim, fontSize: 11, fontWeight: 800 }}>{on ? "✓" : "○"}</span>;
 const Err = ({ msg, onX }) => msg ? <div style={{ ...gS, padding: "12px 18px", background: `${V.rose}10`, border: `1px solid ${V.rose}25`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><span style={{ fontSize: 12, color: V.rose, fontWeight: 600, lineHeight: 1.5 }}>{msg}</span>{onX && <button onClick={onX} style={{ background: "none", border: "none", color: V.rose, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 16 }}>×</button>}</div> : null;
 
+// ═══════ TIME TRACKER ═══════
+function TimeTracker({ images }) {
+  const [times, setTimes] = useState(() => (images || []).map(() => 0));
+  const [active, setActive] = useState(-1);
+  const iRef = useRef(null);
+  useEffect(() => { if (iRef.current) clearInterval(iRef.current); if (active >= 0) { iRef.current = setInterval(() => setTimes(p => p.map((t, i) => i === active ? t + 1 : t)), 1000); } return () => clearInterval(iRef.current); }, [active]);
+  const fmt = s => { const m = Math.floor(s / 60), ss = s % 60; return `${m}:${ss.toString().padStart(2, "0")}`; };
+  const total = times.reduce((a, b) => a + b, 0);
+  return <GC style={{ padding: 16, marginTop: 14 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><Lbl c={V.teal}>Zeiterfassung (Designer)</Lbl><span style={{ fontSize: 12, fontWeight: 700, color: V.teal }}>Gesamt: {fmt(total)}</span></div>
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{(images || []).map((im, i) => <button key={i} onClick={() => setActive(a => a === i ? -1 : i)} style={{ ...gS, padding: "8px 14px", background: active === i ? `${V.teal}15` : "rgba(255,255,255,0.5)", border: active === i ? `2px solid ${V.teal}` : "1px solid rgba(0,0,0,0.06)", borderRadius: 10, cursor: "pointer", fontFamily: FN, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 70 }}><span style={{ fontSize: 10, fontWeight: 700, color: active === i ? V.teal : V.textDim }}>{im.label}</span><span style={{ fontSize: 14, fontWeight: 800, color: active === i ? V.teal : V.ink, fontVariantNumeric: "tabular-nums" }}>{fmt(times[i])}</span>{active === i && <span style={{ fontSize: 8, fontWeight: 800, color: V.teal, textTransform: "uppercase" }}>Läuft</span>}</button>)}</div>
+    <button onClick={() => { const txt = (images || []).map((im, i) => `${im.label}: ${fmt(times[i])}`).join("\n") + `\nGesamt: ${fmt(total)}`; navigator.clipboard.writeText(txt); }} style={{ ...gS, padding: "6px 14px", marginTop: 10, fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8 }}>Zeiten kopieren</button>
+  </GC>;
+}
+
 // ═══════ START ═══════
-function StartScreen({ onStart, loading, status, error, onDismiss, onLoad }) {
+function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDensity, setTD }) {
   const [asin, sa] = useState(""); const [mp, sm] = useState("Amazon.de"); const [pi, sp] = useState(""); const [ft, sf] = useState("");
   const [hist] = useState(loadH); const ok = asin.trim() || pi.trim();
   return (
@@ -162,6 +183,10 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad }) {
                 <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6, display: "block" }}>Zusätzliche Hinweise (optional)</label>
                 <textarea value={ft} onChange={e => sf(e.target.value)} placeholder="Wettbewerber, Markenwerte, Tonalität..." rows={2} style={{ ...inpS, resize: "vertical", lineHeight: 1.6 }} />
               </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 8, display: "block" }}>Textdichte</label>
+                <div style={{ display: "flex", gap: 8 }}>{[["light", "Wenig Text"], ["normal", "Normal"]].map(([val, lbl]) => <button key={val} onClick={() => setTD(val)} style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: txtDensity === val ? `2px solid ${V.violet}` : "1px solid rgba(0,0,0,0.08)", background: txtDensity === val ? `${V.violet}10` : "rgba(255,255,255,0.5)", color: txtDensity === val ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{lbl}</button>)}</div>
+              </div>
               <button onClick={() => ok && !loading && onStart(asin, mp, pi, ft)} disabled={!ok || loading} style={{ padding: "14px 24px", borderRadius: 14, border: "none", background: loading ? `${V.violet}80` : ok ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(0,0,0,0.08)", color: ok || loading ? "#fff" : V.textDim, fontSize: 14, fontWeight: 800, cursor: ok && !loading ? "pointer" : "default", fontFamily: FN, boxShadow: ok ? `0 4px 20px ${V.violet}35` : "none" }}>{loading ? "Analyse läuft..." : "Analyse starten"}</button>
               {loading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 10, height: 10, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: 99, animation: "spin 0.7s linear infinite" }} /><span style={{ fontSize: 12, color: V.violet, fontWeight: 600 }}>{status}</span></div>}
             </div>
@@ -178,13 +203,22 @@ function OverwriteWarn({ name, onOk, onNo }) {
 }
 
 // ═══════ BILD-BRIEFING ═══════
-function BildBriefing({ D, hlC, setHlC, listingImgs }) {
+function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, listingImgs }) {
   const [sel, setSel] = useState(0);
   if (!D.images?.length) return null;
   const img = D.images[sel], te = img?.texts;
   const hls = te?.headlines || (te?.headline ? [te.headline] : []);
   const ci = hlC[img.id] ?? 0, curHl = hls[ci] || hls[0] || "";
-  const allTxt = te ? [curHl, te.subheadline, ...(te.bullets || []), ...(te.badges || []), ...(te.callouts || [])].filter(Boolean).join("\n") : "";
+  // Subheadlines: support both old (single string) and new (array) format
+  const subs = te ? (Array.isArray(te.subheadlines) ? te.subheadlines : (te.subheadline ? [te.subheadline] : [])) : [];
+  const si = shC[img.id] ?? 0; // -1 = keine subheadline
+  const curSh = si === -1 ? "" : (subs[si] || subs[0] || te?.subheadline || "");
+  // Bullet selection state
+  const bKey = img.id;
+  const bullets = te?.bullets || [];
+  const bSel = bulSel[bKey] || bullets.map(() => true); // default: all selected
+  const selectedBullets = bullets.filter((_, i) => bSel[i]);
+  const allTxt = te ? [curHl, curSh, ...selectedBullets, ...(te.badges || [])].filter(Boolean).join("\n") : "";
   const curListingImg = listingImgs && listingImgs[sel] ? listingImgs[sel].base64 : null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -211,14 +245,18 @@ function BildBriefing({ D, hlC, setHlC, listingImgs }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.orange}>HEADLINE-VARIANTEN</Pill><CopyBtn text={curHl} /></div>
               {hls.map((h, i) => { const ov = h.length > MAX_HL, act = ci === i; const labels = ["Feature/USP", "Kundenvorteil", "Kreativ"]; return <div key={i} onClick={() => setHlC(p => ({ ...p, [img.id]: i }))} style={{ padding: "10px 14px", borderRadius: 10, border: act ? `2px solid ${V.violet}` : `1px solid ${ov ? V.rose + "40" : "rgba(0,0,0,0.06)"}`, background: act ? `${V.violet}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.violet}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.violet }} />}</div><span style={{ fontSize: 15, fontWeight: 800, color: V.ink }}>{h}</span></div><div style={{ display: "flex", gap: 6, alignItems: "center" }}><span style={{ fontSize: 9, color: V.textDim, fontWeight: 600 }}>{labels[i] || ""}</span><span style={{ fontSize: 10, fontWeight: 700, color: ov ? V.rose : V.textDim }}>{h.length}/{MAX_HL}</span></div></div>; })}
             </div>
-            {/* SUBHEADLINE */}
-            {te.subheadline && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><Pill c={V.blue}>SUBHEADLINE</Pill><CopyBtn text={te.subheadline} /></div><div style={{ fontSize: 13, color: V.textMed, lineHeight: 1.6 }}>{te.subheadline}</div></div>}
+            {/* SUBHEADLINES */}
+            {subs.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.blue}>SUBHEADLINE-VARIANTEN</Pill><CopyBtn text={curSh} /></div>
+              {subs.map((s, i) => { const act = si === i || (si === undefined && i === 0); return <div key={i} onClick={() => setShC(p => ({ ...p, [img.id]: i }))} style={{ padding: "10px 14px", borderRadius: 10, border: act ? `2px solid ${V.blue}` : "1px solid rgba(0,0,0,0.06)", background: act ? `${V.blue}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.blue}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.blue }} />}</div><span style={{ fontSize: 13, fontWeight: 600, color: V.ink }}>{s}</span></div></div>; })}
+              <div onClick={() => setShC(p => ({ ...p, [img.id]: -1 }))} style={{ padding: "10px 14px", borderRadius: 10, border: si === -1 ? `2px solid ${V.blue}` : "1px solid rgba(0,0,0,0.06)", background: si === -1 ? `${V.blue}08` : "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: si === -1 ? `2px solid ${V.blue}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{si === -1 && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.blue }} />}</div><span style={{ fontSize: 13, fontWeight: 600, color: V.textDim, fontStyle: "italic" }}>Keine Subheadline</span></div>
+            </div>}
+            {/* Legacy single subheadline fallback */}
+            {subs.length === 0 && te.subheadline && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><Pill c={V.blue}>SUBHEADLINE</Pill><CopyBtn text={te.subheadline} /></div><div style={{ fontSize: 13, color: V.textMed, lineHeight: 1.6 }}>{te.subheadline}</div></div>}
             {/* BULLETS */}
-            {te.bullets?.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><Pill c={V.teal}>BULLETS · {te.bullets.length}/5</Pill>{te.bullets.map((b, i) => <div key={i} style={{ display: "flex", gap: 10, marginTop: 10 }}><span style={{ width: 6, height: 6, borderRadius: 99, background: V.violet, marginTop: 6, flexShrink: 0 }} /><span style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6 }}>{b}</span></div>)}</div>}
-            {/* BADGES */}
-            {te.badges?.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><Pill c={V.amber}>BADGES</Pill><div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>{te.badges.map((b, i) => <span key={i} style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}12`, border: `1px solid ${V.amber}20`, fontSize: 12, fontWeight: 700, color: V.amber }}>{b}</span>)}</div></div>}
-            {/* CALLOUTS */}
-            {te.callouts?.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}><Pill c={V.cyan} s={{ marginRight: 4 }}>CALLOUTS</Pill>{te.callouts.map((c, i) => <Pill key={i} c={V.cyan}>{c}</Pill>)}</div>}
+            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; return <div key={i} onClick={() => { const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ display: "flex", gap: 10, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: on ? `${V.teal}06` : "transparent", cursor: "pointer", opacity: on ? 1 : 0.45, transition: "all 0.15s" }}><div style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${V.teal}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>{on && <span style={{ color: V.teal, fontSize: 12, fontWeight: 800 }}>✓</span>}</div><span style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A">$1</b>') }} /></div>; })}</div>}
+            {/* BADGES (inkl. ehem. Callouts) */}
+            {(() => { const allBadges = [...(te.badges || []), ...(te.callouts || [])]; return allBadges.length > 0 ? <div style={{ ...gS, padding: 14, marginBottom: 10 }}><Pill c={V.amber}>BADGES</Pill><div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>{allBadges.map((b, i) => <span key={i} style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}12`, border: `1px solid ${V.amber}20`, fontSize: 12, fontWeight: 800, color: V.amber }}>{b}</span>)}</div></div> : null; })()}
             {/* FOOTNOTES */}
             {te.footnotes?.length > 0 && <div style={{ ...gS, padding: 12, background: `${V.textDim}08`, marginBottom: 10 }}><span style={{ fontSize: 10, fontWeight: 800, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em" }}>Fußnoten</span>{te.footnotes.map((f, i) => <div key={i} style={{ fontSize: 11, color: V.textDim, marginTop: 4, lineHeight: 1.5 }}>{f}</div>)}</div>}
           </div> : !te && <div style={{ padding: 16, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Kein Text-Overlay. Rein visuelles Bild.</span></div>}
@@ -226,6 +264,7 @@ function BildBriefing({ D, hlC, setHlC, listingImgs }) {
           {img.visual && <div style={{ borderTop: "1px solid rgba(0,0,0,0.06)", paddingTop: 14 }}><Lbl c={V.textDim}>Visuelle Hinweise für Designer</Lbl><p style={{ fontSize: 12, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
         </div>
       </GC>
+      <TimeTracker images={D.images} />
     </div>
   );
 }
@@ -258,8 +297,8 @@ function AnalyseTab({ D }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(310px, 1fr))", gap: 14 }}>
       {lw?.length > 0 && <GC style={{ padding: 20, gridColumn: "1 / -1", background: `${V.rose}06` }}><Lbl c={V.rose}>Schwachstellen im aktuellen Listing</Lbl>{lw.map((w, i) => <div key={i} style={{ ...gS, padding: 14, marginBottom: 8, background: "rgba(255,255,255,0.6)", display: "flex", gap: 14 }}><Pill c={ic[w.impact] || V.textDim} s={{ flexShrink: 0 }}>{w.impact === "high" ? "Hoch" : w.impact === "medium" ? "Mittel" : "Gering"}</Pill><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink, marginBottom: 4 }}>{w.weakness}</div><div style={{ fontSize: 12, color: V.emerald }}>→ {w.briefingAction}</div></div></div>)}</GC>}
-      <GC style={{ padding: 20 }}><Lbl c={V.violet}>Zielgruppe</Lbl><p style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.65, margin: "0 0 12px" }}>{a.persona}</p>{a.desire && <div style={{ background: `${V.emerald}0A`, borderRadius: 12, padding: 12, marginBottom: 8 }}><span style={{ fontSize: 10, fontWeight: 800, color: V.emerald }}>KERNWUNSCH</span><p style={{ fontSize: 12, color: V.emerald, lineHeight: 1.55, margin: "4px 0 0" }}>{a.desire}</p></div>}{a.fear && <div style={{ background: `${V.rose}0A`, borderRadius: 12, padding: 12 }}><span style={{ fontSize: 10, fontWeight: 800, color: V.rose }}>KERNANGST</span><p style={{ fontSize: 12, color: V.rose, lineHeight: 1.55, margin: "4px 0 0" }}>{a.fear}</p></div>}</GC>
       <GC style={{ padding: 20, background: `${V.orange}06` }}><Lbl c={V.orange}>Kaufauslöser (nach Wichtigkeit)</Lbl>{(a.triggers || []).map((t, i) => { const s = 1 - i / Math.max((a.triggers?.length || 1) - 1, 1); return <div key={i} style={{ display: "flex", gap: 10, marginBottom: 10, padding: "8px 12px", borderRadius: 10, background: `${V.orange}${Math.round(s * 12).toString(16).padStart(2, "0")}`, border: i === 0 ? `1px solid ${V.orange}25` : "1px solid transparent" }}><span style={{ color: V.orange, fontWeight: 800, fontSize: 16, width: 24, textAlign: "center", flexShrink: 0 }}>{i + 1}</span><span style={{ fontSize: 12.5, color: i === 0 ? V.ink : V.textMed, fontWeight: i === 0 ? 700 : 400, lineHeight: 1.55 }}>{t}</span></div>; })}{a.balance && <div style={{ marginTop: 10, padding: 10, background: `${V.orange}0A`, borderRadius: 10 }}><span style={{ fontSize: 11, fontWeight: 700, color: V.orange }}>{a.balance}</span></div>}</GC>
+      <GC style={{ padding: 20 }}><Lbl c={V.violet}>Zielgruppe</Lbl><p style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.65, margin: "0 0 12px" }}>{a.persona}</p>{a.desire && <div style={{ background: `${V.emerald}0A`, borderRadius: 12, padding: 12, marginBottom: 8 }}><span style={{ fontSize: 10, fontWeight: 800, color: V.emerald }}>KERNWUNSCH</span><p style={{ fontSize: 12, color: V.emerald, lineHeight: 1.55, margin: "4px 0 0" }}>{a.desire}</p></div>}{a.fear && <div style={{ background: `${V.rose}0A`, borderRadius: 12, padding: 12 }}><span style={{ fontSize: 10, fontWeight: 800, color: V.rose }}>KERNANGST</span><p style={{ fontSize: 12, color: V.rose, lineHeight: 1.55, margin: "4px 0 0" }}>{a.fear}</p></div>}</GC>
       <GC style={{ padding: 20 }}><Lbl c={V.blue}>Wettbewerbslandschaft</Lbl><p style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.65, margin: "0 0 12px" }}>{c.patterns}</p>{(c.gaps || []).length > 0 && <><span style={{ fontSize: 10, fontWeight: 800, color: V.cyan }}>MARKTLÜCKEN</span>{c.gaps.map((g, i) => <div key={i} style={{ display: "flex", gap: 8, marginTop: 8 }}><span style={{ color: V.cyan, fontSize: 10, marginTop: 2 }}>◆</span><span style={{ fontSize: 12, color: V.textMed, lineHeight: 1.55 }}>{g}</span></div>)}</>}</GC>
       <GC style={{ padding: 20 }}><Lbl c={V.violet}>Keywords</Lbl>{(k.volume || []).length > 0 && <div style={{ marginBottom: 14 }}><span style={{ fontSize: 10, fontWeight: 800, color: V.blue }}>SUCHVOLUMEN</span><div style={{ marginTop: 6 }}>{k.volume.map((kw, i) => <div key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 20, background: `${V.blue}14`, border: `1px solid ${V.blue}22`, margin: "0 5px 5px 0" }}><Check on={kw.used} /><span style={{ fontSize: 10.5, fontWeight: 700, color: V.blue }}>{kw.kw}</span></div>)}</div></div>}{(k.purchase || []).length > 0 && <div><span style={{ fontSize: 10, fontWeight: 800, color: V.orange }}>KAUFABSICHT</span><div style={{ marginTop: 6 }}>{k.purchase.map((kw, i) => <div key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 20, background: `${V.orange}14`, border: `1px solid ${V.orange}22`, margin: "0 5px 5px 0" }}><Check on={kw.used} /><span style={{ fontSize: 10.5, fontWeight: 700, color: V.orange }}>{kw.kw}</span></div>)}</div></div>}</GC>
       {(k.badges || []).filter(b => b.requiresApplication !== false).length > 0 && <GC style={{ padding: 20, gridColumn: "1 / -1" }}><Lbl c={V.amber}>Beantragungspflichtige Siegel</Lbl><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>{k.badges.filter(b => b.requiresApplication !== false).map((b, i) => <div key={i} style={{ ...gS, padding: 12, background: "rgba(255,255,255,0.5)" }}><span style={{ fontSize: 12, fontWeight: 800, color: V.amber }}>{b.kw}</span><p style={{ fontSize: 11, color: V.textDim, margin: "4px 0 0" }}>{b.note}</p></div>)}</div></GC>}
@@ -268,29 +307,36 @@ function AnalyseTab({ D }) {
 }
 
 // ═══════ BRIEFING EXPORT ═══════
-function genBrief(D, hlC) {
+const IMG_LABELS = ["Main Image", "PT.01", "PT.02", "PT.03", "PT.04", "PT.05", "PT.06"];
+function genBrief(D, hlC, shC, bulSel) {
   let t = `AMAZON GALLERY IMAGE BRIEFING\n${"=".repeat(50)}\nProduct: ${D.product?.name} | ${D.product?.brand}\nMarketplace: ${D.product?.marketplace}\n\n`;
-  (D.images || []).forEach(im => {
-    t += `${"-".repeat(50)}\n${im.label} | ${im.role}\n${"-".repeat(50)}\nCONCEPT:\n${im.concept}\n\nRATIONALE:\n${im.rationale}\n`;
+  (D.images || []).forEach((im, idx) => {
+    const expLabel = IMG_LABELS[idx] || im.label;
+    t += `${"-".repeat(50)}\n${expLabel} | ${im.role}\n${"-".repeat(50)}\nCONCEPT:\n${im.concept}\n\nRATIONALE:\n${im.rationale}\n`;
     if (im.eyecatchers?.length) t += `\nEYECATCHER IDEAS:\n${im.eyecatchers.map((e, i) => `  ${i + 1}. ${e.idea} [${e.risk}]`).join("\n")}\n`;
     if (im.texts) {
       const h = im.texts.headlines || (im.texts.headline ? [im.texts.headline] : []);
       const ci = hlC[im.id] ?? 0;
+      const subs = Array.isArray(im.texts.subheadlines) ? im.texts.subheadlines : (im.texts.subheadline ? [im.texts.subheadline] : []);
+      const si = shC?.[im.id] ?? 0;
+      const bullets = im.texts.bullets || [];
+      const bSel = bulSel?.[im.id] || bullets.map(() => true);
+      const selBullets = bullets.filter((_, i) => bSel[i]);
+      const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1"); // strip markdown bold for plain text
       t += "\nTEXTS (DE):\n";
-      if (h.length) t += `  Headline: ${h[ci] || h[0]}\n`;
-      if (h.length > 1) t += `  (Alternativen: ${h.filter((_, i) => i !== ci).join(" | ")})\n`;
-      if (im.texts.subheadline) t += `  Subheadline: ${im.texts.subheadline}\n`;
-      if (im.texts.bullets?.length) t += `  Bullets:\n${im.texts.bullets.map(b => "    - " + b).join("\n")}\n`;
-      if (im.texts.badges?.length) t += `  Badges: ${im.texts.badges.join(" | ")}\n`;
-      if (im.texts.callouts?.length) t += `  Callouts: ${im.texts.callouts.join(" | ")}\n`;
-      if (im.texts.footnotes?.length) t += `  Footnotes: ${im.texts.footnotes.join(" | ")}\n`;
+      if (h.length) t += `  Headline: "${h[ci] || h[0]}"\n`;
+      if (h.length > 1) t += `  (Alternativen: ${h.filter((_, i) => i !== ci).map(x => `"${x}"`).join(" | ")})\n`;
+      if (si !== -1 && subs.length > 0) { const curSub = subs[si] || subs[0]; t += `  Subheadline: "${curSub}"\n`; if (subs.length > 1) t += `  (Alternativen: ${subs.filter((_, i) => i !== (si || 0)).map(x => `"${x}"`).join(" | ")})\n`; }
+      if (selBullets.length) t += `  Bullets:\n${selBullets.map(b => `    - "${strip(b)}"`).join("\n")}\n`;
+      if (im.texts.badges?.length) t += `  Badges: ${im.texts.badges.map(b => `"${b}"`).join(" | ")}\n`;
+      if (im.texts.footnotes?.length) t += `  Footnotes: ${im.texts.footnotes.map(f => `"${f}"`).join(" | ")}\n`;
     } else { t += "\nTEXTS: None — visual-only image\n"; }
     t += `\nVISUAL NOTES:\n${im.visual}\n\n`;
   });
   return t;
 }
-function BriefExport({ D, hlC, onClose }) {
-  const [t, st] = useState(() => genBrief(D, hlC));
+function BriefExport({ D, hlC, shC, bulSel, onClose }) {
+  const [t, st] = useState(() => genBrief(D, hlC, shC, bulSel));
   const [cp, sc] = useState(false);
   return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", backdropFilter: "blur(8px)", zIndex: 200, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={onClose}><div style={{ ...glass, width: "100%", maxWidth: 820, maxHeight: "90vh", display: "flex", flexDirection: "column", background: "rgba(255,255,255,0.88)" }} onClick={e => e.stopPropagation()}><div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 16, fontWeight: 800, color: V.ink }}>Designer-Briefing</span><div style={{ display: "flex", gap: 6 }}><button onClick={() => { navigator.clipboard.writeText(t); sc(true); setTimeout(() => sc(false), 2000); }} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: cp ? V.emerald : `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>{cp ? "Kopiert" : "Alles kopieren"}</button><button onClick={onClose} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.5)", color: V.textDim, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>Schließen</button></div></div><div style={{ padding: 18, flex: 1, overflow: "auto" }}><textarea value={t} onChange={e => st(e.target.value)} style={{ width: "100%", minHeight: 500, padding: 18, borderRadius: 14, border: "1px solid rgba(0,0,0,0.06)", background: "rgba(255,255,255,0.5)", fontFamily: "'JetBrains Mono',monospace", fontSize: 12, lineHeight: 1.75, color: V.text, resize: "vertical", outline: "none", boxSizing: "border-box" }} spellCheck={false} /></div></div></div>;
 }
@@ -405,7 +451,7 @@ function exportPDF(D, listingImgs) {
     // Layout: up to 7 images in a grid
     // Row 1: Main image large + 3 small
     // Row 2: 3 small
-    const labels = ["Main", "PT01", "PT02", "PT03", "PT04", "PT05", "PT06"];
+    const labels = ["Main Image", "PT.01", "PT.02", "PT.03", "PT.04", "PT.05", "PT.06"];
 
     if (imgs.length > 0) {
       // Main image — large on the left
@@ -467,8 +513,12 @@ function exportPDF(D, listingImgs) {
 // ═══════ MAIN ═══════
 const TABS = [{ id: "b", l: "Bild-Briefing" }, { id: "r", l: "Bewertungen" }, { id: "a", l: "Analyse" }];
 export default function App() {
-  const [data, setData] = useState(null), [tab, setTab] = useState("b"), [brandLogo, setBL] = useState(null), [showExp, setSE] = useState(false), [pdfL, setPL] = useState(false), [loading, setL] = useState(false), [status, setSt] = useState(""), [error, setE] = useState(null), [showNew, setSN] = useState(false), [pending, setP] = useState(null), [hlC, setHlC] = useState({}), [curAsin, setCurAsin] = useState(""), [showHist, setShowHist] = useState(false), [listingImgs, setListingImgs] = useState([]);
+  const [data, setData] = useState(null), [tab, setTab] = useState("b"), [brandLogo, setBL] = useState(null), [showExp, setSE] = useState(false), [pdfL, setPL] = useState(false), [loading, setL] = useState(false), [status, setSt] = useState(""), [error, setE] = useState(null), [showNew, setSN] = useState(false), [pending, setP] = useState(null), [hlC, setHlC] = useState({}), [shC, setShC] = useState({}), [bulSel, setBulSel] = useState({}), [curAsin, setCurAsin] = useState(""), [showHist, setShowHist] = useState(false), [listingImgs, setListingImgs] = useState([]), [txtDensity, setTD] = useState("normal");
   const fR = useRef(null);
+  const [shareUrl, setShareUrl] = useState(null);
+  // Load briefing from shared URL on mount
+  useState(() => { const hash = window.location.hash.slice(1); if (hash && hash.startsWith("b=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.product && d?.images) { setData(d); setTab("b"); } }); } });
+  const shareBriefing = useCallback(async () => { if (!data) return; const enc = await encodeBriefing(data); if (enc) { const url = window.location.origin + window.location.pathname + "#b=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }, [data]);
   const go = useCallback(async (a, m, p, f) => {
     setL(true); setE(null); setSt("Starte...");
     try {
@@ -476,13 +526,13 @@ export default function App() {
       let scrapeResult = { images: [], productData: {} };
       if (a && a.trim()) { setSt("Lade Amazon-Daten..."); scrapeResult = await scrapeProduct(a, m); }
       // Step 2: Run AI analysis with scraped product data
-      const result = await runAnalysis(a, m, p, f, setSt, scrapeResult.productData);
-      setData(result); setTab("b"); setSN(false); setHlC({}); setCurAsin(a || ""); setListingImgs(scrapeResult.images); saveH(result, a);
+      const result = await runAnalysis(a, m, p, f, setSt, scrapeResult.productData, txtDensity);
+      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setCurAsin(a || ""); setListingImgs(scrapeResult.images); saveH(result, a);
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
-  }, []);
+  }, [txtDensity]);
   const goNew = useCallback((a, m, p, f) => { data ? setP({ a, m, p, f }) : go(a, m, p, f); }, [data, go]);
-  if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setCurAsin(asin || ""); setSN(false); }} />;
+  if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setCurAsin(asin || ""); setSN(false); }} txtDensity={txtDensity} setTD={setTD} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
       <div style={{ ...glass, position: "sticky", top: 0, zIndex: 100, borderRadius: 0, borderLeft: "none", borderRight: "none", borderTop: "none" }}><div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px" }}>
@@ -493,6 +543,7 @@ export default function App() {
             <button onClick={() => setShowHist(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, position: "relative" }}>Verlauf</button>
             <input ref={fR} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = ev => setBL(ev.target.result); r.readAsDataURL(f); } }} />
             <button onClick={() => fR.current?.click()} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>{brandLogo ? "Logo ändern" : "Kundenlogo"}</button>
+            <button onClick={shareBriefing} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Teilen</button>
             <button onClick={() => setSE(true)} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30` }}>Designer-Briefing</button>
             <button onClick={() => { setPL(true); try { exportPDF(data, listingImgs); } catch (e) { alert("PDF: " + e.message); } setPL(false); }} style={{ ...gS, padding: "8px 14px", fontSize: 10, fontWeight: 700, color: V.textMed, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Kunden-PDF</button>
           </div>
@@ -500,12 +551,13 @@ export default function App() {
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
       </div></div>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 80px", position: "relative", zIndex: 1 }}>
-        {showHist && (() => { const hist = loadH(); return hist.length > 0 ? <GC style={{ padding: 0, marginBottom: 14 }}><div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl><button onClick={() => setShowHist(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div><div style={{ padding: "6px 10px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px", borderRadius: 10, cursor: "pointer" }} onClick={() => { setData(h.data); setTab("b"); setHlC({}); setCurAsin(h.asin || ""); setShowHist(false); }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC> : <GC style={{ padding: 16, marginBottom: 14, textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Noch keine gespeicherten Briefings.</span></GC>; })()}
-        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} listingImgs={listingImgs} />}
+        {showHist && (() => { const hist = loadH(); return hist.length > 0 ? <GC style={{ padding: 0, marginBottom: 14 }}><div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl><button onClick={() => setShowHist(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div><div style={{ padding: "6px 10px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px", borderRadius: 10, cursor: "pointer" }} onClick={() => { setData(h.data); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setCurAsin(h.asin || ""); setShowHist(false); }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC> : <GC style={{ padding: 16, marginBottom: 14, textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Noch keine gespeicherten Briefings.</span></GC>; })()}
+        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} listingImgs={listingImgs} />}
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} />}
       </div>
-      {showExp && <BriefExport D={data} hlC={hlC} onClose={() => setSE(false)} />}
+      {showExp && <BriefExport D={data} hlC={hlC} shC={shC} bulSel={bulSel} onClose={() => setSE(false)} />}
+      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /><button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
       {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f); }} onNo={() => setP(null)} />}
     </div>
   );
