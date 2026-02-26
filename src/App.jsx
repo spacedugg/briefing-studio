@@ -32,16 +32,22 @@ const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, review
   }
   let kwData = "";
   if (keywordData) {
-    kwData = "\nAMAZON KEYWORD-DATEN (echte Marktdaten):";
-    if (keywordData.searchTerms?.length) kwData += `\nTop-Suchbegriffe: ${keywordData.searchTerms.slice(0, 15).map(t => t.term + "(" + t.frequency + ")").join(", ")}`;
-    if (keywordData.competitorKeywords?.length) kwData += `\nWettbewerber-Keywords: ${keywordData.competitorKeywords.slice(0, 10).map(t => t.term + "(" + t.frequency + ")").join(", ")}`;
-    kwData += "\nVerwende diese echten Amazon-Suchbegriffe als Basis für die Keywords im Output.";
+    kwData = "\nAMAZON KEYWORD-DATEN (echte Bright Data Marktdaten):";
+    if (keywordData.searchTerms?.length) kwData += `\nTop-Suchbegriffe aus Titel: ${keywordData.searchTerms.slice(0, 15).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
+    if (keywordData.competitorKeywords?.length) kwData += `\nHäufige Wettbewerber-Keywords (aus Bullets): ${keywordData.competitorKeywords.slice(0, 10).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
+    if (keywordData.competitors?.length) {
+      kwData += `\nTOP-WETTBEWERBER (${keywordData.competitors.length} Produkte auf Seite 1):`;
+      keywordData.competitors.slice(0, 8).forEach((c, i) => {
+        kwData += `\n  ${i + 1}. ${c.brand || "?"}: ${c.title?.substring(0, 80) || "?"} | ${c.price || "?"}${c.currency || ""} | ${c.rating || "?"}★ (${c.reviewCount || "?"} Rev.) | ${c.bulletCount} Bullets | ${c.imageCount} Bilder`;
+      });
+    }
+    kwData += "\nVerwende diese echten Amazon-Suchbegriffe als Basis für die Keywords im Output. Die Wettbewerberdaten nutzen für competitive-Sektion.";
   }
   let rvData = "";
   if (reviewData?.reviews?.length) {
     rvData = `\nECHTE AMAZON-BEWERTUNGEN (${reviewData.totalReviews} total, Durchschnitt ${reviewData.avgRating}/5):`;
-    rvData += "\n" + reviewData.reviews.slice(0, 20).map(r => `[${r.rating}★${r.verified ? " Verifiziert" : ""}] ${r.title}: ${r.text.substring(0, 200)}`).join("\n");
-    rvData += "\nAnalysiere diese echten Bewertungen für die Review-Sektion.";
+    rvData += "\n" + reviewData.reviews.slice(0, 25).map(r => `[${r.rating}★${r.verified ? " Verifiziert" : ""}] ${r.title}: ${r.text.substring(0, 200)}`).join("\n");
+    rvData += "\nAnalysiere diese echten Bewertungen für die Review-Sektion. Gruppiere nach Themen, berechne relative Häufigkeiten.";
   }
   const densityHint = density === "light" ? "\nTEXTDICHTE: Wenig Text. Kurze Headlines, kurze Bullets (max 4-5 Wörter), weniger Bullets (max 3). Subheadlines optional." : "";
   return `Analysiere ${hasA ? "ASIN " + asin + " auf " : ""}${mp || "Amazon.de"}. Erstelle 7-Bild-Briefing.
@@ -144,13 +150,12 @@ async function scrapeProduct(asin, marketplace) {
   } catch { return { images: [], productData: {} }; }
 }
 
-// Fetch real Amazon keyword data via Bright Data
-async function fetchKeywordData(keyword, marketplace) {
-  if (!keyword || !keyword.trim()) return null;
+// Bright Data API helper
+async function bdFetch(body) {
   try {
     const r = await fetch("/api/keyword-research", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "keywords", keywords: keyword.trim(), marketplace }),
+      body: JSON.stringify(body),
     });
     if (!r.ok) return null;
     const d = await r.json();
@@ -158,18 +163,55 @@ async function fetchKeywordData(keyword, marketplace) {
   } catch { return null; }
 }
 
-// Fetch real Amazon reviews via Bright Data
+// 1. Keyword-Recherche (Global, marktplatzspezifisch)
+async function fetchKeywordData(keyword, marketplace) {
+  if (!keyword?.trim()) return null;
+  return bdFetch({ type: "keywords", keywords: keyword.trim(), marketplace });
+}
+
+// 2. Einfache Keyword-Suche (ohne Marktplatz)
+async function fetchSimpleKeywordData(keyword) {
+  if (!keyword?.trim()) return null;
+  return bdFetch({ type: "keyword", keyword: keyword.trim() });
+}
+
+// 3. Echte Amazon-Reviews
 async function fetchReviewData(asin, marketplace) {
-  if (!asin || !asin.trim()) return null;
-  try {
-    const r = await fetch("/api/keyword-research", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "reviews", asin: asin.trim(), marketplace }),
-    });
-    if (!r.ok) return null;
-    const d = await r.json();
-    return d.success ? d.data : null;
-  } catch { return null; }
+  if (!asin?.trim()) return null;
+  return bdFetch({ type: "reviews", asin: asin.trim(), marketplace });
+}
+
+// 4. Brand-Analyse (Seller/Brand URL)
+async function fetchBrandData(brandUrl) {
+  if (!brandUrl?.trim()) return null;
+  return bdFetch({ type: "brand", brandUrl: brandUrl.trim() });
+}
+
+// 5. Bestseller der Kategorie
+async function fetchBestSellers(categoryUrl) {
+  if (!categoryUrl?.trim()) return null;
+  return bdFetch({ type: "best_sellers", categoryUrl: categoryUrl.trim() });
+}
+
+// Merge keyword data from multiple Bright Data sources
+function mergeKeywordData(global, simple) {
+  if (!global && !simple) return null;
+  const merged = { searchTerms: [], competitorKeywords: [], competitors: [] };
+  // Merge search terms (deduplicate by term name)
+  const termMap = {};
+  [global?.searchTerms, simple?.searchTerms].forEach(arr => {
+    (arr || []).forEach(t => { termMap[t.term] = (termMap[t.term] || 0) + t.frequency; });
+  });
+  merged.searchTerms = Object.entries(termMap).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([term, frequency]) => ({ term, frequency }));
+  // Merge competitor keywords
+  const kwMap = {};
+  [global?.competitorKeywords, simple?.competitorKeywords].forEach(arr => {
+    (arr || []).forEach(t => { kwMap[t.term] = (kwMap[t.term] || 0) + t.frequency; });
+  });
+  merged.competitorKeywords = Object.entries(kwMap).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([term, frequency]) => ({ term, frequency }));
+  // Competitors only from global (has marketplace context)
+  merged.competitors = global?.competitors || simple?.competitors || [];
+  return merged;
 }
 
 // ═══════ COMPONENTS ═══════
@@ -779,17 +821,29 @@ export default function App() {
   const go = useCallback(async (a, m, p, f) => {
     setL(true); setE(null); setSt("Starte...");
     try {
-      // Step 1: Scrape Amazon data + keyword research + reviews in parallel
-      setSt("Lade Amazon-Daten & Keywords...");
-      const productName = p ? p.split(/[,.\n]/)[0].trim() : "";
-      const [scrapeResult, kwResult, rvResult] = await Promise.all([
-        a && a.trim() ? scrapeProduct(a, m) : Promise.resolve({ images: [], productData: {} }),
-        productName ? fetchKeywordData(productName, m) : Promise.resolve(null),
+      // Step 1: Scrape Amazon product data first (needed for keyword search term)
+      setSt("Lade Amazon-Produktdaten...");
+      const scrapeResult = a && a.trim() ? await scrapeProduct(a, m) : { images: [], productData: {} };
+      const pd = scrapeResult.productData || {};
+      // Derive best search term: product title keywords or user input
+      const searchTerm = pd.title ? pd.title.split(/[,|·\-–—]/).slice(0, 2).join(" ").trim().substring(0, 60) : (p ? p.split(/[,.\n]/)[0].trim() : "");
+      // Step 2: All Bright Data queries in parallel
+      setSt("Recherchiere Keywords, Reviews & Wettbewerber...");
+      const [kwGlobal, kwSimple, rvResult] = await Promise.all([
+        // 1. Global keyword search (marketplace-specific) - für Wettbewerber + Keywords
+        searchTerm ? fetchKeywordData(searchTerm, m) : Promise.resolve(null),
+        // 4. Simple keyword search (ergänzend) - breitere Keyword-Perspektive
+        searchTerm ? fetchSimpleKeywordData(searchTerm) : Promise.resolve(null),
+        // 3. Echte Reviews - für Review-Analyse
         a && a.trim() ? fetchReviewData(a, m) : Promise.resolve(null),
+        // 2. Brand discovery + 5. Best sellers - benötigen URLs die wir ggf. nicht haben
+        // Diese werden nur genutzt wenn brandUrl/categoryUrl vorhanden
       ]);
-      // Step 2: Run AI analysis with all data
-      const result = await runAnalysis(a, m, p, f, setSt, scrapeResult.productData, txtDensity, kwResult, rvResult);
-      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setListingImgs(scrapeResult.images); setPD({ ...scrapeResult.productData, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
+      // Merge keyword results from both endpoints
+      const kwResult = mergeKeywordData(kwGlobal, kwSimple);
+      // Step 3: Run AI analysis with all scraped + researched data
+      const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult);
+      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setListingImgs(scrapeResult.images); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, [txtDensity]);

@@ -3,7 +3,9 @@ export const config = { maxDuration: 60 };
 
 const BD_BASE = 'https://api.brightdata.com/datasets/v3/scrape';
 
-// Amazon Products Global Dataset - Discover by keywords
+// ═══ 1. Amazon Products Global Dataset - Discover by keywords ═══
+// Sucht Produkte auf einem bestimmten Marktplatz nach Keywords
+// Liefert: Produkttitel, Preise, Ratings, Bullets der Top-Ergebnisse
 async function discoverByKeywords(keywords, domain, apiKey) {
   const res = await fetch(
     `${BD_BASE}?dataset_id=gd_lwhideng15g8jg63s7&notify=false&include_errors=true&type=discover_new&discover_by=keywords`,
@@ -17,21 +19,25 @@ async function discoverByKeywords(keywords, domain, apiKey) {
   return res.json();
 }
 
-// Amazon Products - Discover by keyword (simpler endpoint)
-async function discoverByKeyword(keyword, apiKey) {
+// ═══ 2. Amazon Products Global Dataset - Discover by brand ═══
+// Sucht alle Produkte einer Marke (via Seller/Brand URL)
+// Liefert: Portfolio-Überblick, Preisstruktur, Produktkategorien
+async function discoverByBrand(brandUrl, apiKey) {
   const res = await fetch(
-    `${BD_BASE}?dataset_id=gd_l7q7dkf244hwjntr0&notify=false&include_errors=true&type=discover_new&discover_by=keyword`,
+    `${BD_BASE}?dataset_id=gd_lwhideng15g8jg63s7&notify=false&include_errors=true&type=discover_new&discover_by=brand`,
     {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input: [{ keyword }] }),
+      body: JSON.stringify({ input: [{ url: brandUrl }] }),
     }
   );
-  if (!res.ok) throw new Error(`Bright Data keyword ${res.status}`);
+  if (!res.ok) throw new Error(`Bright Data brand ${res.status}`);
   return res.json();
 }
 
-// Amazon Reviews - Collect by URL
+// ═══ 3. Amazon Reviews - Collect by URL ═══
+// Sammelt echte Kundenbewertungen eines Produkts
+// Liefert: Rating, Titel, Text, Verifiziert-Status, Datum
 async function collectReviews(asin, domain, apiKey) {
   const url = `https://www.${domain}/dp/${asin}`;
   const res = await fetch(
@@ -46,29 +52,63 @@ async function collectReviews(asin, domain, apiKey) {
   return res.json();
 }
 
-// Amazon Products Global Dataset - Discover by brand
-async function discoverByBrand(brandUrl, apiKey) {
+// ═══ 4. Amazon Products - Discover by keyword ═══
+// Einfachere Keyword-Suche (ohne Domain-Spezifikation)
+// Liefert: Produkte die unter diesem Keyword ranken
+async function discoverByKeyword(keyword, apiKey) {
   const res = await fetch(
-    `${BD_BASE}?dataset_id=gd_lwhideng15g8jg63s7&notify=false&include_errors=true&type=discover_new&discover_by=brand`,
+    `${BD_BASE}?dataset_id=gd_l7q7dkf244hwjntr0&notify=false&include_errors=true&type=discover_new&discover_by=keyword`,
     {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input: [{ url: brandUrl }] }),
+      body: JSON.stringify({ input: [{ keyword }] }),
     }
   );
-  if (!res.ok) throw new Error(`Bright Data brand ${res.status}`);
+  if (!res.ok) throw new Error(`Bright Data keyword ${res.status}`);
   return res.json();
 }
 
-// Extract useful keyword data from Bright Data product results
+// ═══ 5. Amazon Products - Discover by best sellers URL ═══
+// Scrapes die Bestseller einer Kategorie
+// Liefert: Top-Produkte in der Kategorie, deren Preise, Ratings, Listings
+async function discoverByBestSellers(categoryUrl, apiKey) {
+  const res = await fetch(
+    `${BD_BASE}?dataset_id=gd_l7q7dkf244hwjntr0&notify=false&include_errors=true&type=discover_new&discover_by=best_sellers_url`,
+    {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: [{ category_url: categoryUrl }] }),
+    }
+  );
+  if (!res.ok) throw new Error(`Bright Data best sellers ${res.status}`);
+  return res.json();
+}
+
+// ═══ Data Extraction Helpers ═══
+
+// Extract keyword + competitor data from product search results
 function extractKeywordData(products) {
-  if (!Array.isArray(products)) return { searchTerms: [], competitorKeywords: [] };
+  if (!Array.isArray(products)) return { searchTerms: [], competitorKeywords: [], competitors: [] };
 
   const titleWords = {};
   const bulletWords = {};
+  const competitors = [];
 
   products.forEach(p => {
-    // Extract words from titles
+    // Extract structured competitor info
+    competitors.push({
+      title: p.title || '',
+      brand: p.brand || '',
+      price: p.final_price || p.price || null,
+      currency: p.currency || '',
+      rating: p.rating || null,
+      reviewCount: p.reviews_count || null,
+      asin: p.asin || '',
+      bulletCount: p.feature_bullets?.length || 0,
+      imageCount: Array.isArray(p.images) ? p.images.length : 0,
+    });
+
+    // Extract words from titles for keyword frequency analysis
     if (p.title) {
       const words = p.title.toLowerCase().split(/[\s,|·\-–—]+/).filter(w => w.length > 2);
       words.forEach(w => { titleWords[w] = (titleWords[w] || 0) + 1; });
@@ -93,12 +133,12 @@ function extractKeywordData(products) {
     .slice(0, 15)
     .map(([term, count]) => ({ term, frequency: count }));
 
-  return { searchTerms, competitorKeywords };
+  return { searchTerms, competitorKeywords, competitors: competitors.slice(0, 15) };
 }
 
 // Extract review insights from Bright Data review data
 function extractReviewInsights(reviews) {
-  if (!Array.isArray(reviews)) return { totalReviews: 0, avgRating: 0, themes: [] };
+  if (!Array.isArray(reviews)) return { totalReviews: 0, avgRating: 0, reviews: [] };
 
   return {
     totalReviews: reviews.length,
@@ -113,6 +153,31 @@ function extractReviewInsights(reviews) {
   };
 }
 
+// Extract best seller insights
+function extractBestSellerData(products) {
+  if (!Array.isArray(products)) return { topProducts: [], avgPrice: 0, avgRating: 0 };
+
+  const topProducts = products.slice(0, 20).map(p => ({
+    title: p.title || '',
+    brand: p.brand || '',
+    price: p.final_price || p.price || null,
+    rating: p.rating || null,
+    reviewCount: p.reviews_count || null,
+    asin: p.asin || '',
+  }));
+
+  const prices = topProducts.filter(p => p.price).map(p => p.price);
+  const ratings = topProducts.filter(p => p.rating).map(p => p.rating);
+
+  return {
+    topProducts,
+    avgPrice: prices.length ? Math.round(prices.reduce((a, b) => a + b, 0) / prices.length * 100) / 100 : 0,
+    avgRating: ratings.length ? Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length * 10) / 10 : 0,
+    priceRange: prices.length ? { min: Math.min(...prices), max: Math.max(...prices) } : null,
+  };
+}
+
+// ═══ Handler ═══
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -120,7 +185,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { type, asin, keyword, keywords, marketplace, brandUrl } = req.body || {};
+  const { type, asin, keyword, keywords, marketplace, brandUrl, categoryUrl } = req.body || {};
   const apiKey = process.env.BRIGHT_DATA_API_KEY;
 
   if (!apiKey) return res.status(400).json({ error: 'Bright Data API key not configured', available: false });
@@ -133,33 +198,46 @@ export default async function handler(req, res) {
 
   try {
     switch (type) {
+      // 1. Global keyword search (marketplace-specific)
       case 'keywords': {
         if (!keywords) return res.status(400).json({ error: 'keywords required' });
         const results = await discoverByKeywords(keywords, domain, apiKey);
         const keywordData = extractKeywordData(results);
         return res.status(200).json({ success: true, data: keywordData, raw: results?.slice(0, 10) });
       }
-      case 'keyword': {
-        if (!keyword) return res.status(400).json({ error: 'keyword required' });
-        const results = await discoverByKeyword(keyword, apiKey);
-        const keywordData = extractKeywordData(results);
-        return res.status(200).json({ success: true, data: keywordData, raw: results?.slice(0, 10) });
+      // 2. Brand discovery
+      case 'brand': {
+        if (!brandUrl) return res.status(400).json({ error: 'brandUrl required' });
+        const results = await discoverByBrand(brandUrl, apiKey);
+        const brandData = extractKeywordData(results);
+        return res.status(200).json({ success: true, data: brandData });
       }
+      // 3. Reviews
       case 'reviews': {
         if (!asin) return res.status(400).json({ error: 'asin required' });
         const results = await collectReviews(asin, domain, apiKey);
         const insights = extractReviewInsights(results);
         return res.status(200).json({ success: true, data: insights });
       }
-      case 'brand': {
-        if (!brandUrl) return res.status(400).json({ error: 'brandUrl required' });
-        const results = await discoverByBrand(brandUrl, apiKey);
-        return res.status(200).json({ success: true, data: results?.slice(0, 20) });
+      // 4. Simple keyword search
+      case 'keyword': {
+        if (!keyword) return res.status(400).json({ error: 'keyword required' });
+        const results = await discoverByKeyword(keyword, apiKey);
+        const keywordData = extractKeywordData(results);
+        return res.status(200).json({ success: true, data: keywordData, raw: results?.slice(0, 10) });
+      }
+      // 5. Best sellers by category URL
+      case 'best_sellers': {
+        if (!categoryUrl) return res.status(400).json({ error: 'categoryUrl required' });
+        const results = await discoverByBestSellers(categoryUrl, apiKey);
+        const bsData = extractBestSellerData(results);
+        return res.status(200).json({ success: true, data: bsData });
       }
       default:
-        return res.status(400).json({ error: 'Invalid type. Use: keywords, keyword, reviews, brand' });
+        return res.status(400).json({ error: 'Invalid type. Use: keywords, keyword, reviews, brand, best_sellers' });
     }
   } catch (error) {
     return res.status(500).json({ error: error.message, success: false });
   }
 }
+
