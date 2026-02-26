@@ -16,7 +16,7 @@ function encodeBriefing(d) { try { const json = JSON.stringify(d); const bytes =
 function decodeBriefing(s) { try { const b64 = s.replace(/-/g, "+").replace(/_/g, "/"); const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")); return new Response(ds).text().then(t => JSON.parse(t)); } catch { return Promise.resolve(null); } }
 
 // ═══════ PROMPT ═══════
-const buildPrompt = (asin, mp, pi, ft, productData, density) => {
+const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, reviewData) => {
   const hasA = asin && asin.trim();
   const pd = productData || {};
   let scraped = "";
@@ -30,25 +30,50 @@ const buildPrompt = (asin, mp, pi, ft, productData, density) => {
     if (pd.bullets?.length) scraped += `Bullets:\n${pd.bullets.slice(0, 5).map(b => "- " + b).join("\n")}\n`;
     if (pd.description) scraped += `Beschreibung: ${pd.description.substring(0, 300)}\n`;
   }
+  let kwData = "";
+  if (keywordData) {
+    kwData = "\nAMAZON KEYWORD-DATEN (echte Bright Data Marktdaten):";
+    if (keywordData.searchTerms?.length) kwData += `\nTop-Suchbegriffe aus Titel: ${keywordData.searchTerms.slice(0, 15).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
+    if (keywordData.competitorKeywords?.length) kwData += `\nHäufige Wettbewerber-Keywords (aus Bullets): ${keywordData.competitorKeywords.slice(0, 10).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
+    if (keywordData.competitors?.length) {
+      kwData += `\nTOP-WETTBEWERBER (${keywordData.competitors.length} Produkte auf Seite 1):`;
+      keywordData.competitors.slice(0, 8).forEach((c, i) => {
+        kwData += `\n  ${i + 1}. ${c.brand || "?"}: ${c.title?.substring(0, 80) || "?"} | ${c.price || "?"}${c.currency || ""} | ${c.rating || "?"}★ (${c.reviewCount || "?"} Rev.) | ${c.bulletCount} Bullets | ${c.imageCount} Bilder`;
+      });
+    }
+    kwData += "\nVerwende diese echten Amazon-Suchbegriffe als Basis für die Keywords im Output. Die Wettbewerberdaten nutzen für competitive-Sektion.";
+  }
+  let rvData = "";
+  if (reviewData?.reviews?.length) {
+    rvData = `\nECHTE AMAZON-BEWERTUNGEN (${reviewData.totalReviews} total, Durchschnitt ${reviewData.avgRating}/5):`;
+    rvData += "\n" + reviewData.reviews.slice(0, 25).map(r => `[${r.rating}★${r.verified ? " Verifiziert" : ""}] ${r.title}: ${r.text.substring(0, 200)}`).join("\n");
+    rvData += "\nAnalysiere diese echten Bewertungen für die Review-Sektion. Gruppiere nach Themen, berechne relative Häufigkeiten.";
+  }
   const densityHint = density === "light" ? "\nTEXTDICHTE: Wenig Text. Kurze Headlines, kurze Bullets (max 4-5 Wörter), weniger Bullets (max 3). Subheadlines optional." : "";
   return `Analysiere ${hasA ? "ASIN " + asin + " auf " : ""}${mp || "Amazon.de"}. Erstelle 7-Bild-Briefing.
-${pi ? "Produkt: " + pi : ""}${ft ? "\nHinweise: " + ft : ""}${scraped}${densityHint}
+${pi ? "Produkt: " + pi : ""}${ft ? "\nHinweise: " + ft : ""}${scraped}${kwData}${rvData}${densityHint}
 REGELN:
-- Headlines: max 25 Zeichen, 3 Varianten (1:Feature/USP direkt, 2:Kundenvorteil, 3:Kreativ). Keine Kommas/Gedankenstriche. Konkret statt abstrakt.
-- Subheadlines: 3 Varianten (kurz/erklärend/emotional). Dürfen auch leer bleiben falls nicht nötig.
-- Bullets: So viele wie inhaltlich sinnvoll (2-6), NICHT immer gleich viele pro Bild. Orientiere dich am Bildinhalt. Schlüsselwörter mit **fett** markieren. Jeder Bullet max 1-2 Fettungen.
-- Badge: Max 1 Badge pro Bild. Nur wenn es einen wirklich herausragenden Fakt gibt (z.B. "Inkl. Videoanleitung", "Nur 1g Zucker", "TÜV-geprüft"). Nicht jedes Bild braucht ein Badge! badges ist ein Array mit 0 oder 1 Einträgen. Badge = auffälligstes Eyecatcher-Element, nur für besonders wichtige/coole/persönliche Fakten.
+- Headlines: max 25 Zeichen, 3 Varianten. KEINE Gedankenstriche (—, –, -) in Headlines, Subheadlines, Bullets oder Badges. Verwende auch keine Satzkonstruktionen, die Gedankenstriche erfordern. Keine Kommas.
+  1. "USP": Nenne das KONKRETE Alleinstellungsmerkmal direkt beim Namen (z.B. "Premium-Silikon" statt "Hochwertig kochen", "3-Schicht-Filter" statt "Saubere Luft"). Das wichtigste Produktmerkmal MUSS in der Headline stehen.
+  2. "Kundenvorteil": Formuliere den konkreten Nutzen aus Kundensicht (z.B. "Nie wieder Verbrennungen" statt "Sicher kochen"). Was hat der Kunde davon?
+  3. "Kreativ": Emotionale, aufmerksamkeitsstarke Variante (z.B. "Kochen wie ein Profi", "Dein Küchen-Upgrade").
+- HIERARCHIE: Die wichtigsten Produktaspekte (Material, Hauptfeature, Kernvorteil) MÜSSEN bereits in Headline/Subheadline stehen. Bullets vertiefen diese Aspekte, wiederholen sie aber nicht. Headline = Kernaussage, Subheadline = Erweiterung, Bullets = Details.
+- Subheadlines: 3 Varianten (kurz/erklärend/emotional). Dürfen auch leer bleiben falls nicht nötig. KEINE Gedankenstriche.
+- Bullets: So viele wie inhaltlich sinnvoll (2-6), NICHT immer gleich viele pro Bild. Orientiere dich am Bildinhalt. Schlüsselwörter mit **fett** markieren. Jeder Bullet max 1-2 Fettungen. KEINE Gedankenstriche. Achte auf korrekte deutsche Grammatik.
+- Badge: Max 1 Badge pro Bild. Nur wenn es einen wirklich herausragenden Fakt gibt (z.B. "Inkl. Videoanleitung", "Nur 1g Zucker", "TÜV-geprüft"). Nicht jedes Bild braucht ein Badge! badges ist ein Array mit 0 oder 1 Einträgen. Badge = auffälligstes Eyecatcher-Element, nur für besonders wichtige/coole/persönliche Fakten. KEINE Gedankenstriche.
 - Bildtexte DE, Concept/Rationale/Visual EN. Keywords integrieren.
 - Lifestyle ohne Text-Overlay: concept+visual DETAILLIERT (Szenerie, Personen, Stimmung, Kamera).
 - Fussnoten mit * im referenzierten Text kennzeichnen (z.B. "Laborgetestet*") und Fussnote beginnt mit "* ...".
 - Reviews: relative %, absteigend, deutlich unterschiedlich (nicht alle 30-35%).
 - Blacklist: vulgaer, negative Laendernennung, Wettbewerber-Vergleiche, unbelegte Statistiken.
 - Siegel: nur beantragungspflichtige. Kaufausloeser absteigend. Keywords: used true/false.
+- KEYWORDS: Recherchiere echte Amazon-Suchbegriffe, die Kunden tatsächlich in die Amazon-Suche eingeben würden, um dieses spezifische Produkt zu finden. Volume-Keywords = Hauptsuchbegriffe mit hohem Suchvolumen (z.B. "Nudelsieb", "Sieb Küche", "Abtropfsieb"). Purchase-Keywords = Kaufentscheidende Suchbegriffe, die auf konkrete Kaufabsicht hindeuten (z.B. "Nudelsieb Silikon", "Nudelsieb faltbar"). KEINE generischen Adjektive wie "BPA-frei" oder "hitzebeständig" als alleinstehende Keywords verwenden.
 
 BILDER: Main(kein Text, 3 Eyecatcher mit risk:low/medium), PT01(STAERKSTER Kauftrigger), PT02(Differenzierung), PT03(Lifestyle/emotional), PT04-06(Einwandbehandlung neg. Reviews).
+Jedes Bild MUSS ein "theme" Feld haben: Kurze Beschreibung des Bildthemas (2-4 Wörter, DE), z.B. "Materialqualität", "Lifestyle Küche", "Größenvergleich".
 
 NUR JSON, keine Backticks/Markdown:
-{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[7 Objekte mit id:main/pt01-pt06, label, role, concept(EN), rationale(EN), visual(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:["variabel viele, **fett** markiert"],badges:["max 1 oder leer"],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
+{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[7 Objekte mit id:main/pt01-pt06, label, theme(DE kurz 2-4 Wörter), role, concept(EN), rationale(EN), visual(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:["variabel viele, **fett** markiert"],badges:["max 1 oder leer"],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
 };
 
 // ═══════ JSON EXTRACTION ═══════
@@ -69,7 +94,7 @@ function extractJSON(text) {
 }
 
 // ═══════ API ═══════
-async function runAnalysis(asin, mp, pi, ft, onS, productData, density) {
+async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordData, reviewData) {
   onS("Sende Analyse-Anfrage...");
   let r;
   try {
@@ -79,7 +104,7 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density) {
         model: "claude-sonnet-4-20250514",
         max_tokens: 16000,
         system: "Amazon Listing Analyst. Antworte NUR mit validem JSON. Kein Markdown/Codeblocks/Text. Antwort beginnt mit { und endet mit }.",
-        messages: [{ role: "user", content: buildPrompt(asin, mp, pi, ft, productData, density) }],
+        messages: [{ role: "user", content: buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData) }],
         tools: [{ type: "web_search_20250305", name: "web_search" }],
       }),
     });
@@ -123,6 +148,70 @@ async function scrapeProduct(asin, marketplace) {
     const d = await r.json();
     return { images: d.images || [], productData: d.productData || {} };
   } catch { return { images: [], productData: {} }; }
+}
+
+// Bright Data API helper
+async function bdFetch(body) {
+  try {
+    const r = await fetch("/api/keyword-research", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.success ? d.data : null;
+  } catch { return null; }
+}
+
+// 1. Keyword-Recherche (Global, marktplatzspezifisch)
+async function fetchKeywordData(keyword, marketplace) {
+  if (!keyword?.trim()) return null;
+  return bdFetch({ type: "keywords", keywords: keyword.trim(), marketplace });
+}
+
+// 2. Einfache Keyword-Suche (ohne Marktplatz)
+async function fetchSimpleKeywordData(keyword) {
+  if (!keyword?.trim()) return null;
+  return bdFetch({ type: "keyword", keyword: keyword.trim() });
+}
+
+// 3. Echte Amazon-Reviews
+async function fetchReviewData(asin, marketplace) {
+  if (!asin?.trim()) return null;
+  return bdFetch({ type: "reviews", asin: asin.trim(), marketplace });
+}
+
+// 4. Brand-Analyse (Seller/Brand URL)
+async function fetchBrandData(brandUrl) {
+  if (!brandUrl?.trim()) return null;
+  return bdFetch({ type: "brand", brandUrl: brandUrl.trim() });
+}
+
+// 5. Bestseller der Kategorie
+async function fetchBestSellers(categoryUrl) {
+  if (!categoryUrl?.trim()) return null;
+  return bdFetch({ type: "best_sellers", categoryUrl: categoryUrl.trim() });
+}
+
+// Merge keyword data from multiple Bright Data sources
+function mergeKeywordData(global, simple) {
+  if (!global && !simple) return null;
+  const merged = { searchTerms: [], competitorKeywords: [], competitors: [] };
+  // Merge search terms (deduplicate by term name)
+  const termMap = {};
+  [global?.searchTerms, simple?.searchTerms].forEach(arr => {
+    (arr || []).forEach(t => { termMap[t.term] = (termMap[t.term] || 0) + t.frequency; });
+  });
+  merged.searchTerms = Object.entries(termMap).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([term, frequency]) => ({ term, frequency }));
+  // Merge competitor keywords
+  const kwMap = {};
+  [global?.competitorKeywords, simple?.competitorKeywords].forEach(arr => {
+    (arr || []).forEach(t => { kwMap[t.term] = (kwMap[t.term] || 0) + t.frequency; });
+  });
+  merged.competitorKeywords = Object.entries(kwMap).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([term, frequency]) => ({ term, frequency }));
+  // Competitors only from global (has marketplace context)
+  merged.competitors = global?.competitors || simple?.competitors || [];
+  return merged;
 }
 
 // ═══════ COMPONENTS ═══════
@@ -205,7 +294,7 @@ function OverwriteWarn({ name, onOk, onNo }) {
 }
 
 // ═══════ BILD-BRIEFING ═══════
-function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, setBdgSel, listingImgs }) {
+function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, setBdgSel }) {
   const [sel, setSel] = useState(0);
   if (!D.images?.length) return null;
   const img = D.images[sel], te = img?.texts;
@@ -224,14 +313,14 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
   const allBadges = [...(te?.badges || []), ...(te?.callouts || [])];
   const badgeOn = bdgSel[img.id] !== false; // default: included
   const allTxt = te ? [curHl, curSh, ...selectedBullets, ...(badgeOn ? allBadges : [])].filter(Boolean).join("\n") : "";
-  const curListingImg = listingImgs && listingImgs[sel] ? listingImgs[sel].base64 : null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>{D.images.map((im, i) => {
         const h = im.texts?.headlines || (im.texts?.headline ? [im.texts.headline] : []);
         const ov = h.some(x => x.length > MAX_HL);
         const tabLabel = IMG_LABELS[i] || im.label;
-        return <button key={i} onClick={() => setSel(i)} style={{ ...gS, padding: "9px 16px", background: sel === i ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(255,255,255,0.5)", color: sel === i ? "#fff" : ov ? V.rose : V.textDim, border: ov && sel !== i ? `1.5px solid ${V.rose}50` : sel === i ? "none" : "1px solid rgba(0,0,0,0.06)", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: sel === i ? `0 4px 20px ${V.violet}40` : "none" }}>{tabLabel}{ov ? " !" : ""}</button>;
+        const theme = im.theme || "";
+        return <button key={i} onClick={() => setSel(i)} style={{ ...gS, padding: "8px 14px", background: sel === i ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(255,255,255,0.5)", color: sel === i ? "#fff" : ov ? V.rose : V.textDim, border: ov && sel !== i ? `1.5px solid ${V.rose}50` : sel === i ? "none" : "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: sel === i ? `0 4px 20px ${V.violet}40` : "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 0 }}><span style={{ fontSize: 11, fontWeight: 800 }}>{tabLabel}</span>{theme && <span style={{ fontSize: 9, fontWeight: 500, opacity: sel === i ? 0.85 : 0.7, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis" }}>{theme}</span>}{ov && <span style={{ fontSize: 8, color: sel === i ? "#fff" : V.rose }}>!</span>}</button>;
       })}</div>
       <GC>
         <div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -239,7 +328,6 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
           {te && <CopyBtn text={allTxt} label="Alle Texte" />}
         </div>
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
-          {curListingImg && <div style={{ ...gS, padding: 12, display: "flex", gap: 14, alignItems: "flex-start" }}><img src={curListingImg} alt={img.label} style={{ width: 80, height: 80, objectFit: "contain", borderRadius: 8, background: "#fff", border: "1px solid rgba(0,0,0,0.06)" }} /><div><Lbl c={V.rose}>Aktuelles Listing-Bild</Lbl><p style={{ fontSize: 11, color: V.textDim, margin: 0, lineHeight: 1.4 }}>So sieht das {img.label} aktuell auf Amazon aus. Das neue Briefing rechts ersetzt dieses Bild.</p></div></div>}
           {img.concept && <div><Lbl c={V.blue}>Bildkonzept</Lbl><p style={{ fontSize: 13, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.concept}</p></div>}
           {img.rationale && <div style={{ background: `${V.violet}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.violet}12` }}><Lbl c={V.violet}>Strategische Begründung</Lbl><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.rationale}</p></div>}
 
@@ -249,7 +337,7 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             {/* HEADLINES */}
             <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.orange}>HEADLINE-VARIANTEN</Pill><CopyBtn text={curHl} /></div>
-              {hls.map((h, i) => { const ov = h.length > MAX_HL, act = ci === i; const labels = ["Feature/USP", "Kundenvorteil", "Kreativ"]; return <div key={i} onClick={() => setHlC(p => ({ ...p, [img.id]: i }))} style={{ padding: "10px 14px", borderRadius: 10, border: act ? `2px solid ${V.violet}` : `1px solid ${ov ? V.rose + "40" : "rgba(0,0,0,0.06)"}`, background: act ? `${V.violet}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.violet}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.violet }} />}</div><span style={{ fontSize: 15, fontWeight: 800, color: V.ink }}>{h}</span></div><div style={{ display: "flex", gap: 6, alignItems: "center" }}><span style={{ fontSize: 9, color: V.textDim, fontWeight: 600 }}>{labels[i] || ""}</span><span style={{ fontSize: 10, fontWeight: 700, color: ov ? V.rose : V.textDim }}>{h.length}/{MAX_HL}</span></div></div>; })}
+              {hls.map((h, i) => { const ov = h.length > MAX_HL, act = ci === i; const labels = ["USP", "Kundenvorteil", "Kreativ"]; const labelColors = [V.orange, V.emerald, V.violet]; return <div key={i} onClick={() => setHlC(p => ({ ...p, [img.id]: i }))} style={{ padding: "10px 14px", borderRadius: 10, border: act ? `2px solid ${V.violet}` : `1px solid ${ov ? V.rose + "40" : "rgba(0,0,0,0.06)"}`, background: act ? `${V.violet}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.violet}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.violet }} />}</div><span style={{ fontSize: 15, fontWeight: 800, color: V.ink }}>{h}</span></div><div style={{ display: "flex", gap: 6, alignItems: "center" }}><span style={{ fontSize: 9, color: labelColors[i] || V.textDim, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: `${labelColors[i] || V.textDim}12` }}>{labels[i] || ""}</span><span style={{ fontSize: 10, fontWeight: 700, color: ov ? V.rose : V.textDim }}>{h.length}/{MAX_HL}</span></div></div>; })}
             </div>
             {/* SUBHEADLINES */}
             {subs.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
@@ -310,6 +398,8 @@ function calcLQS(pd) {
     { label: "Bewertungen vorhanden", ok: (pd.reviewCount || 0) > 0, weight: 1 },
     { label: "Rating >= 4.0", ok: parseFloat(pd.rating || 0) >= 4.0, weight: 1 },
     { label: "7+ Bilder", ok: (pd.imageCount || 0) >= 7, weight: 1.5 },
+    { label: "Inkl. Video", ok: !!pd.hasVideo, weight: 0.5 },
+    { label: "20+ Bewertungen", ok: parseInt(pd.reviewCount || 0) >= 20, weight: 1 },
   ];
   const maxW = checks.reduce((a, c) => a + c.weight, 0);
   const score = checks.reduce((a, c) => a + (c.ok ? c.weight : 0), 0);
@@ -346,12 +436,44 @@ function AnalyseTab({ D, lqs }) {
   );
 }
 
+// ═══════ CURRENT LISTING TAB ═══════
+function CurrentListingTab({ listingImgs, productData }) {
+  if (!listingImgs?.length && !productData) return <GC style={{ padding: 28, textAlign: "center" }}><span style={{ fontSize: 13, color: V.textDim }}>Keine Amazon-Daten verfügbar. Bitte eine ASIN eingeben.</span></GC>;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {productData && (productData.title || productData.brand) && <GC style={{ padding: 20 }}>
+        <Lbl c={V.blue}>Produktdaten</Lbl>
+        {productData.title && <div style={{ fontSize: 14, fontWeight: 700, color: V.ink, marginBottom: 8, lineHeight: 1.5 }}>{productData.title}</div>}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {productData.brand && <Pill c={V.violet}>{productData.brand}</Pill>}
+          {productData.price && <Pill c={V.emerald}>{productData.price}</Pill>}
+          {productData.rating && <Pill c={V.amber}>{productData.rating}/5 ({productData.reviewCount || "?"} Bewertungen)</Pill>}
+          {productData.bsr && <Pill c={V.textMed}>BSR #{productData.bsr}{productData.category ? ` in ${productData.category}` : ""}</Pill>}
+        </div>
+        {productData.bullets?.length > 0 && <div style={{ marginTop: 14 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: V.teal, textTransform: "uppercase", letterSpacing: ".06em" }}>Aktuelle Bullet Points</span>
+          {productData.bullets.map((b, i) => <div key={i} style={{ fontSize: 12, color: V.textMed, lineHeight: 1.6, marginTop: 6, paddingLeft: 12, borderLeft: `2px solid ${V.teal}20` }}>{b}</div>)}
+        </div>}
+      </GC>}
+      {listingImgs?.length > 0 && <GC style={{ padding: 20 }}>
+        <Lbl c={V.rose}>Aktuelle Amazon-Bilder</Lbl>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12 }}>
+          {listingImgs.map((im, i) => <div key={i} style={{ ...gS, padding: 8, textAlign: "center" }}>
+            {im.base64 && <img src={im.base64} alt={IMG_LABELS[i]} style={{ width: "100%", height: 120, objectFit: "contain", borderRadius: 8, background: "#fff" }} />}
+            <div style={{ fontSize: 11, fontWeight: 700, color: V.ink, marginTop: 6 }}>{IMG_LABELS[i]}</div>
+          </div>)}
+        </div>
+      </GC>}
+    </div>
+  );
+}
+
 // ═══════ BRIEFING EXPORT ═══════
 const IMG_LABELS = ["Main Image", "PT.01", "PT.02", "PT.03", "PT.04", "PT.05", "PT.06"];
 function genBrief(D, hlC, shC, bulSel, bdgSel) {
   let t = `AMAZON GALLERY IMAGE BRIEFING\n${"=".repeat(50)}\nProduct: ${D.product?.name} | ${D.product?.brand}\nMarketplace: ${D.product?.marketplace}\n\n`;
   (D.images || []).forEach((im, idx) => {
-    const expLabel = IMG_LABELS[idx] + " - " + (im.role || im.label);
+    const expLabel = IMG_LABELS[idx] + (im.theme ? " | " + im.theme : "") + " (" + (im.role || im.label) + ")";
     t += `${"-".repeat(50)}\n${expLabel}\n${"-".repeat(50)}\nCONCEPT:\n${im.concept}\n\nRATIONALE:\n${im.rationale}\n`;
     if (im.eyecatchers?.length) t += `\nEYECATCHER IDEAS:\n${im.eyecatchers.map((e, i) => `  ${i + 1}. ${e.idea} [${e.risk}]`).join("\n")}\n`;
     if (im.texts) {
@@ -404,7 +526,7 @@ function DesignerView({ D, selections }) {
           <div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{D.product?.name}</div>
           <div style={{ fontSize: 11, color: V.textDim }}>{D.product?.brand} · {D.product?.marketplace}</div>
         </div>
-        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, marginBottom: 14 }}>{D.images.map((im, i) => <button key={i} onClick={() => setSel(i)} style={{ ...gS, padding: "9px 16px", background: sel === i ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(255,255,255,0.5)", color: sel === i ? "#fff" : V.textDim, border: sel === i ? "none" : "1px solid rgba(0,0,0,0.06)", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: sel === i ? `0 4px 20px ${V.violet}40` : "none" }}>{IMG_LABELS[i] || im.label}</button>)}</div>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, marginBottom: 14 }}>{D.images.map((im, i) => <button key={i} onClick={() => setSel(i)} style={{ ...gS, padding: "8px 14px", background: sel === i ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(255,255,255,0.5)", color: sel === i ? "#fff" : V.textDim, border: sel === i ? "none" : "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: sel === i ? `0 4px 20px ${V.violet}40` : "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}><span style={{ fontSize: 11, fontWeight: 800 }}>{IMG_LABELS[i] || im.label}</span>{im.theme && <span style={{ fontSize: 9, fontWeight: 500, opacity: sel === i ? 0.85 : 0.7 }}>{im.theme}</span>}</button>)}</div>
         <GC>
           <div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
             <span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{IMG_LABELS[sel] || img.label}</span><span style={{ fontSize: 12, color: V.textDim, marginLeft: 10 }}>{img.role}</span>
@@ -470,7 +592,7 @@ function PresentationView({ briefing, productData, listingImgs, level }) {
   slides.push({ id: "images", render: () => <div style={{ padding: "50px 80px" }}>
     <h2 style={{ fontSize: 28, fontWeight: 900, color: TC.bk, margin: "0 0 8px" }}>Bild<span style={{ color: TC.or }}>strategie</span></h2>
     <p style={{ fontSize: 14, color: "#5A6B80", margin: "0 0 24px" }}>{(D?.images || []).length} datenbasierte Bilder für maximale Conversion</p>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>{(D?.images || []).map((im, i) => { const bgc = [TC.re, TC.or, TC.na, TC.lb, TC.re, TC.or, TC.na][i]; return <div key={i} style={{ background: bgc, borderRadius: 12, padding: 16, color: TC.wh, minHeight: 90 }}><div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4 }}>{IMG_LABELS[i]}</div><div style={{ fontSize: 9, opacity: 0.85, marginBottom: 8 }}>{im.role}</div><div style={{ fontSize: 10 }}>{im.texts?.headlines?.[0] || "Visuell"}</div></div>; })}</div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>{(D?.images || []).map((im, i) => { const bgc = [TC.re, TC.or, TC.na, TC.lb, TC.re, TC.or, TC.na][i]; return <div key={i} style={{ background: bgc, borderRadius: 12, padding: 16, color: TC.wh, minHeight: 90 }}><div style={{ fontSize: 12, fontWeight: 800, marginBottom: 2 }}>{IMG_LABELS[i]}</div>{im.theme && <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.95, marginBottom: 4 }}>{im.theme}</div>}<div style={{ fontSize: 9, opacity: 0.85, marginBottom: 8 }}>{im.role}</div><div style={{ fontSize: 10 }}>{im.texts?.headlines?.[0] || "Visuell"}</div></div>; })}</div>
   </div> });
   // S5: Aktuelles Listing (wenn Bilder vorhanden)
   if (listingImgs?.length > 0) slides.push({ id: "current", render: () => <div style={{ padding: "50px 80px" }}>
@@ -604,10 +726,10 @@ function exportPDF(D, listingImgs) {
     const bgc = i === 0 ? C.re : [C.or, C.na, C.lb, C.re, C.or, C.na, C.lb][i] || C.bg;
     pdf.setFillColor(bgc); pdf.roundedRect(bx, by, 74, 52, 3, 3, "F");
     pdf.setFontSize(9); pdf.setTextColor(C.wh); pdf.setFont("helvetica", "bold"); pdf.text(String(im.label || ""), bx + 6, by + 12);
-    pdf.setFontSize(6.5); pdf.text(String(im.role || ""), bx + 6, by + 18);
+    if (im.theme) { pdf.setFontSize(7); pdf.text(String(im.theme), bx + 6, by + 18); pdf.setFontSize(6); pdf.text(String(im.role || ""), bx + 6, by + 24); } else { pdf.setFontSize(6.5); pdf.text(String(im.role || ""), bx + 6, by + 18); }
     pdf.setFontSize(7); pdf.setFont("helvetica", "normal");
     const hl = im.texts?.headlines?.[0] || im.texts?.headline || "Nur visuell";
-    pdf.text(pdf.splitTextToSize(hl, 62), bx + 6, by + 26);
+    pdf.text(pdf.splitTextToSize(hl, 62), bx + 6, by + (im.theme ? 30 : 26));
   });
   colorBar(); footer(5, TP);
 
@@ -681,7 +803,7 @@ function exportPDF(D, listingImgs) {
 }
 
 // ═══════ MAIN ═══════
-const TABS = [{ id: "b", l: "Bild-Briefing" }, { id: "r", l: "Bewertungen" }, { id: "a", l: "Analyse" }];
+const TABS = [{ id: "b", l: "Bild-Briefing" }, { id: "r", l: "Bewertungen" }, { id: "a", l: "Analyse" }, { id: "c", l: "Aktuelles Listing" }];
 export default function App() {
   const [data, setData] = useState(null), [tab, setTab] = useState("b"), [brandLogo, setBL] = useState(null), [showExp, setSE] = useState(false), [pdfL, setPL] = useState(false), [loading, setL] = useState(false), [status, setSt] = useState(""), [error, setE] = useState(null), [showNew, setSN] = useState(false), [pending, setP] = useState(null), [hlC, setHlC] = useState({}), [shC, setShC] = useState({}), [bulSel, setBulSel] = useState({}), [bdgSel, setBdgSel] = useState({}), [curAsin, setCurAsin] = useState(""), [showHist, setShowHist] = useState(false), [listingImgs, setListingImgs] = useState([]), [productData, setPD] = useState(null), [txtDensity, setTD] = useState("normal");
   const fR = useRef(null);
@@ -699,12 +821,29 @@ export default function App() {
   const go = useCallback(async (a, m, p, f) => {
     setL(true); setE(null); setSt("Starte...");
     try {
-      // Step 1: Scrape Amazon data first (if ASIN provided)
-      let scrapeResult = { images: [], productData: {} };
-      if (a && a.trim()) { setSt("Lade Amazon-Daten..."); scrapeResult = await scrapeProduct(a, m); }
-      // Step 2: Run AI analysis with scraped product data
-      const result = await runAnalysis(a, m, p, f, setSt, scrapeResult.productData, txtDensity);
-      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setListingImgs(scrapeResult.images); setPD({ ...scrapeResult.productData, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
+      // Step 1: Scrape Amazon product data first (needed for keyword search term)
+      setSt("Lade Amazon-Produktdaten...");
+      const scrapeResult = a && a.trim() ? await scrapeProduct(a, m) : { images: [], productData: {} };
+      const pd = scrapeResult.productData || {};
+      // Derive best search term: product title keywords or user input
+      const searchTerm = pd.title ? pd.title.split(/[,|·\-–—]/).slice(0, 2).join(" ").trim().substring(0, 60) : (p ? p.split(/[,.\n]/)[0].trim() : "");
+      // Step 2: All Bright Data queries in parallel
+      setSt("Recherchiere Keywords, Reviews & Wettbewerber...");
+      const [kwGlobal, kwSimple, rvResult] = await Promise.all([
+        // 1. Global keyword search (marketplace-specific) - für Wettbewerber + Keywords
+        searchTerm ? fetchKeywordData(searchTerm, m) : Promise.resolve(null),
+        // 4. Simple keyword search (ergänzend) - breitere Keyword-Perspektive
+        searchTerm ? fetchSimpleKeywordData(searchTerm) : Promise.resolve(null),
+        // 3. Echte Reviews - für Review-Analyse
+        a && a.trim() ? fetchReviewData(a, m) : Promise.resolve(null),
+        // 2. Brand discovery + 5. Best sellers - benötigen URLs die wir ggf. nicht haben
+        // Diese werden nur genutzt wenn brandUrl/categoryUrl vorhanden
+      ]);
+      // Merge keyword results from both endpoints
+      const kwResult = mergeKeywordData(kwGlobal, kwSimple);
+      // Step 3: Run AI analysis with all scraped + researched data
+      const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult);
+      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setListingImgs(scrapeResult.images); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, [txtDensity]);
@@ -732,9 +871,10 @@ export default function App() {
       </div></div>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 80px", position: "relative", zIndex: 1 }}>
         {showHist && (() => { const hist = loadH(); return hist.length > 0 ? <GC style={{ padding: 0, marginBottom: 14 }}><div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl><button onClick={() => setShowHist(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div><div style={{ padding: "6px 10px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px", borderRadius: 10, cursor: "pointer" }} onClick={() => { setData(h.data); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(h.asin || ""); setShowHist(false); }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC> : <GC style={{ padding: 16, marginBottom: 14, textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Noch keine gespeicherten Briefings.</span></GC>; })()}
-        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} listingImgs={listingImgs} />}
+        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} />}
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
+        {tab === "c" && <CurrentListingTab listingImgs={listingImgs} productData={productData} />}
       </div>
       {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /><button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
       {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f); }} onNo={() => setP(null)} />}
