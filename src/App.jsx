@@ -577,20 +577,19 @@ function DesignerView({ D, selections }) {
 
 // ═══════ PRESENTATION VIEW (standalone shareable page, temoa CI) ═══════
 const TC = { or: "#FF9903", lb: "#CDE6F4", re: "#FF3132", na: "#043047", bk: "#000", wh: "#FFF" };
-// Slide helper components
-const PSlideH = ({ children, accent }) => <h2 style={{ fontSize: 28, fontWeight: 900, color: TC.bk, margin: "0 0 28px", lineHeight: 1.2 }}>{children}</h2>;
+const PSlideH = ({ children }) => <h2 style={{ fontSize: 28, fontWeight: 900, color: TC.bk, margin: "0 0 28px", lineHeight: 1.2 }}>{children}</h2>;
 const PBar = ({ pct, maxPct, color }) => <div style={{ flex: 1, height: 5, background: "#E8EAF0", borderRadius: 99 }}><div style={{ width: `${maxPct > 0 ? (pct / maxPct) * 100 : 0}%`, height: "100%", background: color, borderRadius: 99 }} /></div>;
-function PresentationView({ briefing, productData, listingImgs }) {
+const PPlaceholder = ({ title, desc }) => <div style={{ padding: "60px 80px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", textAlign: "center" }}><div style={{ width: 60, height: 60, borderRadius: 16, background: `${TC.or}12`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}><span style={{ fontSize: 24, color: TC.or }}>◆</span></div><h2 style={{ fontSize: 24, fontWeight: 900, color: TC.bk, margin: "0 0 8px" }}>{title}</h2><p style={{ fontSize: 14, color: "#8E9AAD", maxWidth: 400 }}>{desc}</p></div>;
+function PresentationView({ briefing, productData, listingImgs, level = 1 }) {
   const [slide, setSlide] = useState(0);
   const D = briefing, a = D?.audience || {}, rv = D?.reviews || { positive: [], negative: [] }, k = D?.keywords || {}, co = D?.competitive || {}, lw = D?.listingWeaknesses || [];
   const lqs = calcLQS(productData);
   const ic = { high: TC.re, medium: TC.or, low: "#8E9AAD" };
   const pad = { padding: "50px 80px" };
 
-  // ═══ Modular slide builder ═══
   const slides = [];
 
-  // 1. TITLE
+  // ── 1. Titelfolie (L1+) ── Produkt + KI
   slides.push({ id: "title", label: "Titel", render: () => <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-start", height: "100%", ...pad }}>
     <div style={{ display: "flex", gap: 8, marginBottom: 40 }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ width: 12, height: 12, borderRadius: 3, background: c }} />)}</div>
     <h1 style={{ fontSize: 42, fontWeight: 900, color: TC.bk, margin: 0, lineHeight: 1.2 }}>Datenbasierte<br /><span style={{ color: TC.re }}>Listing-Analyse</span></h1>
@@ -603,7 +602,19 @@ function PresentationView({ briefing, productData, listingImgs }) {
     </div>
   </div> });
 
-  // 2. LQS
+  // ── 2. Über uns / Team (L1+) ── Statisch
+  slides.push({ id: "about", label: "Über uns", render: () => <PPlaceholder title="Über uns / Team" desc="Statischer Inhalt: Vorstellung des temoa-Teams, Kompetenzen und Erfahrung im Amazon-Ökosystem." /> });
+
+  // ── 3. Kunden-Logos / Trust (L1+) ── Statisch
+  slides.push({ id: "trust", label: "Trust", render: () => <PPlaceholder title="Kunden-Logos & Trust-Elemente" desc="Statischer Inhalt: Referenz-Logos, Partnerschaften und Vertrauensindikatoren." /> });
+
+  // ── 4. Framework – Organic First (L1+) ── Statisch
+  slides.push({ id: "framework", label: "Framework", render: () => <PPlaceholder title="Organic First Framework" desc="Statischer Inhalt: Erklärung des temoa Organic-First-Ansatzes und der Methodik." /> });
+
+  // ── 5. KI & Datenansatz (L1+) ── Statisch
+  slides.push({ id: "data-approach", label: "Datenansatz", render: () => <PPlaceholder title="KI & Datenansatz" desc="Statischer Inhalt: Wie temoa KI und Datenanalyse für Listing-Optimierung einsetzt." /> });
+
+  // ── 6. Listing Quality Score (L1+) ── Scraping
   if (lqs) slides.push({ id: "lqs", label: "Quality Score", render: () => <div style={pad}>
     <PSlideH>Listing Quality <span style={{ color: TC.or }}>Score</span></PSlideH>
     <div style={{ display: "flex", gap: 40, alignItems: "center", marginBottom: 30 }}>
@@ -617,7 +628,7 @@ function PresentationView({ briefing, productData, listingImgs }) {
     </div>
   </div> });
 
-  // 3. LISTING WEAKNESSES
+  // ── 7. Schwachstellen (L1+) ── KI
   if (lw.length > 0) slides.push({ id: "weaknesses", label: "Schwachstellen", render: () => <div style={pad}>
     <PSlideH>Listing-<span style={{ color: TC.re }}>Schwachstellen</span></PSlideH>
     <p style={{ fontSize: 14, color: "#5A6B80", margin: "0 0 24px" }}>{lw.length} identifizierte Optimierungspunkte</p>
@@ -627,24 +638,7 @@ function PresentationView({ briefing, productData, listingImgs }) {
     </div>)}
   </div> });
 
-  // 4. ZIELGRUPPE & KAUFAUSLÖSER
-  slides.push({ id: "audience", label: "Zielgruppe", render: () => <div style={pad}>
-    <PSlideH>Zielgruppe & <span style={{ color: TC.or }}>Kaufauslöser</span></PSlideH>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30 }}>
-      <div>
-        <div style={{ fontSize: 11, fontWeight: 800, color: TC.na, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10 }}>Persona</div>
-        <p style={{ fontSize: 13, color: "#5A6B80", lineHeight: 1.65, margin: "0 0 16px" }}>{a.persona}</p>
-        {a.desire && <div style={{ padding: 12, background: "#ECFDF5", borderRadius: 10, marginBottom: 8 }}><div style={{ fontSize: 10, fontWeight: 800, color: "#1A8754" }}>KERNWUNSCH</div><div style={{ fontSize: 12, color: "#1A8754", marginTop: 2 }}>{a.desire}</div></div>}
-        {a.fear && <div style={{ padding: 12, background: "#FFF0F0", borderRadius: 10 }}><div style={{ fontSize: 10, fontWeight: 800, color: TC.re }}>KERNANGST</div><div style={{ fontSize: 12, color: TC.re, marginTop: 2 }}>{a.fear}</div></div>}
-      </div>
-      <div>
-        <div style={{ fontSize: 11, fontWeight: 800, color: TC.or, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10 }}>Kaufauslöser (absteigend)</div>
-        {(a.triggers || []).slice(0, 6).map((t, i) => <div key={i} style={{ display: "flex", gap: 12, marginBottom: 10, padding: "8px 12px", borderRadius: 8, background: i === 0 ? `${TC.or}12` : "transparent" }}><span style={{ fontSize: 16, fontWeight: 900, color: TC.or, width: 24, flexShrink: 0 }}>{i + 1}</span><span style={{ fontSize: 13, color: i === 0 ? TC.bk : "#5A6B80", fontWeight: i === 0 ? 700 : 400 }}>{t}</span></div>)}
-      </div>
-    </div>
-  </div> });
-
-  // 5. REVIEWS
+  // ── 8. Bewertungsanalyse (L1+) ── KI + Scraping
   slides.push({ id: "reviews", label: "Bewertungen", render: () => { const mp = Math.max(...rv.positive.map(x => x.pct || 0), 1); const mn = Math.max(...rv.negative.map(x => x.pct || 0), 1); return <div style={pad}>
     <PSlideH>Bewertungs<span style={{ color: TC.re }}>analyse</span></PSlideH>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40 }}>
@@ -659,77 +653,146 @@ function PresentationView({ briefing, productData, listingImgs }) {
     </div>
   </div>; } });
 
-  // 6. NEGATIVE REVIEWS DETAIL (with quotes + actions)
-  if (rv.negative?.length > 0) slides.push({ id: "neg-detail", label: "Einwände", render: () => <div style={pad}>
-    <PSlideH>Negative Reviews <span style={{ color: TC.or }}>im Detail</span></PSlideH>
-    {rv.negative.slice(0, 4).map((x, i) => <div key={i} style={{ marginBottom: 16, padding: "12px 16px", borderRadius: 10, background: "#F8F9FB", borderLeft: `3px solid ${x.status === "solved" ? "#1A8754" : x.status === "unclear" ? TC.or : "#8E9AAD"}` }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><span style={{ fontSize: 14, fontWeight: 700, color: TC.bk }}>{x.theme} (~{x.pct}%)</span><span style={{ fontSize: 10, fontWeight: 700, color: x.status === "solved" ? "#1A8754" : TC.or, padding: "2px 8px", borderRadius: 4, background: `${x.status === "solved" ? "#1A8754" : TC.or}12` }}>{x.status === "solved" ? "Adressiert" : x.status === "unclear" ? "Klärung nötig" : "Neutral"}</span></div>
-      {x.quotes?.length > 0 && x.quotes.slice(0, 2).map((q, qi) => <div key={qi} style={{ fontSize: 11, color: "#5A6B80", fontStyle: "italic", marginBottom: 3, paddingLeft: 10, borderLeft: `2px solid ${TC.re}30` }}>"{q}"</div>)}
-      {x.implication && <div style={{ fontSize: 12, color: TC.or, fontWeight: 600, marginTop: 6 }}>Maßnahme: {x.implication}</div>}
-    </div>)}
-  </div> });
-
-  // 7. KEYWORDS & WETTBEWERB
-  slides.push({ id: "keywords", label: "Keywords", render: () => <div style={pad}>
-    <PSlideH>Keywords & <span style={{ color: TC.or }}>Differenzierung</span></PSlideH>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30 }}>
-      <div>
-        {(k.volume || []).length > 0 && <div style={{ marginBottom: 20 }}><div style={{ fontSize: 11, fontWeight: 800, color: TC.na, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>Suchvolumen-Keywords</div><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{k.volume.slice(0, 12).map((kw, i) => <span key={i} style={{ padding: "4px 10px", borderRadius: 6, background: kw.used ? `${TC.na}12` : "#F0F0F0", border: kw.used ? `1px solid ${TC.na}25` : "1px solid #E0E0E0", fontSize: 11, fontWeight: 600, color: kw.used ? TC.na : "#8E9AAD" }}>{kw.kw}{kw.used ? " ✓" : ""}</span>)}</div></div>}
-        {(k.purchase || []).length > 0 && <div><div style={{ fontSize: 11, fontWeight: 800, color: TC.or, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>Kaufabsicht-Keywords</div><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{k.purchase.slice(0, 10).map((kw, i) => <span key={i} style={{ padding: "4px 10px", borderRadius: 6, background: kw.used ? `${TC.or}12` : "#F0F0F0", border: kw.used ? `1px solid ${TC.or}25` : "1px solid #E0E0E0", fontSize: 11, fontWeight: 600, color: kw.used ? TC.or : "#8E9AAD" }}>{kw.kw}{kw.used ? " ✓" : ""}</span>)}</div></div>}
-      </div>
-      <div>
-        <div style={{ fontSize: 11, fontWeight: 800, color: TC.na, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>Wettbewerbslandschaft</div>
-        <p style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6, margin: "0 0 12px" }}>{co.patterns}</p>
-        {(co.gaps || []).length > 0 && <><div style={{ fontSize: 10, fontWeight: 800, color: TC.or, marginBottom: 6 }}>MARKTLÜCKEN</div>{co.gaps.slice(0, 4).map((g, i) => <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}><span style={{ color: TC.or, fontSize: 10, marginTop: 2, flexShrink: 0 }}>◆</span><span style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.5 }}>{g}</span></div>)}</>}
-      </div>
-    </div>
-  </div> });
-
-  // 8. BILDSTRATEGIE (Übersicht)
+  // ── 9. Bildstrategie (L1+) ── KI
   slides.push({ id: "images", label: "Bildstrategie", render: () => <div style={pad}>
     <PSlideH>Bild<span style={{ color: TC.or }}>strategie</span></PSlideH>
     <p style={{ fontSize: 14, color: "#5A6B80", margin: "0 0 24px" }}>{(D?.images || []).length} datenbasierte Bilder für maximale Conversion</p>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>{(D?.images || []).map((im, i) => { const bgc = [TC.re, TC.or, TC.na, TC.lb, TC.re, TC.or, TC.na][i]; const textC = bgc === TC.lb ? TC.na : TC.wh; return <div key={i} style={{ background: bgc, borderRadius: 12, padding: 16, color: textC, minHeight: 100 }}><div style={{ fontSize: 12, fontWeight: 800, marginBottom: 2 }}>{IMG_LABELS[i]}</div>{im.theme && <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.95, marginBottom: 4 }}>{im.theme}</div>}<div style={{ fontSize: 9, opacity: 0.8, marginBottom: 8 }}>{im.role}</div><div style={{ fontSize: 10 }}>{im.texts?.headlines?.[0] || "Visuell"}</div></div>; })}</div>
   </div> });
 
-  // 9. AKTUELLES LISTING (wenn Bilder vorhanden)
+  // ── 10. Aktuelles Listing (L1+) ── Scraping
   if (listingImgs?.length > 0) slides.push({ id: "current", label: "Akt. Listing", render: () => <div style={pad}>
     <PSlideH>Aktuelles <span style={{ color: TC.re }}>Listing</span></PSlideH>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>{listingImgs.slice(0, 7).map((im, i) => <div key={i} style={{ background: "#F8F9FB", borderRadius: 12, padding: 8, textAlign: "center" }}>{im.base64 && <img src={im.base64} alt={IMG_LABELS[i]} style={{ width: "100%", height: 110, objectFit: "contain", borderRadius: 8 }} />}<div style={{ fontSize: 10, fontWeight: 700, color: TC.na, marginTop: 6 }}>{IMG_LABELS[i]}</div></div>)}</div>
   </div> });
 
-  // 10. SIEGEL
-  const badges = (k.badges || []).filter(b => b.requiresApplication !== false);
-  if (badges.length > 0) slides.push({ id: "badges", label: "Siegel", render: () => <div style={pad}>
-    <PSlideH>Beantragungspflichtige <span style={{ color: TC.or }}>Siegel</span></PSlideH>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>{badges.map((b, i) => <div key={i} style={{ padding: "16px 20px", background: "#F8F9FB", borderRadius: 12, borderLeft: `3px solid ${TC.or}` }}><div style={{ fontSize: 14, fontWeight: 800, color: TC.or, marginBottom: 4 }}>{b.kw}</div><div style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.5 }}>{b.note}</div></div>)}</div>
+  // ── 11. Handlungsempfehlung (L1+) ── KI
+  slides.push({ id: "actions", label: "Empfehlung", render: () => <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", ...pad }}>
+    <PSlideH>Handlungs<span style={{ color: TC.or }}>empfehlung</span></PSlideH>
+    {["Briefing-Freigabe durch Kunden", "Bildproduktion durch Design-Team", "Listing-Optimierung (Texte & Backend-Keywords)", "A/B Testing & Performance-Monitoring"].map((s, i) => <div key={i} style={{ display: "flex", gap: 16, marginBottom: 18, padding: "10px 14px", borderRadius: 10, background: i === 0 ? `${TC.or}08` : "transparent" }}><span style={{ fontSize: 22, fontWeight: 900, color: TC.or }}>{i + 1}.</span><span style={{ fontSize: 16, color: i === 0 ? TC.bk : "#5A6B80", fontWeight: i === 0 ? 700 : 400 }}>{s}</span></div>)}
   </div> });
 
-  // 11. NÄCHSTE SCHRITTE
-  slides.push({ id: "next", label: "Nächste Schritte", render: () => <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", ...pad }}>
-    <PSlideH>Nächste <span style={{ color: TC.or }}>Schritte</span></PSlideH>
-    {["Briefing-Freigabe durch Kunden", "Bildproduktion durch Design-Team", "Listing-Optimierung (Texte & Backend-Keywords)", "A/B Testing & Performance-Monitoring"].map((s, i) => <div key={i} style={{ display: "flex", gap: 16, marginBottom: 18, padding: "10px 14px", borderRadius: 10, background: i === 0 ? `${TC.or}08` : "transparent" }}><span style={{ fontSize: 22, fontWeight: 900, color: TC.or }}>{i + 1}.</span><span style={{ fontSize: 16, color: i === 0 ? TC.bk : "#5A6B80", fontWeight: i === 0 ? 700 : 400 }}>{s}</span></div>)}
-    <div style={{ marginTop: 40, padding: "16px 20px", background: `${TC.na}06`, borderRadius: 12 }}>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ width: 10, height: 10, borderRadius: 3, background: c }} />)}<span style={{ fontSize: 13, fontWeight: 800, color: TC.na, marginLeft: 4 }}>temoa</span></div>
-      <div style={{ fontSize: 12, color: "#5A6B80" }}>Dein Amazon Growth Partner | temoa.de</div>
+  // ── 12. Case Study (L1+) ── Statisch
+  slides.push({ id: "case-study", label: "Case Study", render: () => <PPlaceholder title="Case Study" desc="Statischer Inhalt: Beispielprojekt mit Vorher/Nachher-Vergleich und messbaren Ergebnissen." /> });
+
+  // ── 13. Kontakt / CTA (L1+) ── Statisch
+  slides.push({ id: "contact", label: "Kontakt", render: () => <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "100%", ...pad, textAlign: "center" }}>
+    <div style={{ display: "flex", gap: 8, marginBottom: 30 }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ width: 12, height: 12, borderRadius: 3, background: c }} />)}</div>
+    <h2 style={{ fontSize: 32, fontWeight: 900, color: TC.bk, margin: "0 0 8px" }}>Bereit für bessere Listings?</h2>
+    <p style={{ fontSize: 16, color: "#5A6B80", margin: "0 0 30px", maxWidth: 400 }}>Lass uns gemeinsam dein Amazon-Listing auf das nächste Level bringen.</p>
+    <div style={{ padding: "20px 30px", background: `${TC.na}08`, borderRadius: 16 }}>
+      <div style={{ fontSize: 18, fontWeight: 800, color: TC.na }}>temoa</div>
+      <div style={{ fontSize: 13, color: "#5A6B80", marginTop: 4 }}>Amazon Growth Partner</div>
+      <div style={{ fontSize: 12, color: TC.or, fontWeight: 600, marginTop: 8 }}>temoa.de</div>
     </div>
   </div> });
+
+  // ── L2+ Slides (14-15) ──
+  if (level >= 2) {
+    // ── 14. SEO Quick-Analysis (L2+) ── KI + Scraping
+    slides.push({ id: "seo", label: "SEO-Analyse", render: () => <div style={pad}>
+      <PSlideH>SEO Quick-<span style={{ color: TC.or }}>Analysis</span></PSlideH>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: TC.na, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10 }}>Titel-Optimierung</div>
+          {productData?.title && <div style={{ padding: 14, background: "#F8F9FB", borderRadius: 12, marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6 }}>{productData.title}</div>
+            <div style={{ fontSize: 10, color: TC.or, fontWeight: 700, marginTop: 6 }}>{productData.title.length} Zeichen</div>
+          </div>}
+          {productData?.bullets?.length > 0 && <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#5A6B80", marginBottom: 6 }}>{productData.bullets.length} Bullet Points (Avg. {Math.round(productData.bullets.reduce((a, b) => a + b.length, 0) / productData.bullets.length)} Zeichen)</div>
+          </div>}
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: TC.or, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10 }}>Keyword-Analyse</div>
+          <p style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6, margin: 0 }}>Analyse der Keyword-Abdeckung in Titel, Bullets und Backend-Keywords basierend auf Suchvolumen-Daten.</p>
+          {(k.volume || []).length > 0 && <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {k.volume.slice(0, 8).map((kw, i) => <span key={i} style={{ padding: "3px 8px", borderRadius: 6, background: kw.used ? `${TC.na}12` : "#F0F0F0", fontSize: 10, fontWeight: 600, color: kw.used ? TC.na : "#8E9AAD" }}>{kw.kw}{kw.used ? " ✓" : ""}</span>)}
+          </div>}
+        </div>
+      </div>
+    </div> });
+
+    // ── 15. Keyword-Abdeckung (L2+) ── KI + BD
+    slides.push({ id: "keywords", label: "Keywords", render: () => <div style={pad}>
+      <PSlideH>Keyword-<span style={{ color: TC.or }}>Abdeckung</span></PSlideH>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30 }}>
+        <div>
+          {(k.volume || []).length > 0 && <div style={{ marginBottom: 20 }}><div style={{ fontSize: 11, fontWeight: 800, color: TC.na, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>Suchvolumen-Keywords</div><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{k.volume.slice(0, 12).map((kw, i) => <span key={i} style={{ padding: "4px 10px", borderRadius: 6, background: kw.used ? `${TC.na}12` : "#F0F0F0", border: kw.used ? `1px solid ${TC.na}25` : "1px solid #E0E0E0", fontSize: 11, fontWeight: 600, color: kw.used ? TC.na : "#8E9AAD" }}>{kw.kw}{kw.used ? " ✓" : ""}</span>)}</div></div>}
+          {(k.purchase || []).length > 0 && <div><div style={{ fontSize: 11, fontWeight: 800, color: TC.or, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>Kaufabsicht-Keywords</div><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{k.purchase.slice(0, 10).map((kw, i) => <span key={i} style={{ padding: "4px 10px", borderRadius: 6, background: kw.used ? `${TC.or}12` : "#F0F0F0", border: kw.used ? `1px solid ${TC.or}25` : "1px solid #E0E0E0", fontSize: 11, fontWeight: 600, color: kw.used ? TC.or : "#8E9AAD" }}>{kw.kw}{kw.used ? " ✓" : ""}</span>)}</div></div>}
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: TC.na, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>Wettbewerbslandschaft</div>
+          <p style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6, margin: "0 0 12px" }}>{co.patterns}</p>
+          {(co.gaps || []).length > 0 && <><div style={{ fontSize: 10, fontWeight: 800, color: TC.or, marginBottom: 6 }}>MARKTLÜCKEN</div>{co.gaps.slice(0, 4).map((g, i) => <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}><span style={{ color: TC.or, fontSize: 10, marginTop: 2, flexShrink: 0 }}>◆</span><span style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.5 }}>{g}</span></div>)}</>}
+        </div>
+      </div>
+    </div> });
+  }
+
+  // ── L3 Slides (16-18) ──
+  if (level >= 3) {
+    // ── 16. Wettbewerber-Übersicht (L3) ── BD + KI
+    slides.push({ id: "competitors", label: "Wettbewerber", render: () => <div style={pad}>
+      <PSlideH>Wettbewerber-<span style={{ color: TC.re }}>Übersicht</span></PSlideH>
+      <p style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6, margin: "0 0 20px" }}>{co.patterns || "Wettbewerbsanalyse basierend auf Bright Data Marktdaten."}</p>
+      {(co.gaps || []).length > 0 && <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: TC.or, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>Identifizierte Marktlücken</div>
+        {co.gaps.map((g, i) => <div key={i} style={{ display: "flex", gap: 10, marginBottom: 8, padding: "8px 12px", borderRadius: 8, background: i === 0 ? `${TC.or}08` : "#F8F9FB" }}>
+          <span style={{ color: TC.or, fontWeight: 800, flexShrink: 0 }}>{i + 1}.</span>
+          <span style={{ fontSize: 13, color: "#5A6B80" }}>{g}</span>
+        </div>)}
+      </div>}
+    </div> });
+
+    // ── 17. Ranking-Vergleich (L3) ── BD
+    slides.push({ id: "ranking", label: "Ranking", render: () => <div style={pad}>
+      <PSlideH>Ranking-<span style={{ color: TC.or }}>Vergleich</span></PSlideH>
+      <p style={{ fontSize: 14, color: "#5A6B80", margin: "0 0 20px" }}>Position im Vergleich zu den Top-Wettbewerbern im Markt.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+        {[{ label: "BSR", value: productData?.bsr || "n/a", sub: productData?.category || "" }, { label: "Rating", value: productData?.rating || "n/a", sub: `${productData?.reviewCount || 0} Bewertungen` }, { label: "Preis", value: productData?.price || "n/a", sub: "Aktueller Verkaufspreis" }].map((m, i) => <div key={i} style={{ padding: 20, background: "#F8F9FB", borderRadius: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: TC.or, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>{m.label}</div>
+          <div style={{ fontSize: 28, fontWeight: 900, color: TC.bk }}>{m.value}</div>
+          <div style={{ fontSize: 11, color: "#8E9AAD", marginTop: 4 }}>{m.sub}</div>
+        </div>)}
+      </div>
+    </div> });
+
+    // ── 18. Marktposition (L3) ── BD + KI
+    slides.push({ id: "market", label: "Marktposition", render: () => <div style={pad}>
+      <PSlideH>Markt<span style={{ color: TC.or }}>position</span></PSlideH>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: TC.na, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10 }}>Positionierung</div>
+          <p style={{ fontSize: 13, color: "#5A6B80", lineHeight: 1.65, margin: "0 0 16px" }}>{co.patterns || "Marktpositionsanalyse wird aus Bright Data Wettbewerbsdaten generiert."}</p>
+          {a.persona && <div style={{ padding: 12, background: `${TC.na}08`, borderRadius: 10 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: TC.na }}>ZIELGRUPPE</div>
+            <div style={{ fontSize: 12, color: "#5A6B80", marginTop: 2 }}>{a.persona}</div>
+          </div>}
+        </div>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: TC.or, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10 }}>Differenzierung</div>
+          {(co.gaps || []).length > 0 ? co.gaps.slice(0, 5).map((g, i) => <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <span style={{ color: TC.or, fontSize: 12, fontWeight: 800, flexShrink: 0 }}>→</span>
+            <span style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.5 }}>{g}</span>
+          </div>) : <p style={{ fontSize: 12, color: "#8E9AAD" }}>Detaillierte Marktdaten werden mit Bright Data erhoben.</p>}
+        </div>
+      </div>
+    </div> });
+  }
 
   const total = slides.length;
   return (
     <div style={{ minHeight: "100vh", background: "#FFF", fontFamily: FN }}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
       <style>{`*, *::before, *::after { box-sizing: border-box; }`}</style>
-      {/* Top color bar */}
       <div style={{ height: 3, display: "flex" }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ flex: 1, background: c }} />)}</div>
-      {/* Slide content */}
       <div style={{ maxWidth: 1000, margin: "0 auto", minHeight: "calc(100vh - 60px)" }}>
         {slides[slide]?.render()}
       </div>
-      {/* Navigation */}
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)", borderTop: "1px solid rgba(0,0,0,0.06)", padding: "10px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ width: 7, height: 7, borderRadius: 2, background: c }} />)}<span style={{ fontSize: 10, color: "#8E9AAD", marginLeft: 4, fontWeight: 700 }}>temoa</span></div>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", justifyContent: "center", maxWidth: 600 }}>
           {slides.map((s, i) => <button key={i} onClick={() => setSlide(i)} style={{ padding: "4px 8px", borderRadius: 4, border: "none", background: slide === i ? TC.na : "transparent", color: slide === i ? TC.wh : "#8E9AAD", fontSize: 9, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{s.label}</button>)}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -738,7 +801,6 @@ function PresentationView({ briefing, productData, listingImgs }) {
           <button onClick={() => setSlide(s => Math.min(total - 1, s + 1))} disabled={slide >= total - 1} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: slide >= total - 1 ? "rgba(0,0,0,0.06)" : TC.na, color: slide >= total - 1 ? "#ccc" : TC.wh, fontSize: 11, fontWeight: 700, cursor: slide >= total - 1 ? "default" : "pointer", fontFamily: FN }}>Weiter</button>
         </div>
       </div>
-      {/* Bottom color bar */}
       <div style={{ position: "fixed", bottom: 46, left: 0, right: 0, height: 2, display: "flex" }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ flex: 1, background: c }} />)}</div>
     </div>
   );
@@ -921,6 +983,7 @@ export default function App() {
   const [shareUrl, setShareUrl] = useState(null);
   const [designerMode, setDesignerMode] = useState(null);
   const [presMode, setPresMode] = useState(null);
+  const [presLevelDD, setPresLevelDD] = useState(false);
   // Load briefing from shared URL on mount
   useState(() => { const hash = window.location.hash.slice(1);
     if (hash && hash.startsWith("d=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }); }
@@ -964,7 +1027,7 @@ export default function App() {
   const goNew = useCallback((a, m, p, f) => { data ? setP({ a, m, p, f }) : go(a, m, p, f); }, [data, go]);
   // Standalone views (no app features visible)
   if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} />;
-  if (presMode) return <PresentationView briefing={presMode.briefing} productData={presMode.productData} listingImgs={presMode.listingImgs} />;
+  if (presMode) return <PresentationView briefing={presMode.briefing} productData={presMode.productData} listingImgs={presMode.listingImgs} level={presMode.level || 1} />;
   if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(asin || ""); setSN(false); }} txtDensity={txtDensity} setTD={setTD} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
@@ -977,7 +1040,12 @@ export default function App() {
             <input ref={fR} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = ev => setBL(ev.target.result); r.readAsDataURL(f); } }} />
             <button onClick={() => fR.current?.click()} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>{brandLogo ? "Logo ändern" : "Kundenlogo"}</button>
             <button onClick={shareDesignerLink} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30` }}>Designer-Link</button>
-            <button onClick={async () => { const payload = { type: "presentation", briefing: data, productData, listingImgs: listingImgs?.slice(0, 7)?.map(im => ({ base64: im.base64 })) }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#p=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }} style={{ ...gS, padding: "8px 14px", fontSize: 10, fontWeight: 700, color: V.textMed, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Kunden-Link</button>
+            <div style={{ position: "relative" }}>
+              <button onClick={() => setPresLevelDD(p => !p)} style={{ ...gS, padding: "8px 14px", fontSize: 10, fontWeight: 700, color: V.textMed, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Kunden-Link ▾</button>
+              {presLevelDD && <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(12px)", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 10, boxShadow: "0 8px 30px rgba(0,0,0,0.12)", zIndex: 200, minWidth: 160, padding: 4 }}>
+                {[{ lv: 1, label: "Level 1", desc: "13 Folien" }, { lv: 2, label: "Level 2", desc: "15 Folien" }, { lv: 3, label: "Level 3", desc: "18 Folien" }].map(o => <button key={o.lv} onClick={async () => { setPresLevelDD(false); const payload = { type: "presentation", briefing: data, productData, listingImgs: listingImgs?.slice(0, 7)?.map(im => ({ base64: im.base64 })), level: o.lv }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#p=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }} style={{ display: "block", width: "100%", padding: "8px 12px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", borderRadius: 8, fontFamily: FN }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div style={{ fontSize: 11, fontWeight: 700, color: V.ink }}>{o.label}</div><div style={{ fontSize: 9, color: V.textDim }}>{o.desc}</div></button>)}
+              </div>}
+            </div>
           </div>
         </div>
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
