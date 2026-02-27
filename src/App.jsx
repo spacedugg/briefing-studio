@@ -157,10 +157,15 @@ async function bdFetch(body) {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      console.warn(`[BrightData] ${body.type} failed:`, err.error || r.status);
+      return null;
+    }
     const d = await r.json();
+    if (!d.success) console.warn(`[BrightData] ${body.type}: no success`, d.error);
     return d.success ? d.data : null;
-  } catch { return null; }
+  } catch (e) { console.warn(`[BrightData] ${body.type} error:`, e.message); return null; }
 }
 
 // 1. Keyword-Recherche (Global, marktplatzspezifisch)
@@ -498,27 +503,34 @@ function genBrief(D, hlC, shC, bulSel, bdgSel) {
   });
   return t;
 }
-// ═══════ DESIGNER VIEW (standalone shareable page) ═══════
+// ═══════ DESIGNER VIEW (standalone shareable page - final decisions only) ═══════
 function DesignerView({ D, selections }) {
-  const [sel, setSel] = useState(0);
   const hlC = selections?.hlC || {}, shC = selections?.shC || {}, bulSel = selections?.bulSel || {}, bdgSel = selections?.bdgSel || {};
   if (!D?.images?.length) return null;
-  const img = D.images[sel], te = img?.texts;
-  const hls = te?.headlines || (te?.headline ? [te.headline] : []);
-  const ci = hlC[img.id] ?? 0, curHl = hls[ci] || hls[0] || "";
-  const subs = te ? (Array.isArray(te.subheadlines) ? te.subheadlines : (te.subheadline ? [te.subheadline] : [])) : [];
-  const si = shC[img.id] ?? 0;
-  const curSh = si === -1 ? "" : (subs[si] || subs[0] || te?.subheadline || "");
-  const bullets = te?.bullets || [];
-  const bSel = bulSel[img.id] || bullets.map(() => true);
-  const selectedBullets = bullets.filter((_, i) => bSel[i]);
-  const allBadges = [...(te?.badges || []), ...(te?.callouts || [])];
-  const badgeOn = bdgSel[img.id] !== false;
   const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1");
+  // Helper to get final selections for an image
+  const getImageData = (img) => {
+    const te = img?.texts;
+    const hls = te?.headlines || (te?.headline ? [te.headline] : []);
+    const ci = hlC[img.id] ?? 0;
+    const subs = te ? (Array.isArray(te.subheadlines) ? te.subheadlines : (te.subheadline ? [te.subheadline] : [])) : [];
+    const si = shC[img.id] ?? 0;
+    const bullets = te?.bullets || [];
+    const bSel = bulSel[img.id] || bullets.map(() => true);
+    const allBadges = [...(te?.badges || []), ...(te?.callouts || [])];
+    return {
+      headline: hls[ci] || hls[0] || "",
+      subheadline: si === -1 ? "" : (subs[si] || subs[0] || te?.subheadline || ""),
+      bullets: bullets.filter((_, i) => bSel[i]),
+      badges: bdgSel[img.id] !== false ? allBadges : [],
+      footnotes: te?.footnotes || [],
+      hasTexts: !!te,
+    };
+  };
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-      <Orbs /><style>{`*, *::before, *::after { box-sizing: border-box; }`}</style>
+      <Orbs /><style>{`*, *::before, *::after { box-sizing: border-box; } @media print { body { background: white !important; } }`}</style>
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 20px 80px", position: "relative", zIndex: 1 }}>
         <TimeTracker productName={D.product?.name} />
         <div style={{ ...glass, padding: "16px 22px", marginBottom: 18 }}>
@@ -526,25 +538,38 @@ function DesignerView({ D, selections }) {
           <div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{D.product?.name}</div>
           <div style={{ fontSize: 11, color: V.textDim }}>{D.product?.brand} · {D.product?.marketplace}</div>
         </div>
-        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, marginBottom: 14 }}>{D.images.map((im, i) => <button key={i} onClick={() => setSel(i)} style={{ ...gS, padding: "8px 14px", background: sel === i ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(255,255,255,0.5)", color: sel === i ? "#fff" : V.textDim, border: sel === i ? "none" : "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: sel === i ? `0 4px 20px ${V.violet}40` : "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}><span style={{ fontSize: 11, fontWeight: 800 }}>{IMG_LABELS[i] || im.label}</span>{im.theme && <span style={{ fontSize: 9, fontWeight: 500, opacity: sel === i ? 0.85 : 0.7 }}>{im.theme}</span>}</button>)}</div>
-        <GC>
-          <div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-            <span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{IMG_LABELS[sel] || img.label}</span><span style={{ fontSize: 12, color: V.textDim, marginLeft: 10 }}>{img.role}</span>
-          </div>
-          <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 16 }}>
-            {img.concept && <div><Lbl c={V.blue}>Concept</Lbl><p style={{ fontSize: 13, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.concept}</p></div>}
-            {img.rationale && <div style={{ background: `${V.violet}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.violet}12` }}><Lbl c={V.violet}>Rationale</Lbl><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.rationale}</p></div>}
-            {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher</Lbl>{img.eyecatchers.map((ec, i) => <div key={i} style={{ ...gS, padding: 12, marginBottom: 6, display: "flex", justifyContent: "space-between" }}><span style={{ fontSize: 12.5, color: V.text }}>{i + 1}. {ec.idea}</span><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk}</Pill></div>)}</div>}
-            {te && <>
-              {curHl && <div style={{ ...gS, padding: 14 }}><Pill c={V.orange}>HEADLINE</Pill><div style={{ fontSize: 16, fontWeight: 800, color: V.ink, marginTop: 8 }}>"{curHl}"</div></div>}
-              {curSh && <div style={{ ...gS, padding: 14 }}><Pill c={V.blue}>SUBHEADLINE</Pill><div style={{ fontSize: 13, color: V.textMed, marginTop: 8 }}>"{curSh}"</div></div>}
-              {selectedBullets.length > 0 && <div style={{ ...gS, padding: 14 }}><Pill c={V.teal}>BULLETS</Pill>{selectedBullets.map((b, i) => <div key={i} style={{ display: "flex", gap: 8, marginTop: 8 }}><span style={{ color: V.teal, fontWeight: 800 }}>-</span><span style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6 }}>"{strip(b)}"</span></div>)}</div>}
-              {badgeOn && allBadges.length > 0 && <div style={{ ...gS, padding: 14 }}><Pill c={V.amber}>BADGE</Pill><div style={{ marginTop: 8 }}>{allBadges.map((b, i) => <span key={i} style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}12`, border: `1px solid ${V.amber}20`, fontSize: 12, fontWeight: 800, color: V.amber }}>{b}</span>)}</div></div>}
-              {te.footnotes?.length > 0 && <div style={{ ...gS, padding: 12, background: `${V.textDim}08` }}><span style={{ fontSize: 10, fontWeight: 800, color: V.textDim }}>FUSSNOTEN</span>{te.footnotes.map((f, i) => <div key={i} style={{ fontSize: 11, color: V.textDim, marginTop: 4 }}>{f}</div>)}</div>}
-            </>}
-            {img.visual && <div style={{ borderTop: "1px solid rgba(0,0,0,0.06)", paddingTop: 14 }}><Lbl c={V.textDim}>Visual Notes</Lbl><p style={{ fontSize: 12, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
-          </div>
-        </GC>
+        {/* All images listed sequentially - no tabs, designer sees everything at once */}
+        {D.images.map((img, idx) => {
+          const d = getImageData(img);
+          return <GC key={idx} style={{ marginBottom: 16 }}>
+            <div style={{ padding: "14px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: V.ink }}>{IMG_LABELS[idx] || img.label}</span>
+                {img.theme && <Pill c={V.violet}>{img.theme}</Pill>}
+                <span style={{ fontSize: 11, color: V.textDim }}>{img.role}</span>
+              </div>
+              {d.hasTexts && <CopyBtn text={[d.headline, d.subheadline, ...d.bullets.map(strip), ...d.badges].filter(Boolean).join("\n")} label="Texte kopieren" />}
+            </div>
+            <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
+              {/* Concept + Visual side by side */}
+              <div style={{ display: "grid", gridTemplateColumns: img.visual ? "1fr 1fr" : "1fr", gap: 14 }}>
+                {img.concept && <div><Lbl c={V.blue}>Concept</Lbl><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.concept}</p></div>}
+                {img.visual && <div><Lbl c={V.textDim}>Visual Notes</Lbl><p style={{ fontSize: 12, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
+              </div>
+              {img.rationale && <div style={{ background: `${V.violet}06`, borderRadius: 12, padding: 14, border: `1px solid ${V.violet}10` }}><Lbl c={V.violet}>Rationale</Lbl><p style={{ fontSize: 12, color: V.text, lineHeight: 1.7, margin: 0 }}>{img.rationale}</p></div>}
+              {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher</Lbl><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{img.eyecatchers.map((ec, i) => <div key={i} style={{ ...gS, padding: "8px 12px", display: "flex", gap: 8, alignItems: "center" }}><span style={{ fontSize: 12, color: V.text }}>{ec.idea}</span><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk}</Pill></div>)}</div></div>}
+              {/* Final text selections - clean, no toggles */}
+              {d.hasTexts && <div style={{ background: `${V.orange}06`, borderRadius: 14, padding: 16, border: `1px solid ${V.orange}10` }}>
+                <Lbl c={V.orange}>Finale Texte</Lbl>
+                {d.headline && <div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 6 }}>{d.headline}</div>}
+                {d.subheadline && <div style={{ fontSize: 14, color: V.textMed, marginBottom: 10 }}>{d.subheadline}</div>}
+                {d.bullets.length > 0 && <div style={{ marginBottom: 8 }}>{d.bullets.map((b, i) => <div key={i} style={{ display: "flex", gap: 8, marginBottom: 4 }}><span style={{ color: V.teal, fontWeight: 800, flexShrink: 0 }}>-</span><span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} /></div>)}</div>}
+                {d.badges.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{d.badges.map((b, i) => <span key={i} style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 12, fontWeight: 800, color: V.amber }}>{b}</span>)}</div>}
+                {d.footnotes.length > 0 && <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${V.textDim}15` }}>{d.footnotes.map((f, i) => <div key={i} style={{ fontSize: 10, color: V.textDim, lineHeight: 1.5 }}>{f}</div>)}</div>}
+              </div>}
+            </div>
+          </GC>;
+        })}
       </div>
     </div>
   );
@@ -552,83 +577,423 @@ function DesignerView({ D, selections }) {
 
 // ═══════ PRESENTATION VIEW (standalone shareable page, temoa CI) ═══════
 const TC = { or: "#FF9903", lb: "#CDE6F4", re: "#FF3132", na: "#043047", bk: "#000", wh: "#FFF" };
-function PresentationView({ briefing, productData, listingImgs, level }) {
+const PSlideH = ({ children }) => <h2 style={{ fontSize: 28, fontWeight: 900, color: TC.bk, margin: "0 0 28px", lineHeight: 1.2 }}>{children}</h2>;
+const PBar = ({ pct, maxPct, color }) => <div style={{ flex: 1, height: 5, background: "#E8EAF0", borderRadius: 99 }}><div style={{ width: `${maxPct > 0 ? (pct / maxPct) * 100 : 0}%`, height: "100%", background: color, borderRadius: 99 }} /></div>;
+function PresentationView({ briefing, productData, listingImgs, afterImgs, level = 1 }) {
   const [slide, setSlide] = useState(0);
   const D = briefing, a = D?.audience || {}, rv = D?.reviews || { positive: [], negative: [] }, k = D?.keywords || {}, co = D?.competitive || {}, lw = D?.listingWeaknesses || [];
   const lqs = calcLQS(productData);
-  // Build slides based on level
+  const ic = { high: TC.re, medium: TC.or, low: "#8E9AAD" };
+  const pad = { padding: "50px 80px" };
+  const lbl = (t, c) => ({ fontSize: 11, fontWeight: 800, color: c || TC.na, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 10 });
+
   const slides = [];
-  // S0: Title
-  slides.push({ id: "title", render: () => <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-start", height: "100%", padding: "60px 80px" }}>
+
+  // ── 1. Titelfolie (L1+) ── Produkt + KI
+  slides.push({ id: "title", label: "Titel", render: () => <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "flex-start", height: "100%", ...pad }}>
     <div style={{ display: "flex", gap: 8, marginBottom: 40 }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ width: 12, height: 12, borderRadius: 3, background: c }} />)}</div>
     <h1 style={{ fontSize: 42, fontWeight: 900, color: TC.bk, margin: 0, lineHeight: 1.2 }}>Datenbasierte<br /><span style={{ color: TC.re }}>Listing-Analyse</span></h1>
-    <p style={{ fontSize: 18, color: "#5A6B80", margin: "20px 0 0", fontWeight: 500 }}>{D?.product?.name}</p>
-    <p style={{ fontSize: 14, color: "#8E9AAD", margin: "6px 0 0" }}>{D?.product?.brand} | {D?.product?.marketplace}</p>
+    <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 20 }}>
+      {productData?.brandLogo && <img src={productData.brandLogo} alt="Brand" style={{ height: 36, objectFit: "contain" }} />}
+      <div>
+        <p style={{ fontSize: 18, color: "#5A6B80", margin: 0, fontWeight: 500 }}>{D?.product?.name}</p>
+        <p style={{ fontSize: 14, color: "#8E9AAD", margin: "4px 0 0" }}>{D?.product?.brand} | {D?.product?.marketplace}</p>
+      </div>
+    </div>
+    <div style={{ marginTop: 50, padding: "16px 20px", background: `${TC.na}08`, borderRadius: 12, borderLeft: `3px solid ${TC.or}` }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: TC.na, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 4 }}>Erstellt von</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: TC.bk }}>temoa | Amazon Growth Partner</div>
+      <div style={{ fontSize: 11, color: "#8E9AAD" }}>360° Listing-Optimierung, PPC & Content</div>
+    </div>
   </div> });
-  // S1: LQS
-  if (lqs) slides.push({ id: "lqs", render: () => <div style={{ padding: "50px 80px" }}>
-    <h2 style={{ fontSize: 28, fontWeight: 900, color: TC.bk, margin: "0 0 30px" }}>Listing Quality <span style={{ color: TC.or }}>Score</span></h2>
-    <div style={{ display: "flex", gap: 40, alignItems: "center", marginBottom: 30 }}>
-      <div style={{ width: 120, height: 120, borderRadius: "50%", border: `6px solid ${lqs.score >= 7 ? TC.or : lqs.score >= 4 ? TC.or : TC.re}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><span style={{ fontSize: 36, fontWeight: 900, color: TC.bk }}>{lqs.score}</span><span style={{ fontSize: 14, color: "#8E9AAD" }}>/10</span></div>
-      <div style={{ flex: 1 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 24px" }}>{lqs.checks.map((c, i) => <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}><span style={{ color: c.ok ? "#1A8754" : TC.re, fontSize: 14, fontWeight: 800 }}>{c.ok ? "✓" : "✗"}</span><span style={{ fontSize: 13, color: c.ok ? TC.bk : "#8E9AAD" }}>{c.label}</span></div>)}</div>
+
+  // ── 2. Über uns / Team (L1+) ──
+  slides.push({ id: "about", label: "Über uns", render: () => <div style={pad}>
+    <PSlideH>Dein Amazon <span style={{ color: TC.or }}>Growth Partner</span></PSlideH>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40 }}>
+      <div>
+        <p style={{ fontSize: 14, color: "#5A6B80", lineHeight: 1.7, margin: "0 0 20px" }}>temoa ist dein 360° Amazon Growth Partner. Wir übernehmen Strategie, PPC Advertising, Account Management und Content-Produktion komplett, damit du profitabel wachsen kannst, ohne ein eigenes In-House-Team aufbauen zu müssen.</p>
+        <p style={{ fontSize: 14, color: "#5A6B80", lineHeight: 1.7, margin: 0 }}>Durch unsere hauseigene Kreativagentur <span style={{ color: TC.or, fontWeight: 700 }}>Visual Advantage</span> produzieren wir hochkonvertierende Produktbilder, A+ Content und Brand Stories, die sich messbar auf deine Conversion Rate auswirken.</p>
+      </div>
+      <div>
+        <div style={lbl("", TC.na)}>Geschäftsführung</div>
+        {[{ name: "Clemens Michaelis", role: "Managing Director" }, { name: "Eddie A. Nordwich", role: "Managing Director" }, { name: "Christoph Terner", role: "Managing Director" }].map((p, i) => <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+          <div style={{ width: 42, height: 42, borderRadius: 10, background: [TC.re, TC.or, TC.na][i], display: "flex", alignItems: "center", justifyContent: "center", color: TC.wh, fontSize: 16, fontWeight: 800 }}>{p.name.charAt(0)}</div>
+          <div><div style={{ fontSize: 13, fontWeight: 700, color: TC.bk }}>{p.name}</div><div style={{ fontSize: 11, color: "#8E9AAD" }}>{p.role}</div></div>
+        </div>)}
+        <div style={{ marginTop: 16, padding: 12, background: `${TC.or}08`, borderRadius: 10 }}>
+          <div style={{ fontSize: 20, fontWeight: 900, color: TC.or }}>4.0★</div>
+          <div style={{ fontSize: 11, color: "#5A6B80" }}>Trustpilot Rating</div>
+        </div>
       </div>
     </div>
   </div> });
-  // S2: Kaufauslöser
-  slides.push({ id: "triggers", render: () => <div style={{ padding: "50px 80px" }}>
-    <h2 style={{ fontSize: 28, fontWeight: 900, color: TC.bk, margin: "0 0 30px" }}>Kauf<span style={{ color: TC.or }}>auslöser</span></h2>
-    {(a.triggers || []).slice(0, 6).map((t, i) => <div key={i} style={{ display: "flex", gap: 16, marginBottom: 14, padding: "12px 16px", borderRadius: 12, background: i === 0 ? `${TC.or}15` : "transparent", border: i === 0 ? `1px solid ${TC.or}30` : "none" }}><span style={{ fontSize: 20, fontWeight: 900, color: TC.or, width: 30, flexShrink: 0 }}>{i + 1}</span><span style={{ fontSize: 15, color: i === 0 ? TC.bk : "#5A6B80", fontWeight: i === 0 ? 700 : 400 }}>{t}</span></div>)}
+
+  // ── 3. Kunden-Logos / Trust (L1+) ──
+  slides.push({ id: "trust", label: "Trust", render: () => <div style={pad}>
+    <PSlideH>Was unsere <span style={{ color: TC.or }}>Kunden sagen</span></PSlideH>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+      {[
+        { quote: "Seit temoa unser Konto übernommen hat, hat sich der Umsatz bei konstantem ACOS mehr als verdoppelt. FBA-Setup, strukturierte PPC-Kampagnen und Listings, die Traffic effektiver konvertieren.", author: "Verifizierter Kunde", highlight: "Umsatz verdoppelt" },
+        { quote: "Wir konnten unser Amazon-Geschäft komplett umstrukturieren und den Umsatz innerhalb von 6 Monaten verdoppeln.", author: "Verifizierter Kunde", highlight: "+100% in 6 Monaten" },
+        { quote: "Sehr gute und schnelle Kommunikation. Alle Artikel, die mit temoa erstellt und bei Amazon gelistet wurden, waren erfolgreich.", author: "Verifizierter Kunde", highlight: "100% Erfolgsquote" },
+        { quote: "Clemens und sein Team stellen die richtigen Fragen. Der direkte Draht zu den Gründern ist sehr überzeugend.", author: "Bachgold AG", highlight: "Direkte Betreuung" },
+      ].map((t, i) => <div key={i} style={{ padding: "18px 20px", background: "#F8F9FB", borderRadius: 14, borderLeft: `3px solid ${[TC.or, TC.re, TC.na, TC.or][i]}`, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: [TC.or, TC.re, TC.na, TC.or][i], marginBottom: 8, textTransform: "uppercase", letterSpacing: ".05em" }}>{t.highlight}</div>
+          <p style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6, margin: 0, fontStyle: "italic" }}>"{t.quote}"</p>
+        </div>
+        <div style={{ fontSize: 10, color: "#8E9AAD", fontWeight: 600, marginTop: 10 }}>{t.author}</div>
+      </div>)}
+    </div>
   </div> });
-  // S3: Reviews
-  slides.push({ id: "reviews", render: () => { const mp = Math.max(...rv.positive.map(x => x.pct || 0), 1); const mn = Math.max(...rv.negative.map(x => x.pct || 0), 1); return <div style={{ padding: "50px 80px" }}>
-    <h2 style={{ fontSize: 28, fontWeight: 900, color: TC.bk, margin: "0 0 30px" }}>Bewertungs<span style={{ color: TC.re }}>analyse</span></h2>
+
+  // ── 4. Framework – Organic First (L1+) ──
+  slides.push({ id: "framework", label: "Framework", render: () => <div style={pad}>
+    <PSlideH>Organic First <span style={{ color: TC.or }}>Framework</span></PSlideH>
+    <p style={{ fontSize: 14, color: "#5A6B80", lineHeight: 1.6, margin: "0 0 28px" }}>Kein Strohfeuer, sondern organische Langfristigkeit. Unser Framework priorisiert nachhaltige Sichtbarkeit vor aggressivem Ad-Spend.</p>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
+      {[
+        { step: "01", title: "Analyse & Strategie", desc: "Präzise Markt- und Wettbewerbsanalyse als Fundament. Datenbasierte Roadmap für messbares Wachstum.", color: TC.na },
+        { step: "02", title: "Content & Listing", desc: "Visuell überzeugende Listings mit psychologisch optimierten Bildern, Texten und A+ Content.", color: TC.re },
+        { step: "03", title: "PPC & Performance", desc: "Strukturierte Kampagnen, die organische Rankings pushen. Mehr Umsatz bei profitablerem TACoS.", color: TC.or },
+        { step: "04", title: "Wachstum & Skalierung", desc: "Langfristige Betreuung mit Quartals-Reviews. Weniger Abhängigkeit von Ads durch starke organische Basis.", color: TC.lb },
+      ].map((s, i) => <div key={i} style={{ padding: "20px 16px", borderRadius: 14, background: s.color === TC.lb ? `${TC.lb}` : `${s.color}08`, border: `1px solid ${s.color}20` }}>
+        <div style={{ fontSize: 28, fontWeight: 900, color: s.color === TC.lb ? TC.na : s.color, opacity: 0.3, marginBottom: 6 }}>{s.step}</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: s.color === TC.lb ? TC.na : TC.bk, marginBottom: 6 }}>{s.title}</div>
+        <div style={{ fontSize: 11, color: s.color === TC.lb ? TC.na : "#5A6B80", lineHeight: 1.5 }}>{s.desc}</div>
+      </div>)}
+    </div>
+    <div style={{ marginTop: 20, padding: "12px 16px", background: `${TC.or}08`, borderRadius: 10, textAlign: "center" }}>
+      <span style={{ fontSize: 12, fontWeight: 700, color: TC.or }}>Ergebnis: </span>
+      <span style={{ fontSize: 12, color: "#5A6B80" }}>Mehr Umsatz bei profitablerem TACoS, ohne Abhängigkeit von steigenden Werbekosten.</span>
+    </div>
+  </div> });
+
+  // ── 5. KI & Datenansatz (L1+) ──
+  slides.push({ id: "data-approach", label: "Datenansatz", render: () => <div style={pad}>
+    <PSlideH>KI & <span style={{ color: TC.or }}>Datenansatz</span></PSlideH>
+    <p style={{ fontSize: 14, color: "#5A6B80", lineHeight: 1.6, margin: "0 0 28px" }}>Jede Empfehlung in dieser Analyse basiert auf echten Marktdaten, nicht auf Vermutungen.</p>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      {[
+        { icon: "◈", title: "Echtzeit-Marktdaten", desc: "Aktuelle Amazon-Daten zu Keywords, Suchvolumen, Wettbewerbern und Bestsellern via Bright Data API.", color: TC.na },
+        { icon: "◉", title: "KI-gestützte Analyse", desc: "Claude AI analysiert Listing-Qualität, Bewertungen und Marktlücken und generiert datenbasierte Handlungsempfehlungen.", color: TC.or },
+        { icon: "◆", title: "Review-Mining", desc: "Systematische Auswertung von Kundenbewertungen: Was loben Käufer? Welche Einwände bestehen? Wo liegen Chancen?", color: TC.re },
+        { icon: "▣", title: "Wettbewerbs-Monitoring", desc: "Vergleich mit Top-10-Wettbewerbern: Preispositionierung, Keyword-Abdeckung, Bewertungsprofile und Marktanteile.", color: TC.lb },
+      ].map((d, i) => <div key={i} style={{ padding: "18px 20px", background: "#F8F9FB", borderRadius: 14, borderTop: `3px solid ${d.color}` }}>
+        <div style={{ fontSize: 20, color: d.color, marginBottom: 8 }}>{d.icon}</div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: TC.bk, marginBottom: 6 }}>{d.title}</div>
+        <div style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6 }}>{d.desc}</div>
+      </div>)}
+    </div>
+  </div> });
+
+  // ── 6. Listing Quality Score (L1+) ── Scraping
+  if (lqs) slides.push({ id: "lqs", label: "Quality Score", render: () => <div style={pad}>
+    <PSlideH>Listing Quality <span style={{ color: TC.or }}>Score</span></PSlideH>
+    <div style={{ display: "flex", gap: 40, alignItems: "center", marginBottom: 30 }}>
+      <div style={{ width: 130, height: 130, borderRadius: "50%", border: `6px solid ${lqs.score >= 7 ? TC.or : lqs.score >= 4 ? TC.or : TC.re}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><span style={{ fontSize: 38, fontWeight: 900, color: TC.bk }}>{lqs.score}</span><span style={{ fontSize: 14, color: "#8E9AAD" }}>/10</span></div>
+      <div style={{ flex: 1 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 28px" }}>{lqs.checks.map((c, i) => <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}><span style={{ color: c.ok ? "#1A8754" : TC.re, fontSize: 14, fontWeight: 800 }}>{c.ok ? "✓" : "✗"}</span><span style={{ fontSize: 13, color: c.ok ? TC.bk : "#8E9AAD" }}>{c.label}</span></div>)}</div>
+      </div>
+    </div>
+    <div style={{ padding: 16, background: `${TC.or}08`, borderRadius: 12, marginTop: 10 }}>
+      <div style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6 }}>Der Quality Score bewertet das Listing anhand von {lqs.checks.length} Faktoren. {lqs.score >= 7 ? "Gute Basis vorhanden." : lqs.score >= 4 ? "Deutliches Optimierungspotenzial." : "Dringender Handlungsbedarf."}</div>
+    </div>
+  </div> });
+
+  // ── 7. Schwachstellen (L1+) ── KI
+  if (lw.length > 0) slides.push({ id: "weaknesses", label: "Schwachstellen", render: () => <div style={pad}>
+    <PSlideH>Listing-<span style={{ color: TC.re }}>Schwachstellen</span></PSlideH>
+    <p style={{ fontSize: 14, color: "#5A6B80", margin: "0 0 24px" }}>{lw.length} identifizierte Optimierungspunkte</p>
+    {lw.map((w, i) => <div key={i} style={{ display: "flex", gap: 16, marginBottom: 16, padding: "14px 18px", borderRadius: 12, background: i === 0 ? `${TC.re}08` : "#F8F9FB", border: `1px solid ${ic[w.impact] || "#E8EAF0"}20` }}>
+      <div style={{ padding: "4px 10px", borderRadius: 6, background: ic[w.impact] || "#8E9AAD", color: TC.wh, fontSize: 10, fontWeight: 800, flexShrink: 0, alignSelf: "flex-start" }}>{w.impact === "high" ? "HOCH" : w.impact === "medium" ? "MITTEL" : "GERING"}</div>
+      <div><div style={{ fontSize: 14, fontWeight: 700, color: TC.bk, marginBottom: 4 }}>{w.weakness}</div><div style={{ fontSize: 12, color: TC.or, fontWeight: 600 }}>Maßnahme: {w.briefingAction}</div></div>
+    </div>)}
+  </div> });
+
+  // ── 8. Bewertungsanalyse (L1+) ── KI + Scraping
+  slides.push({ id: "reviews", label: "Bewertungen", render: () => { const mp = Math.max(...rv.positive.map(x => x.pct || 0), 1); const mn = Math.max(...rv.negative.map(x => x.pct || 0), 1); return <div style={pad}>
+    <PSlideH>Bewertungs<span style={{ color: TC.re }}>analyse</span></PSlideH>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40 }}>
-      <div><h3 style={{ fontSize: 12, fontWeight: 800, color: "#1A8754", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 12 }}>Positiv</h3>{rv.positive.slice(0, 5).map((x, i) => <div key={i} style={{ marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#5A6B80", marginBottom: 3 }}><span>{x.theme}</span><span>~{x.pct}%</span></div><div style={{ height: 4, background: "#E8EAF0", borderRadius: 99 }}><div style={{ width: `${(x.pct / mp) * 100}%`, height: "100%", background: "#1A8754", borderRadius: 99 }} /></div></div>)}</div>
-      <div><h3 style={{ fontSize: 12, fontWeight: 800, color: TC.re, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 12 }}>Negativ</h3>{rv.negative.slice(0, 5).map((x, i) => <div key={i} style={{ marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#5A6B80", marginBottom: 3 }}><span>{x.theme}</span><span>~{x.pct}%</span></div><div style={{ height: 4, background: "#E8EAF0", borderRadius: 99 }}><div style={{ width: `${(x.pct / mn) * 100}%`, height: "100%", background: TC.re, borderRadius: 99 }} /></div></div>)}</div>
+      <div>
+        <div style={lbl("", "#1A8754")}>Positiv</div>
+        {rv.positive.slice(0, 6).map((x, i) => <div key={i} style={{ marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#5A6B80", marginBottom: 3 }}><span>{x.theme}</span><span style={{ fontWeight: 600 }}>~{x.pct}%</span></div><PBar pct={x.pct} maxPct={mp} color="#1A8754" /></div>)}
+      </div>
+      <div>
+        <div style={lbl("", TC.re)}>Negativ</div>
+        {rv.negative.slice(0, 6).map((x, i) => <div key={i} style={{ marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#5A6B80", marginBottom: 3 }}><span>{x.theme}</span><span style={{ fontWeight: 600 }}>~{x.pct}%</span></div><PBar pct={x.pct} maxPct={mn} color={TC.re} /></div>)}
+      </div>
     </div>
   </div>; } });
-  // S4: Bildstrategie
-  slides.push({ id: "images", render: () => <div style={{ padding: "50px 80px" }}>
-    <h2 style={{ fontSize: 28, fontWeight: 900, color: TC.bk, margin: "0 0 8px" }}>Bild<span style={{ color: TC.or }}>strategie</span></h2>
+
+  // ── 9. Bildstrategie (L1+) ── KI
+  slides.push({ id: "images", label: "Bildstrategie", render: () => <div style={pad}>
+    <PSlideH>Bild<span style={{ color: TC.or }}>strategie</span></PSlideH>
     <p style={{ fontSize: 14, color: "#5A6B80", margin: "0 0 24px" }}>{(D?.images || []).length} datenbasierte Bilder für maximale Conversion</p>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>{(D?.images || []).map((im, i) => { const bgc = [TC.re, TC.or, TC.na, TC.lb, TC.re, TC.or, TC.na][i]; return <div key={i} style={{ background: bgc, borderRadius: 12, padding: 16, color: TC.wh, minHeight: 90 }}><div style={{ fontSize: 12, fontWeight: 800, marginBottom: 2 }}>{IMG_LABELS[i]}</div>{im.theme && <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.95, marginBottom: 4 }}>{im.theme}</div>}<div style={{ fontSize: 9, opacity: 0.85, marginBottom: 8 }}>{im.role}</div><div style={{ fontSize: 10 }}>{im.texts?.headlines?.[0] || "Visuell"}</div></div>; })}</div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>{(D?.images || []).map((im, i) => { const bgc = [TC.re, TC.or, TC.na, TC.lb, TC.re, TC.or, TC.na][i]; const textC = bgc === TC.lb ? TC.na : TC.wh; return <div key={i} style={{ background: bgc, borderRadius: 12, padding: 16, color: textC, minHeight: 100 }}><div style={{ fontSize: 12, fontWeight: 800, marginBottom: 2 }}>{IMG_LABELS[i]}</div>{im.theme && <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.95, marginBottom: 4 }}>{im.theme}</div>}<div style={{ fontSize: 9, opacity: 0.8, marginBottom: 8 }}>{im.role}</div><div style={{ fontSize: 10 }}>{im.texts?.headlines?.[0] || "Visuell"}</div></div>; })}</div>
   </div> });
-  // S5: Aktuelles Listing (wenn Bilder vorhanden)
-  if (listingImgs?.length > 0) slides.push({ id: "current", render: () => <div style={{ padding: "50px 80px" }}>
-    <h2 style={{ fontSize: 28, fontWeight: 900, color: TC.bk, margin: "0 0 24px" }}>Aktuelles <span style={{ color: TC.re }}>Listing</span></h2>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>{listingImgs.slice(0, 7).map((im, i) => <div key={i} style={{ background: "#F8F9FB", borderRadius: 12, padding: 8, textAlign: "center" }}>{im.base64 && <img src={im.base64} alt={IMG_LABELS[i]} style={{ width: "100%", height: 100, objectFit: "contain", borderRadius: 8 }} />}<div style={{ fontSize: 10, fontWeight: 700, color: TC.na, marginTop: 6 }}>{IMG_LABELS[i]}</div></div>)}</div>
+
+  // ── 10. Aktuelles Listing / Vorher-Nachher (L1+) ── Scraping + Upload
+  if (listingImgs?.length > 0 || afterImgs?.length > 0) slides.push({ id: "current", label: afterImgs?.length > 0 ? "Vorher/Nachher" : "Akt. Listing", render: () => <div style={pad}>
+    <PSlideH>{afterImgs?.length > 0 ? <span>Vorher <span style={{ color: "#8E9AAD", fontWeight: 400 }}>→</span> <span style={{ color: TC.or }}>Nachher</span></span> : <span>Aktuelles <span style={{ color: TC.re }}>Listing</span></span>}</PSlideH>
+    {afterImgs?.length > 0 ? <div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 20, alignItems: "start" }}>
+        <div>
+          <div style={lbl("", TC.re)}>Vorher (aktuell)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>{listingImgs?.slice(0, 7).map((im, i) => <div key={i} style={{ background: "#F8F9FB", borderRadius: 8, padding: 4, textAlign: "center" }}>{im.base64 && <img src={im.base64} alt={IMG_LABELS[i]} style={{ width: "100%", height: 60, objectFit: "contain", borderRadius: 6 }} />}<div style={{ fontSize: 8, fontWeight: 700, color: "#8E9AAD", marginTop: 2 }}>{IMG_LABELS[i]}</div></div>)}</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", paddingTop: 30 }}><span style={{ fontSize: 28, color: TC.or, fontWeight: 900 }}>→</span></div>
+        <div>
+          <div style={lbl("", TC.or)}>Nachher (optimiert)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>{afterImgs.slice(0, 7).map((im, i) => <div key={i} style={{ background: `${TC.or}06`, borderRadius: 8, padding: 4, textAlign: "center", border: `1px solid ${TC.or}15` }}>{im.base64 && <img src={im.base64} alt={IMG_LABELS[i]} style={{ width: "100%", height: 60, objectFit: "contain", borderRadius: 6 }} />}<div style={{ fontSize: 8, fontWeight: 700, color: TC.or, marginTop: 2 }}>{IMG_LABELS[i]}</div></div>)}</div>
+        </div>
+      </div>
+    </div> : <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>{listingImgs.slice(0, 7).map((im, i) => <div key={i} style={{ background: "#F8F9FB", borderRadius: 12, padding: 8, textAlign: "center" }}>{im.base64 && <img src={im.base64} alt={IMG_LABELS[i]} style={{ width: "100%", height: 110, objectFit: "contain", borderRadius: 8 }} />}<div style={{ fontSize: 10, fontWeight: 700, color: TC.na, marginTop: 6 }}>{IMG_LABELS[i]}</div></div>)}</div>
+    </div>}
   </div> });
-  // S6: Nächste Schritte
-  slides.push({ id: "next", render: () => <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", padding: "60px 80px" }}>
-    <h2 style={{ fontSize: 32, fontWeight: 900, color: TC.bk, margin: "0 0 40px" }}>Nächste <span style={{ color: TC.or }}>Schritte</span></h2>
-    {["Briefing-Freigabe", "Bildproduktion durch Design-Team", "A/B Testing & Optimierung"].map((s, i) => <div key={i} style={{ display: "flex", gap: 16, marginBottom: 18 }}><span style={{ fontSize: 22, fontWeight: 900, color: TC.or }}>{i + 1}.</span><span style={{ fontSize: 16, color: "#5A6B80" }}>{s}</span></div>)}
-    <div style={{ display: "flex", gap: 8, marginTop: 40 }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ width: 12, height: 12, borderRadius: 3, background: c }} />)}</div>
+
+  // ── 11. Nächste Schritte (L1+) ── Level-spezifisch
+  const nextSteps = level >= 3 ? {
+    title: "Strategische Partnerschaft",
+    subtitle: "Vollständige Markenbetreuung nach dem Organic First Framework",
+    steps: [
+      "Onboarding als strategischer Amazon-Partner",
+      "Vollständige Markenbetreuung inkl. Account Management",
+      "PPC-Kampagnenmanagement & Organic First Strategie",
+      "Quartals-Reviews & langfristige Wachstumsplanung"
+    ]
+  } : level >= 2 ? {
+    title: "Ganzheitliche Markenbetreuung",
+    subtitle: "Vom einzelnen Listing zur kompletten Amazon-Strategie",
+    steps: [
+      "Strategiegespräch zur Markenpositionierung",
+      "Analyse weiterer ASINs & Produktportfolio-Bewertung",
+      "Ganzheitliche Content-Strategie (A+, Brand Story, Storefront)",
+      "PPC-Kampagnenmanagement & laufendes Reporting"
+    ]
+  } : {
+    title: "Listing-Optimierung",
+    subtitle: "Vom Briefing zum verkaufsstarken Amazon-Listing",
+    steps: [
+      "Gemeinsames Analysegespräch zu den Ergebnissen",
+      "Freigabe des Briefings & Start der Bildproduktion",
+      "Listing-Optimierung (Texte, Backend-Keywords, A+ Content)",
+      "Performance-Monitoring & Feintuning"
+    ]
+  };
+  slides.push({ id: "actions", label: "Nächste Schritte", render: () => <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", ...pad }}>
+    <PSlideH>Nächste <span style={{ color: TC.or }}>Schritte</span></PSlideH>
+    <div style={{ padding: "10px 14px", background: `${TC.na}06`, borderRadius: 10, marginBottom: 24 }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: TC.na }}>{nextSteps.title}</div>
+      <div style={{ fontSize: 12, color: "#5A6B80" }}>{nextSteps.subtitle}</div>
+    </div>
+    {nextSteps.steps.map((s, i) => <div key={i} style={{ display: "flex", gap: 16, marginBottom: 16, padding: "10px 14px", borderRadius: 10, background: i === 0 ? `${TC.or}08` : "transparent" }}><span style={{ fontSize: 22, fontWeight: 900, color: TC.or }}>{i + 1}.</span><span style={{ fontSize: 16, color: i === 0 ? TC.bk : "#5A6B80", fontWeight: i === 0 ? 700 : 400 }}>{s}</span></div>)}
   </div> });
+
+  // ── 12. Case Study (L1+) ──
+  slides.push({ id: "case-study", label: "Case Study", render: () => <div style={pad}>
+    <PSlideH>Ergebnisse, die <span style={{ color: TC.or }}>überzeugen</span></PSlideH>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
+      {[
+        { metric: "150%", label: "Umsatzsteigerung", sub: "bei gleichbleibenden Werbeausgaben" },
+        { metric: "#1", label: "Bestseller Rang", sub: "in der Kategorie erreicht" },
+        { metric: "3 Wo.", label: "Time to Market", sub: "vom Erstgespräch zum fertigen Listing" },
+      ].map((m, i) => <div key={i} style={{ padding: 20, background: "#F8F9FB", borderRadius: 14, textAlign: "center" }}>
+        <div style={{ fontSize: 32, fontWeight: 900, color: [TC.or, TC.re, TC.na][i] }}>{m.metric}</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: TC.bk, marginTop: 4 }}>{m.label}</div>
+        <div style={{ fontSize: 11, color: "#8E9AAD", marginTop: 2 }}>{m.sub}</div>
+      </div>)}
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ padding: "16px 20px", background: "#F8F9FB", borderRadius: 14, borderLeft: `3px solid ${TC.or}` }}>
+        <div style={{ fontSize: 10, fontWeight: 800, color: TC.or, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 6 }}>Case Study 1</div>
+        <p style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6, margin: 0 }}>Komplett neues Bildkonzept entwickelt, das sich deutlich von der Konkurrenz abhebt. Das Produkt wurde zum Amazon Tipp, Umsatz und Profitabilität wuchsen über das Ausgangsniveau hinaus.</p>
+      </div>
+      <div style={{ padding: "16px 20px", background: "#F8F9FB", borderRadius: 14, borderLeft: `3px solid ${TC.re}` }}>
+        <div style={{ fontSize: 10, fontWeight: 800, color: TC.re, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 6 }}>Case Study 2</div>
+        <p style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6, margin: 0 }}>Branding passte nicht zur Zielgruppe, durchgehende Bildsprache fehlte. Durch Re-Branding mit neuem Brand Book und einheitlicher Kommunikation: Bestseller Rang 1 in der Kategorie.</p>
+      </div>
+    </div>
+    <div style={{ marginTop: 14, textAlign: "center" }}>
+      <span style={{ fontSize: 11, color: "#8E9AAD" }}>Mehr Ergebnisse: </span><span style={{ fontSize: 11, color: TC.or, fontWeight: 700 }}>visualadvantage.de/ergebnisse</span>
+    </div>
+  </div> });
+
+  // ── 13. Kontakt / CTA (L1+) ──
+  slides.push({ id: "contact", label: "Kontakt", render: () => <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "100%", ...pad, textAlign: "center" }}>
+    <div style={{ display: "flex", gap: 8, marginBottom: 30 }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ width: 12, height: 12, borderRadius: 3, background: c }} />)}</div>
+    <h2 style={{ fontSize: 32, fontWeight: 900, color: TC.bk, margin: "0 0 8px" }}>Bereit für bessere Listings?</h2>
+    <p style={{ fontSize: 16, color: "#5A6B80", margin: "0 0 30px", maxWidth: 420 }}>Lass uns gemeinsam dein Amazon-Listing auf das nächste Level bringen.</p>
+    <div style={{ padding: "24px 36px", background: `${TC.na}08`, borderRadius: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 20, fontWeight: 900, color: TC.na }}>temoa GmbH</div>
+      <div style={{ fontSize: 13, color: "#5A6B80", marginTop: 6 }}>Clemens Michaelis, Eddie A. Nordwich, Christoph Terner</div>
+      <div style={{ fontSize: 12, color: "#8E9AAD", marginTop: 4 }}>Hütter Dorfstraße 24 · 19246 Zarrentin</div>
+      <div style={{ display: "flex", gap: 20, justifyContent: "center", marginTop: 12 }}>
+        <span style={{ fontSize: 12, color: TC.or, fontWeight: 700 }}>temoa.de</span>
+        <span style={{ fontSize: 12, color: TC.or, fontWeight: 700 }}>visualadvantage.de</span>
+      </div>
+    </div>
+    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ width: 8, height: 8, borderRadius: 2, background: c }} />)}</div>
+  </div> });
+
+  // ── L2+ Slides (14-15) ──
+  if (level >= 2) {
+    // ── 14. SEO Quick-Analysis (L2+) ──
+    slides.push({ id: "seo", label: "SEO-Analyse", render: () => <div style={pad}>
+      <PSlideH>SEO Quick-<span style={{ color: TC.or }}>Analysis</span></PSlideH>
+      <div style={{ padding: "14px 18px", background: `${TC.na}06`, borderRadius: 12, marginBottom: 24 }}>
+        <p style={{ fontSize: 13, color: "#5A6B80", lineHeight: 1.6, margin: 0 }}>Amazon SEO ist einer der wichtigsten Hebel für organische Sichtbarkeit. Der A9-Algorithmus bewertet Relevanz, Performance und Content-Qualität. Eine gezielte Keyword-Strategie in Titel, Bullets und Backend entscheidet über Ranking-Positionen und damit über Umsatz.</p>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30 }}>
+        <div>
+          <div style={lbl("", TC.na)}>Titel-Analyse</div>
+          {productData?.title && <div style={{ padding: 14, background: "#F8F9FB", borderRadius: 12, marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6 }}>{productData.title}</div>
+            <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: (productData.title.length >= 80 && productData.title.length <= 200) ? "#1A8754" : TC.re }}>{productData.title.length} Zeichen {(productData.title.length >= 80 && productData.title.length <= 200) ? "✓" : "✗"}</span>
+            </div>
+          </div>}
+          {productData?.bullets?.length > 0 && <div style={{ padding: 12, background: "#F8F9FB", borderRadius: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#5A6B80" }}>{productData.bullets.length} Bullet Points</div>
+            <div style={{ fontSize: 10, color: "#8E9AAD" }}>Ø {Math.round(productData.bullets.reduce((a, b) => a + b.length, 0) / productData.bullets.length)} Zeichen pro Bullet</div>
+          </div>}
+        </div>
+        <div>
+          <div style={lbl("", TC.or)}>Keyword-Abdeckung</div>
+          {(k.volume || []).length > 0 ? <div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {k.volume.slice(0, 8).map((kw, i) => <span key={i} style={{ padding: "3px 8px", borderRadius: 6, background: kw.used ? `${TC.na}12` : "#F0F0F0", fontSize: 10, fontWeight: 600, color: kw.used ? TC.na : "#8E9AAD" }}>{kw.kw}{kw.used ? " ✓" : ""}</span>)}
+            </div>
+            <div style={{ marginTop: 10, fontSize: 11, color: "#5A6B80" }}>
+              {k.volume.filter(kw => kw.used).length} von {k.volume.length} Top-Keywords im Listing abgedeckt
+            </div>
+          </div> : <p style={{ fontSize: 12, color: "#8E9AAD", lineHeight: 1.6, margin: 0 }}>Detaillierte Keyword-Analyse wird im nächsten Schritt durchgeführt.</p>}
+        </div>
+      </div>
+    </div> });
+
+    // ── 15. Keyword-Abdeckung (L2+) ── KI + BD
+    slides.push({ id: "keywords", label: "Keywords", render: () => <div style={pad}>
+      <PSlideH>Keyword-<span style={{ color: TC.or }}>Abdeckung</span></PSlideH>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30 }}>
+        <div>
+          {(k.volume || []).length > 0 && <div style={{ marginBottom: 20 }}><div style={lbl("", TC.na)}>Suchvolumen-Keywords</div><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{k.volume.slice(0, 12).map((kw, i) => <span key={i} style={{ padding: "4px 10px", borderRadius: 6, background: kw.used ? `${TC.na}12` : "#F0F0F0", border: kw.used ? `1px solid ${TC.na}25` : "1px solid #E0E0E0", fontSize: 11, fontWeight: 600, color: kw.used ? TC.na : "#8E9AAD" }}>{kw.kw}{kw.used ? " ✓" : ""}</span>)}</div></div>}
+          {(k.purchase || []).length > 0 && <div><div style={lbl("", TC.or)}>Kaufabsicht-Keywords</div><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{k.purchase.slice(0, 10).map((kw, i) => <span key={i} style={{ padding: "4px 10px", borderRadius: 6, background: kw.used ? `${TC.or}12` : "#F0F0F0", border: kw.used ? `1px solid ${TC.or}25` : "1px solid #E0E0E0", fontSize: 11, fontWeight: 600, color: kw.used ? TC.or : "#8E9AAD" }}>{kw.kw}{kw.used ? " ✓" : ""}</span>)}</div></div>}
+        </div>
+        <div>
+          <div style={lbl("", TC.na)}>Wettbewerbslandschaft</div>
+          <p style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6, margin: "0 0 12px" }}>{co.patterns}</p>
+          {(co.gaps || []).length > 0 && <><div style={{ fontSize: 10, fontWeight: 800, color: TC.or, marginBottom: 6 }}>MARKTLÜCKEN</div>{co.gaps.slice(0, 4).map((g, i) => <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}><span style={{ color: TC.or, fontSize: 10, marginTop: 2, flexShrink: 0 }}>◆</span><span style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.5 }}>{g}</span></div>)}</>}
+        </div>
+      </div>
+    </div> });
+  }
+
+  // ── L3 Slides (16-18) ──
+  if (level >= 3) {
+    // ── 16. Wettbewerber-Übersicht (L3) ── BD + KI
+    slides.push({ id: "competitors", label: "Wettbewerber", render: () => <div style={pad}>
+      <PSlideH>Wettbewerber-<span style={{ color: TC.re }}>Übersicht</span></PSlideH>
+      <p style={{ fontSize: 13, color: "#5A6B80", lineHeight: 1.6, margin: "0 0 20px" }}>{D?.product?.name || "Produkt"} im Vergleich mit den Top-Wettbewerbern im Markt.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <div>
+          <div style={lbl("", TC.na)}>Vergleichsfaktoren</div>
+          {["Seite-1-Sichtbarkeit bei Top-Keywords", "Bewertungsanzahl & Durchschnitt", "Preispositionierung im Segment", "Listing-Qualität (Bilder, A+, Video)", "Bestseller-Rang & Kategorie-Ranking"].map((f, i) => <div key={i} style={{ display: "flex", gap: 10, marginBottom: 10, padding: "6px 10px", borderRadius: 8, background: i < 2 ? `${TC.or}06` : "transparent" }}>
+            <span style={{ color: TC.or, fontWeight: 800, fontSize: 12, flexShrink: 0 }}>{i + 1}.</span>
+            <span style={{ fontSize: 12, color: "#5A6B80" }}>{f}</span>
+          </div>)}
+        </div>
+        <div>
+          <div style={lbl("", TC.or)}>Marktanalyse</div>
+          <p style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.6, margin: "0 0 14px" }}>{co.patterns || "Detaillierte Wettbewerbsanalyse basierend auf Bright Data Marktdaten."}</p>
+          {(co.gaps || []).length > 0 && <div>
+            <div style={{ fontSize: 10, fontWeight: 800, color: TC.or, marginBottom: 6 }}>IDENTIFIZIERTE MARKTLÜCKEN</div>
+            {co.gaps.slice(0, 4).map((g, i) => <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+              <span style={{ color: TC.or, fontSize: 10, marginTop: 2, flexShrink: 0 }}>◆</span>
+              <span style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.5 }}>{g}</span>
+            </div>)}
+          </div>}
+        </div>
+      </div>
+    </div> });
+
+    // ── 17. Ranking-Vergleich (L3) ── BD
+    slides.push({ id: "ranking", label: "Ranking", render: () => <div style={pad}>
+      <PSlideH>Ranking-<span style={{ color: TC.or }}>Vergleich</span></PSlideH>
+      <p style={{ fontSize: 14, color: "#5A6B80", margin: "0 0 20px" }}>Aktuelle Position im Vergleich zu den Top-Wettbewerbern.</p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+        {[{ label: "BSR", value: productData?.bsr || "n/a", sub: productData?.category || "Kategorie", ok: !!productData?.bsr }, { label: "Rating", value: productData?.rating || "n/a", sub: `${productData?.reviewCount || 0} Bewertungen`, ok: parseFloat(productData?.rating || 0) >= 4.0 }, { label: "Preis", value: productData?.price || "n/a", sub: "Aktueller Verkaufspreis", ok: true }].map((m, i) => <div key={i} style={{ padding: 20, background: "#F8F9FB", borderRadius: 12, textAlign: "center", borderTop: `3px solid ${m.ok ? TC.or : TC.re}` }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: m.ok ? TC.or : TC.re, letterSpacing: ".06em", textTransform: "uppercase", marginBottom: 8 }}>{m.label}</div>
+          <div style={{ fontSize: 32, fontWeight: 900, color: TC.bk }}>{m.value}</div>
+          <div style={{ fontSize: 11, color: "#8E9AAD", marginTop: 4 }}>{m.sub}</div>
+        </div>)}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
+        <div style={{ padding: 16, background: "#F8F9FB", borderRadius: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: TC.na, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Listing-Qualität</div>
+          <div style={{ fontSize: 11, color: "#5A6B80", lineHeight: 1.6 }}>{(productData?.imageCount || 0)} Bilder · {(productData?.bullets?.length || 0)} Bullets · {productData?.hasVideo ? "Video vorhanden" : "Kein Video"}</div>
+        </div>
+        <div style={{ padding: 16, background: "#F8F9FB", borderRadius: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: TC.or, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Optimierungspotenzial</div>
+          <div style={{ fontSize: 11, color: "#5A6B80", lineHeight: 1.6 }}>{lqs ? `LQS ${lqs.score}/10` : "n/a"} · {lw.length} Schwachstellen identifiziert</div>
+        </div>
+      </div>
+    </div> });
+
+    // ── 18. Marktposition (L3) ── BD + KI
+    slides.push({ id: "market", label: "Marktposition", render: () => <div style={pad}>
+      <PSlideH>Markt<span style={{ color: TC.or }}>position</span></PSlideH>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 30 }}>
+        <div>
+          <div style={lbl("", TC.na)}>Positionierung</div>
+          <p style={{ fontSize: 13, color: "#5A6B80", lineHeight: 1.65, margin: "0 0 16px" }}>{co.patterns || "Marktpositionsanalyse basierend auf Wettbewerbsdaten."}</p>
+          {a.persona && <div style={{ padding: 12, background: `${TC.na}08`, borderRadius: 10, marginBottom: 10 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: TC.na }}>ZIELGRUPPE</div>
+            <div style={{ fontSize: 12, color: "#5A6B80", marginTop: 2 }}>{a.persona}</div>
+          </div>}
+          {a.desire && <div style={{ padding: 12, background: "#ECFDF5", borderRadius: 10 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#1A8754" }}>KERNWUNSCH</div>
+            <div style={{ fontSize: 12, color: "#1A8754", marginTop: 2 }}>{a.desire}</div>
+          </div>}
+        </div>
+        <div>
+          <div style={lbl("", TC.or)}>Differenzierung</div>
+          {(co.gaps || []).length > 0 ? co.gaps.slice(0, 5).map((g, i) => <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <span style={{ color: TC.or, fontSize: 12, fontWeight: 800, flexShrink: 0 }}>→</span>
+            <span style={{ fontSize: 12, color: "#5A6B80", lineHeight: 1.5 }}>{g}</span>
+          </div>) : <p style={{ fontSize: 12, color: "#8E9AAD" }}>Detaillierte Marktdaten werden mit Bright Data erhoben.</p>}
+          {(a.triggers || []).length > 0 && <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: TC.or, marginBottom: 6 }}>TOP-KAUFAUSLÖSER</div>
+            {a.triggers.slice(0, 3).map((t, i) => <div key={i} style={{ display: "flex", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 14, fontWeight: 900, color: TC.or }}>{i + 1}.</span><span style={{ fontSize: 12, color: "#5A6B80" }}>{t}</span></div>)}
+          </div>}
+        </div>
+      </div>
+    </div> });
+  }
 
   const total = slides.length;
   return (
     <div style={{ minHeight: "100vh", background: "#FFF", fontFamily: FN }}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
       <style>{`*, *::before, *::after { box-sizing: border-box; }`}</style>
-      {/* Top color bar */}
       <div style={{ height: 3, display: "flex" }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ flex: 1, background: c }} />)}</div>
-      {/* Slide content */}
       <div style={{ maxWidth: 1000, margin: "0 auto", minHeight: "calc(100vh - 60px)" }}>
         {slides[slide]?.render()}
       </div>
-      {/* Navigation */}
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)", borderTop: "1px solid rgba(0,0,0,0.06)", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ width: 8, height: 8, borderRadius: 2, background: c }} />)}<span style={{ fontSize: 11, color: "#8E9AAD", marginLeft: 4 }}>temoa</span></div>
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <button onClick={() => setSlide(s => Math.max(0, s - 1))} disabled={slide === 0} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid rgba(0,0,0,0.08)", background: slide === 0 ? "rgba(0,0,0,0.02)" : "#fff", color: slide === 0 ? "#ccc" : TC.bk, fontSize: 12, fontWeight: 700, cursor: slide === 0 ? "default" : "pointer", fontFamily: FN }}>Zurück</button>
-          <span style={{ fontSize: 11, color: "#8E9AAD", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{slide + 1} / {total}</span>
-          <button onClick={() => setSlide(s => Math.min(total - 1, s + 1))} disabled={slide >= total - 1} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: slide >= total - 1 ? "rgba(0,0,0,0.06)" : TC.na, color: slide >= total - 1 ? "#ccc" : TC.wh, fontSize: 12, fontWeight: 700, cursor: slide >= total - 1 ? "default" : "pointer", fontFamily: FN }}>Weiter</button>
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)", borderTop: "1px solid rgba(0,0,0,0.06)", padding: "10px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ width: 7, height: 7, borderRadius: 2, background: c }} />)}<span style={{ fontSize: 10, color: "#8E9AAD", marginLeft: 4, fontWeight: 700 }}>temoa</span></div>
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", justifyContent: "center", maxWidth: 600 }}>
+          {slides.map((s, i) => <button key={i} onClick={() => setSlide(i)} style={{ padding: "4px 8px", borderRadius: 4, border: "none", background: slide === i ? TC.na : "transparent", color: slide === i ? TC.wh : "#8E9AAD", fontSize: 9, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{s.label}</button>)}
         </div>
-        <span style={{ fontSize: 11, color: "#8E9AAD" }}>{slide + 1} / {total}</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button onClick={() => setSlide(s => Math.max(0, s - 1))} disabled={slide === 0} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid rgba(0,0,0,0.08)", background: "#fff", color: slide === 0 ? "#ccc" : TC.bk, fontSize: 11, fontWeight: 700, cursor: slide === 0 ? "default" : "pointer", fontFamily: FN }}>Zurück</button>
+          <span style={{ fontSize: 10, color: "#8E9AAD", fontWeight: 600, fontVariantNumeric: "tabular-nums", minWidth: 35, textAlign: "center" }}>{slide + 1}/{total}</span>
+          <button onClick={() => setSlide(s => Math.min(total - 1, s + 1))} disabled={slide >= total - 1} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: slide >= total - 1 ? "rgba(0,0,0,0.06)" : TC.na, color: slide >= total - 1 ? "#ccc" : TC.wh, fontSize: 11, fontWeight: 700, cursor: slide >= total - 1 ? "default" : "pointer", fontFamily: FN }}>Weiter</button>
+        </div>
       </div>
-      {/* Bottom color bar */}
-      <div style={{ position: "fixed", bottom: 52, left: 0, right: 0, height: 2, display: "flex" }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ flex: 1, background: c }} />)}</div>
+      <div style={{ position: "fixed", bottom: 46, left: 0, right: 0, height: 2, display: "flex" }}>{[TC.re, TC.or, TC.na, TC.lb].map((c, i) => <div key={i} style={{ flex: 1, background: c }} />)}</div>
     </div>
   );
 }
@@ -809,15 +1174,16 @@ export default function App() {
   const fR = useRef(null);
   const [shareUrl, setShareUrl] = useState(null);
   const [designerMode, setDesignerMode] = useState(null);
-  const [presMode, setPresMode] = useState(null); // { briefing, productData, listingImgs, level }
+  const [presMode, setPresMode] = useState(null);
+  const [presLevelDD, setPresLevelDD] = useState(false);
+  const [afterImgs, setAfterImgs] = useState([]);
+  const afterImgRef = useRef(null);
   // Load briefing from shared URL on mount
   useState(() => { const hash = window.location.hash.slice(1);
     if (hash && hash.startsWith("d=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }); }
     else if (hash && hash.startsWith("p=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setPresMode(d); }); }
-    else if (hash && hash.startsWith("b=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.product && d?.images) { setData(d); setTab("b"); } }); }
   });
   const shareDesignerLink = useCallback(async () => { if (!data) return; const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel } }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }, [data, hlC, shC, bulSel, bdgSel]);
-  const shareBriefing = useCallback(async () => { if (!data) return; const enc = await encodeBriefing(data); if (enc) { const url = window.location.origin + window.location.pathname + "#b=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }, [data]);
   const go = useCallback(async (a, m, p, f) => {
     setL(true); setE(null); setSt("Starte...");
     try {
@@ -841,6 +1207,11 @@ export default function App() {
       ]);
       // Merge keyword results from both endpoints
       const kwResult = mergeKeywordData(kwGlobal, kwSimple);
+      // Log data collection results
+      const bdSummary = [];
+      if (kwResult) bdSummary.push(`${kwResult.searchTerms?.length || 0} Keywords, ${kwResult.competitors?.length || 0} Wettbewerber`);
+      if (rvResult) bdSummary.push(`${rvResult.totalReviews || 0} Reviews`);
+      setSt(bdSummary.length ? `Daten geladen: ${bdSummary.join(", ")}. Erstelle Briefing...` : "Erstelle Briefing (ohne Bright Data)...");
       // Step 3: Run AI analysis with all scraped + researched data
       const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult);
       setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setListingImgs(scrapeResult.images); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
@@ -850,7 +1221,7 @@ export default function App() {
   const goNew = useCallback((a, m, p, f) => { data ? setP({ a, m, p, f }) : go(a, m, p, f); }, [data, go]);
   // Standalone views (no app features visible)
   if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} />;
-  if (presMode) return <PresentationView briefing={presMode.briefing} productData={presMode.productData} listingImgs={presMode.listingImgs} level={presMode.level || 1} />;
+  if (presMode) return <PresentationView briefing={presMode.briefing} productData={presMode.productData} listingImgs={presMode.listingImgs} afterImgs={presMode.afterImgs} level={presMode.level || 1} />;
   if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(asin || ""); setSN(false); }} txtDensity={txtDensity} setTD={setTD} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
@@ -862,9 +1233,15 @@ export default function App() {
             <button onClick={() => setShowHist(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, position: "relative" }}>Verlauf</button>
             <input ref={fR} type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = ev => setBL(ev.target.result); r.readAsDataURL(f); } }} />
             <button onClick={() => fR.current?.click()} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>{brandLogo ? "Logo ändern" : "Kundenlogo"}</button>
-            <button onClick={shareBriefing} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Teilen</button>
+            <input ref={afterImgRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => { const files = Array.from(e.target.files || []); if (files.length === 0) return; const results = []; files.forEach(f => { const r = new FileReader(); r.onload = ev => { results.push({ base64: ev.target.result }); if (results.length === files.length) setAfterImgs(results); }; r.readAsDataURL(f); }); }} />
+            <button onClick={() => afterImgRef.current?.click()} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: afterImgs.length > 0 ? V.emerald : V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>{afterImgs.length > 0 ? `${afterImgs.length} Bilder ✓` : "Nachher-Bilder"}</button>
             <button onClick={shareDesignerLink} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30` }}>Designer-Link</button>
-            <button onClick={async () => { const payload = { type: "presentation", briefing: data, productData, listingImgs: listingImgs?.slice(0, 7)?.map(im => ({ base64: im.base64 })), level: 1 }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#p=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }} style={{ ...gS, padding: "8px 14px", fontSize: 10, fontWeight: 700, color: V.textMed, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Kunden-Link</button>
+            <div style={{ position: "relative" }}>
+              <button onClick={() => setPresLevelDD(p => !p)} style={{ ...gS, padding: "8px 14px", fontSize: 10, fontWeight: 700, color: V.textMed, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Kunden-Link ▾</button>
+              {presLevelDD && <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(12px)", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 10, boxShadow: "0 8px 30px rgba(0,0,0,0.12)", zIndex: 200, minWidth: 160, padding: 4 }}>
+                {[{ lv: 1, label: "Level 1", desc: "13 Folien" }, { lv: 2, label: "Level 2", desc: "15 Folien" }, { lv: 3, label: "Level 3", desc: "18 Folien" }].map(o => <button key={o.lv} onClick={async () => { setPresLevelDD(false); const payload = { type: "presentation", briefing: data, productData, listingImgs: listingImgs?.slice(0, 7)?.map(im => ({ base64: im.base64 })), afterImgs: afterImgs?.length > 0 ? afterImgs.slice(0, 7).map(im => ({ base64: im.base64 })) : undefined, level: o.lv }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#p=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }} style={{ display: "block", width: "100%", padding: "8px 12px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", borderRadius: 8, fontFamily: FN }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div style={{ fontSize: 11, fontWeight: 700, color: V.ink }}>{o.label}</div><div style={{ fontSize: 9, color: V.textDim }}>{o.desc}{afterImgs?.length > 0 ? " · mit Nachher-Bildern" : ""}</div></button>)}
+              </div>}
+            </div>
           </div>
         </div>
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
