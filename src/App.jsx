@@ -277,7 +277,7 @@ function TimeTracker({ productName }) {
 // ═══════ START ═══════
 function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDensity, setTD }) {
   const [asin, sa] = useState(""); const [mp, sm] = useState("Amazon.de"); const [pi, sp] = useState(""); const [ft, sf] = useState("");
-  const [hist] = useState(loadH); const ok = asin.trim() || pi.trim();
+  const [hist] = useState(loadH);
   // Reference listing state
   const [refAsin, setRefAsin] = useState("");
   const [refLoading, setRefLoading] = useState(false);
@@ -296,6 +296,7 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
     setRefLoading(false);
   };
   const hasRef = refImages.length > 0;
+  const ok = asin.trim() || pi.trim() || hasRef;
   const refPayload = hasRef ? { asin: refAsin, images: refImages, productData: refData, newProductText: newProductText.trim() || null } : null;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs />
