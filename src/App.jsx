@@ -437,18 +437,45 @@ const Check = ({ on }) => <span style={{ color: on ? V.emerald : V.textDim, font
 const Err = ({ msg, onX }) => msg ? <div style={{ ...gS, padding: "12px 18px", background: `${V.rose}10`, border: `1px solid ${V.rose}25`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><span style={{ fontSize: 12, color: V.rose, fontWeight: 600, lineHeight: 1.5 }}>{msg}</span>{onX && <button onClick={onX} style={{ background: "none", border: "none", color: V.rose, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 16 }}>×</button>}</div> : null;
 
 // ═══════ TIME TRACKER (single overall timer for designer view) ═══════
-function TimeTracker({ productName }) {
+function TimeTracker({ productName, brand, asin, marketplace }) {
   const [secs, setSecs] = useState(0);
   const [running, setRunning] = useState(false);
+  const [synced, setSynced] = useState(false);
+  const [syncErr, setSyncErr] = useState(false);
   const iRef = useRef(null);
+  const projectId = useRef(Date.now().toString(36) + Math.random().toString(36).substr(2, 6));
   useEffect(() => { if (iRef.current) clearInterval(iRef.current); if (running) { iRef.current = setInterval(() => setSecs(p => p + 1), 1000); } return () => clearInterval(iRef.current); }, [running]);
+  // Auto-sync to Google Sheets every 30 seconds while running, and on pause
+  const syncRef = useRef(null);
+  const syncToSheet = useCallback(async (s) => {
+    try {
+      const r = await fetch("/api/timesheet", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update", projectId: projectId.current, productName, brand, asin, marketplace, seconds: s }),
+      });
+      if (r.ok) { setSynced(true); setSyncErr(false); }
+      else { setSyncErr(true); }
+    } catch { setSyncErr(true); }
+  }, [productName, brand, asin, marketplace]);
+  useEffect(() => {
+    if (syncRef.current) clearInterval(syncRef.current);
+    if (running && secs > 0) {
+      syncRef.current = setInterval(() => syncToSheet(secs), 30000);
+    }
+    return () => clearInterval(syncRef.current);
+  }, [running, secs, syncToSheet]);
+  // Sync on pause
+  const handleToggle = () => {
+    if (running && secs > 0) syncToSheet(secs);
+    setRunning(r => !r);
+  };
   const fmt = s => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60; return h > 0 ? `${h}:${m.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}` : `${m}:${ss.toString().padStart(2, "0")}`; };
-  return <div style={{ ...glass, padding: "20px 28px", marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-    <div><div style={{ fontSize: 10, fontWeight: 800, color: V.teal, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 }}>Zeiterfassung</div><div style={{ fontSize: 11, color: V.textDim }}>{productName || "Briefing"}</div></div>
+  return <div style={{ ...glass, padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 0, borderLeft: "none", borderRight: "none", borderTop: "none" }}>
+    <div><div style={{ fontSize: 10, fontWeight: 800, color: V.teal, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 2 }}>Time Tracking</div><div style={{ fontSize: 11, color: V.textDim }}>{productName || "Briefing"}{synced && !syncErr ? <span style={{ fontSize: 9, color: V.emerald, marginLeft: 8 }}>synced</span> : ""}{syncErr ? <span style={{ fontSize: 9, color: V.rose, marginLeft: 8 }}>sync failed</span> : ""}</div></div>
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
       <span style={{ fontSize: 28, fontWeight: 800, color: running ? V.teal : V.ink, fontVariantNumeric: "tabular-nums", fontFamily: FN }}>{fmt(secs)}</span>
-      <button onClick={() => setRunning(r => !r)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: running ? V.rose : `linear-gradient(135deg, ${V.teal}, ${V.emerald})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN, minWidth: 80 }}>{running ? "Pause" : secs > 0 ? "Weiter" : "Start"}</button>
-      {secs > 0 && !running && <button onClick={() => { navigator.clipboard.writeText(`${productName || "Briefing"}: ${fmt(secs)}`); }} style={{ ...gS, padding: "10px 14px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8 }}>Kopieren</button>}
+      <button onClick={handleToggle} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: running ? V.rose : `linear-gradient(135deg, ${V.teal}, ${V.emerald})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN, minWidth: 80 }}>{running ? "Pause" : secs > 0 ? "Resume" : "Start"}</button>
+      {secs > 0 && !running && <button onClick={() => { navigator.clipboard.writeText(`${productName || "Briefing"}: ${fmt(secs)}`); }} style={{ ...gS, padding: "10px 14px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8 }}>Copy</button>}
     </div>
   </div>;
 }
@@ -887,7 +914,7 @@ function DesignerView({ D, selections }) {
       <Orbs /><style>{`*, *::before, *::after { box-sizing: border-box; } @media print { body { background: white !important; } } @keyframes spin{to{transform:rotate(360deg)}}`}</style>
       {/* Sticky Time Tracker */}
       <div style={{ position: "sticky", top: 0, zIndex: 100 }}>
-        <TimeTracker productName={D.product?.name} />
+        <TimeTracker productName={D.product?.name} brand={D.product?.brand} asin={D.product?.sku} marketplace={D.product?.marketplace} />
       </div>
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 20px 80px", position: "relative", zIndex: 1 }}>
         {/* Header */}
