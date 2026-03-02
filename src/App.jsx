@@ -847,8 +847,15 @@ function genBrief(D, hlC, shC, bulSel, bdgSel) {
 // ═══════ DESIGNER VIEW (standalone shareable page - final decisions only) ═══════
 function DesignerView({ D, selections }) {
   const hlC = selections?.hlC || {}, shC = selections?.shC || {}, bulSel = selections?.bulSel || {}, bdgSel = selections?.bdgSel || {};
+  const links = selections?.links || {};
   if (!D?.images?.length) return null;
   const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1");
+  const asin = D.product?.sku || "";
+  // Inline copy button for individual text elements
+  const ICopy = ({ text, children, style: s = {} }) => {
+    const [ok, set] = useState(false);
+    return <div onClick={() => { navigator.clipboard.writeText(strip(text)); set(true); setTimeout(() => set(false), 1200); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, cursor: "pointer", background: ok ? `${V.emerald}12` : "transparent", border: ok ? `1px solid ${V.emerald}25` : "1px solid transparent", transition: "all 0.15s", ...s }} onMouseEnter={e => { if (!ok) e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }} onMouseLeave={e => { if (!ok) e.currentTarget.style.background = "transparent"; }}>{children}<span style={{ fontSize: 9, fontWeight: 700, color: ok ? V.emerald : V.textDim, opacity: ok ? 1 : 0, transition: "opacity 0.15s", flexShrink: 0 }}>{ok ? "Copied" : ""}</span></div>;
+  };
   // Helper to get final selections for an image
   const getImageData = (img) => {
     const te = img?.texts;
@@ -868,28 +875,50 @@ function DesignerView({ D, selections }) {
       hasTexts: !!te,
     };
   };
+  // Image file naming
+  const imgName = (idx) => {
+    const labels = ["MAIN", "PT01", "PT02", "PT03", "PT04", "PT05", "PT06"];
+    const prefix = asin || "";
+    return prefix ? `${prefix}.${labels[idx]}` : labels[idx];
+  };
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-      <Orbs /><style>{`*, *::before, *::after { box-sizing: border-box; } @media print { body { background: white !important; } }`}</style>
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 20px 80px", position: "relative", zIndex: 1 }}>
+      <Orbs /><style>{`*, *::before, *::after { box-sizing: border-box; } @media print { body { background: white !important; } } @keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      {/* Sticky Time Tracker */}
+      <div style={{ position: "sticky", top: 0, zIndex: 100 }}>
         <TimeTracker productName={D.product?.name} />
+      </div>
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 20px 80px", position: "relative", zIndex: 1 }}>
+        {/* Header */}
         <div style={{ ...glass, padding: "16px 22px", marginBottom: 18 }}>
-          <div style={{ background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontSize: 20, fontWeight: 900, marginBottom: 4 }}>Designer-Briefing</div>
+          <div style={{ background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontSize: 20, fontWeight: 900, marginBottom: 4 }}>Designer Briefing</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{D.product?.name}</div>
-          <div style={{ fontSize: 11, color: V.textDim }}>{D.product?.brand} · {D.product?.marketplace}</div>
+          <div style={{ fontSize: 11, color: V.textDim }}>{D.product?.brand} · {D.product?.marketplace}{asin ? ` · ${asin}` : ""}</div>
         </div>
-        {/* All images listed sequentially - no tabs, designer sees everything at once */}
+        {/* Links section */}
+        {(links.inputUrl || links.outputUrl) && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, display: "flex", gap: 14, flexWrap: "wrap" }}>
+          {links.inputUrl && <a href={links.inputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 12, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Assets / Source Files</a>}
+          {links.outputUrl && <a href={links.outputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.emerald}, ${V.teal})`, color: "#fff", fontSize: 12, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Upload Results</a>}
+        </div>}
+        {/* File naming convention */}
+        <div style={{ ...gS, padding: "10px 18px", marginBottom: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: V.textMed, textTransform: "uppercase", letterSpacing: ".06em" }}>File naming:</span>
+          {D.images.map((_, i) => <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.violet, padding: "3px 10px", borderRadius: 6, background: `${V.violet}10`, fontFamily: "monospace" }}>{imgName(i)}</span>)}
+          <span style={{ fontSize: 10, color: V.textDim }}>.jpg / .png, max 5 MB each</span>
+        </div>
+        {/* All images listed sequentially */}
         {D.images.map((img, idx) => {
           const d = getImageData(img);
+          const isMain = idx === 0;
           return <GC key={idx} style={{ marginBottom: 16 }}>
             <div style={{ padding: "14px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                <span style={{ fontSize: 16, fontWeight: 800, color: V.ink }}>{IMG_LABELS[idx] || img.label}</span>
+                <span style={{ fontSize: 16, fontWeight: 800, color: V.ink }}>{imgName(idx)}</span>
                 {img.theme && <Pill c={V.violet}>{img.theme}</Pill>}
                 <span style={{ fontSize: 11, color: V.textDim }}>{img.role}</span>
               </div>
-              {d.hasTexts && <CopyBtn text={[d.headline, d.subheadline, ...d.bullets.map(strip), ...d.badges].filter(Boolean).join("\n")} label="Texte kopieren" />}
+              {d.hasTexts && <CopyBtn text={[d.headline, d.subheadline, ...d.bullets.map(strip), ...d.badges].filter(Boolean).join("\n")} label="Copy All" />}
             </div>
             <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
               {/* Concept + Visual side by side */}
@@ -898,16 +927,55 @@ function DesignerView({ D, selections }) {
                 {img.visual && <div><Lbl c={V.textDim}>Visual Notes</Lbl><p style={{ fontSize: 12, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
               </div>
               {img.rationale && <div style={{ background: `${V.violet}06`, borderRadius: 12, padding: 14, border: `1px solid ${V.violet}10` }}><Lbl c={V.violet}>Rationale</Lbl><p style={{ fontSize: 12, color: V.text, lineHeight: 1.7, margin: 0 }}>{img.rationale}</p></div>}
-              {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher</Lbl><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{img.eyecatchers.map((ec, i) => <div key={i} style={{ ...gS, padding: "8px 12px", display: "flex", gap: 8, alignItems: "center" }}><span style={{ fontSize: 12, color: V.text }}>{ec.idea}</span><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk}</Pill></div>)}</div></div>}
-              {/* Final text selections - clean, no toggles */}
+              {/* Eyecatchers - Main Image only, no risk tags */}
+              {isMain && img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher Elements</Lbl><div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{img.eyecatchers.map((ec, i) => {
+                // Determine if this is a literal badge text or a visual description
+                const isShort = ec.idea.length <= 30 && !ec.idea.includes(" ");
+                const looksLikeBadgeText = isShort || /^[A-ZÄÖÜ0-9]/.test(ec.idea) && ec.idea.split(" ").length <= 4;
+                return <div key={i} style={{ ...gS, padding: "10px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: V.amber, flexShrink: 0, marginTop: 2 }}>{i + 1}.</span>
+                  <div style={{ flex: 1 }}>
+                    {looksLikeBadgeText ? (
+                      <ICopy text={ec.idea}><span style={{ padding: "4px 12px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 13, fontWeight: 800, color: V.amber }}>{ec.idea}</span></ICopy>
+                    ) : (
+                      <div><Pill c={V.textDim} s={{ marginBottom: 4 }}>Visual description</Pill><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.6, margin: "4px 0 0" }}>{ec.idea}</p></div>
+                    )}
+                  </div>
+                </div>;
+              })}</div></div>}
+              {/* Final text selections - individually copyable, clearly labeled */}
               {d.hasTexts && <div style={{ background: `${V.orange}06`, borderRadius: 14, padding: 16, border: `1px solid ${V.orange}10` }}>
-                <Lbl c={V.orange}>Finale Texte</Lbl>
-                {d.headline && <div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 6 }}>{d.headline}</div>}
-                {d.subheadline && <div style={{ fontSize: 14, color: V.textMed, marginBottom: 10 }}>{d.subheadline}</div>}
-                {d.bullets.length > 0 && <div style={{ marginBottom: 8 }}>{d.bullets.map((b, i) => <div key={i} style={{ display: "flex", gap: 8, marginBottom: 4 }}><span style={{ color: V.teal, fontWeight: 800, flexShrink: 0 }}>-</span><span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} /></div>)}</div>}
-                {d.badges.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{d.badges.map((b, i) => <span key={i} style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 12, fontWeight: 800, color: V.amber }}>{b}</span>)}</div>}
-                {d.footnotes.length > 0 && <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${V.textDim}15` }}>{d.footnotes.map((f, i) => <div key={i} style={{ fontSize: 10, color: V.textDim, lineHeight: 1.5 }}>{f}</div>)}</div>}
+                <Lbl c={V.orange}>Image Texts</Lbl>
+                {/* HEADLINE */}
+                {d.headline && <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: V.orange, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Heading</div>
+                  <ICopy text={d.headline}><span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{d.headline}</span></ICopy>
+                </div>}
+                {/* SUBHEADLINE */}
+                {d.subheadline && <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: V.blue, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Subheading</div>
+                  <ICopy text={d.subheadline}><span style={{ fontSize: 14, color: V.textMed }}>{d.subheadline}</span></ICopy>
+                </div>}
+                {/* BULLETS */}
+                {d.bullets.length > 0 && <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: V.teal, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Bullet Points (+ Icons)</div>
+                  {d.bullets.map((b, i) => <ICopy key={i} text={strip(b)} style={{ marginBottom: 2 }}>
+                    <span style={{ color: V.teal, fontWeight: 800, flexShrink: 0 }}>-</span>
+                    <span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />
+                  </ICopy>)}
+                </div>}
+                {/* BADGES */}
+                {d.badges.length > 0 && <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: V.amber, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Badge</div>
+                  {d.badges.map((b, i) => <ICopy key={i} text={b}><span style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 12, fontWeight: 800, color: V.amber }}>{b}</span></ICopy>)}
+                </div>}
+                {/* FOOTNOTES */}
+                {d.footnotes.length > 0 && <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${V.textDim}15` }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Footnotes</div>
+                  {d.footnotes.map((f, i) => <ICopy key={i} text={f}><span style={{ fontSize: 11, color: V.textDim, lineHeight: 1.5 }}>{f}</span></ICopy>)}
+                </div>}
               </div>}
+              {!d.hasTexts && <div style={{ padding: 16, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>No text overlay. Visual-only image.</span></div>}
             </div>
           </GC>;
         })}
@@ -1034,11 +1102,15 @@ export default function App() {
   const [data, setData] = useState(null), [tab, setTab] = useState("b"), [showExp, setSE] = useState(false), [pdfL, setPL] = useState(false), [loading, setL] = useState(false), [status, setSt] = useState(""), [error, setE] = useState(null), [showNew, setSN] = useState(false), [pending, setP] = useState(null), [hlC, setHlC] = useState({}), [shC, setShC] = useState({}), [bulSel, setBulSel] = useState({}), [bdgSel, setBdgSel] = useState({}), [curAsin, setCurAsin] = useState(""), [showHist, setShowHist] = useState(false), [productData, setPD] = useState(null), [txtDensity, setTD] = useState("normal");
   const [shareUrl, setShareUrl] = useState(null);
   const [designerMode, setDesignerMode] = useState(null);
+  // Input/Output links for designer collaboration
+  const [inputUrl, setInputUrl] = useState("");
+  const [outputUrl, setOutputUrl] = useState("");
+  const [showLinks, setShowLinks] = useState(false);
   // Load briefing from shared URL on mount
   useState(() => { const hash = window.location.hash.slice(1);
     if (hash && hash.startsWith("d=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }); }
   });
-  const shareDesignerLink = useCallback(async () => { if (!data) return; const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel } }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }, [data, hlC, shC, bulSel, bdgSel]);
+  const shareDesignerLink = useCallback(async () => { if (!data) return; const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } } }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }, [data, hlC, shC, bulSel, bdgSel, inputUrl, outputUrl]);
   const go = useCallback(async (a, m, p, f, refData, imgCount, h10Keywords, bestsellerAsin) => {
     setL(true); setE(null); setSt("Starte...");
     try {
@@ -1106,6 +1178,7 @@ export default function App() {
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
             <button onClick={() => setSN(true)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Neues Briefing</button>
             <button onClick={() => setShowHist(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, position: "relative" }}>Verlauf</button>
+            <button onClick={() => setShowLinks(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: showLinks ? V.blue : V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, border: showLinks ? `1.5px solid ${V.blue}40` : "1px solid rgba(0,0,0,0.08)" }}>Links</button>
             <button onClick={shareDesignerLink} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30` }}>Designer-Link</button>
           </div>
         </div>
@@ -1113,6 +1186,29 @@ export default function App() {
       </div></div>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 80px", position: "relative", zIndex: 1 }}>
         {showHist && (() => { const hist = loadH(); return hist.length > 0 ? <GC style={{ padding: 0, marginBottom: 14 }}><div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl><button onClick={() => setShowHist(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div><div style={{ padding: "6px 10px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px", borderRadius: 10, cursor: "pointer" }} onClick={() => { setData(h.data); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(h.asin || ""); setShowHist(false); }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC> : <GC style={{ padding: 16, marginBottom: 14, textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Noch keine gespeicherten Briefings.</span></GC>; })()}
+        {showLinks && <GC style={{ padding: 0, marginBottom: 14 }}>
+          <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.blue}>Designer Links</Lbl><button onClick={() => setShowLinks(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div>
+          <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: V.blue, marginBottom: 6, display: "block" }}>Input Link (Assets / Source Files)</label>
+              <input type="url" value={inputUrl} onChange={e => setInputUrl(e.target.value)} placeholder="z.B. Google Drive, Dropbox, Figma..." style={inpS} />
+              <div style={{ fontSize: 10, color: V.textDim, marginTop: 3 }}>Link zu Produktfotos, Logos, Assets die der Designer braucht.</div>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: V.emerald, marginBottom: 6, display: "block" }}>Output Link (Upload-Ordner)</label>
+              <input type="url" value={outputUrl} onChange={e => setOutputUrl(e.target.value)} placeholder="z.B. Google Drive Upload-Ordner..." style={inpS} />
+              <div style={{ fontSize: 10, color: V.textDim, marginTop: 3 }}>Ordner in den der Designer seine fertigen Bilder hochlädt.</div>
+            </div>
+            <div style={{ ...gS, padding: "10px 14px" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: V.textMed, marginBottom: 4 }}>Dateinamen-Konvention:</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {(data?.images || []).map((_, i) => { const labels = ["MAIN", "PT01", "PT02", "PT03", "PT04", "PT05", "PT06"]; const prefix = curAsin || ""; return <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.violet, padding: "2px 8px", borderRadius: 6, background: `${V.violet}10`, fontFamily: "monospace" }}>{prefix ? `${prefix}.${labels[i]}` : labels[i]}</span>; })}
+                <span style={{ fontSize: 10, color: V.textDim, alignSelf: "center" }}>.jpg / .png, max 5 MB</span>
+              </div>
+            </div>
+            <div style={{ fontSize: 10, color: V.textDim }}>Diese Links werden im Designer-Export sichtbar. Klicke "Designer-Link" um den Link mit den aktuellen Einstellungen neu zu generieren.</div>
+          </div>
+        </GC>}
         {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} />}
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
