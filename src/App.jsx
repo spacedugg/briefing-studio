@@ -468,7 +468,7 @@ function TimeTracker({ productName, brand, asin, marketplace }) {
   useEffect(() => {
     if (syncRef.current) clearInterval(syncRef.current);
     if (running) {
-      syncRef.current = setInterval(() => syncToSheet(secsRef.current), 20 * 60 * 1000); // 20 minutes
+      syncRef.current = setInterval(() => syncToSheet(secsRef.current), 10000); // 10 seconds
     }
     return () => clearInterval(syncRef.current);
   }, [running, syncToSheet]);
