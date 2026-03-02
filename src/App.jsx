@@ -136,33 +136,23 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
   } else {
     userContent = buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, null, imageCount);
   }
-  const baseBody = {
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 16000,
-    system: "Amazon Listing Analyst. Antworte NUR mit validem JSON. Kein Markdown/Codeblocks/Text. Antwort beginnt mit { und endet mit }.",
-    messages: [{ role: "user", content: userContent }],
-  };
-  // Try with web_search first, fallback without on error
   let r;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const body = attempt === 0 ? { ...baseBody, tools: [{ type: "web_search_20250305", name: "web_search" }] } : baseBody;
-    try {
-      r = await fetch("/api/analyze", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    } catch { throw new Error("Netzwerkfehler: API nicht erreichbar."); }
-    if (r.ok) break;
-    // On first failure, retry without tools
-    if (attempt === 0) {
-      const errData = await r.json().catch(() => ({}));
-      const errMsg = errData.error?.message || "";
-      console.warn("[Analyse] Erster Versuch fehlgeschlagen (" + r.status + ": " + errMsg + "), wiederhole ohne web_search...");
-      onS("Wiederhole Anfrage ohne Web-Suche...");
-      continue;
-    }
-    // Second attempt also failed
-    let m = "API " + r.status; try { const e = await r.json(); m += ": " + (e.error?.message || ""); } catch {} throw new Error(m);
+  try {
+    r = await fetch("/api/analyze", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 16000,
+        system: "Amazon Listing Analyst. Antworte NUR mit validem JSON. Kein Markdown/Codeblocks/Text. Antwort beginnt mit { und endet mit }.",
+        messages: [{ role: "user", content: userContent }],
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
+      }),
+    });
+  } catch { throw new Error("Netzwerkfehler: API nicht erreichbar."); }
+  if (!r.ok) {
+    let m = "API-Fehler " + r.status;
+    try { const e = await r.json(); m = e.error?.message || m; } catch {}
+    throw new Error(m);
   }
   onS("Analysiere Ergebnisse...");
   const d = await r.json();
