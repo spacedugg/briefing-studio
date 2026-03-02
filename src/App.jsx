@@ -194,41 +194,29 @@ async function scrapeProduct(asin, marketplace) {
   } catch { return { images: [], productData: {} }; }
 }
 
-// Bright Data API helper with retry
-async function bdFetch(body, retries = 1) {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const r = await fetch("/api/keyword-research", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        console.warn(`[BrightData] ${body.type} attempt ${attempt + 1} failed:`, err.error || r.status);
-        if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
-        return null;
-      }
-      const d = await r.json();
-      if (!d.success) {
-        console.warn(`[BrightData] ${body.type} attempt ${attempt + 1}: no success`, d.error);
-        if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
-        return null;
-      }
-      // Check if data is actually useful (not empty)
-      if (d.data && (d.data.searchTerms?.length > 0 || d.data.competitors?.length > 0 || d.data.totalReviews > 0 || d.data.reviews?.length > 0)) {
-        return d.data;
-      }
-      // Data returned but empty - retry
-      console.warn(`[BrightData] ${body.type} attempt ${attempt + 1}: empty data`);
-      if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
-      return d.data; // Return empty data on last attempt
-    } catch (e) {
-      console.warn(`[BrightData] ${body.type} attempt ${attempt + 1} error:`, e.message);
-      if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
+// Bright Data API helper — retries are now handled server-side
+async function bdFetch(body) {
+  try {
+    const r = await fetch("/api/keyword-research", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      console.warn(`[BrightData] ${body.type} HTTP ${r.status}:`, err.error || "unknown");
       return null;
     }
+    const d = await r.json();
+    if (d.debug) console.log(`[BrightData] ${body.type} debug:`, d.debug);
+    if (!d.success) {
+      console.warn(`[BrightData] ${body.type}: success=false`, d.error || "(empty data from Bright Data)");
+      return d.data || null; // Return whatever data we got (may be empty)
+    }
+    return d.data;
+  } catch (e) {
+    console.warn(`[BrightData] ${body.type} network error:`, e.message);
+    return null;
   }
-  return null;
 }
 
 // 1. Keyword-Recherche (Global, marktplatzspezifisch)
