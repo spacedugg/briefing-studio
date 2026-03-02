@@ -15,8 +15,116 @@ function saveH(d, asin) { const id = Date.now().toString(36) + Math.random().toS
 function encodeBriefing(d) { try { const json = JSON.stringify(d); const bytes = new TextEncoder().encode(json); const cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")); return new Response(cs).arrayBuffer().then(buf => { let b = ""; const u8 = new Uint8Array(buf); for (let i = 0; i < u8.length; i++) b += String.fromCharCode(u8[i]); return btoa(b).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }); } catch { return Promise.resolve(null); } }
 function decodeBriefing(s) { try { const b64 = s.replace(/-/g, "+").replace(/_/g, "/"); const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")); return new Response(ds).text().then(t => JSON.parse(t)); } catch { return Promise.resolve(null); } }
 
+// ═══════ HELIUM10 CSV PARSER ═══════
+function parseHelium10CSV(csvText) {
+  if (!csvText || !csvText.trim()) return null;
+  const lines = csvText.trim().split(/\r?\n/);
+  if (lines.length < 2) return null;
+  // Detect separator (comma or semicolon)
+  const sep = lines[0].includes("\t") ? "\t" : lines[0].split(";").length > lines[0].split(",").length ? ";" : ",";
+  // Parse header row - handle quoted fields
+  const parseRow = (line) => {
+    const fields = []; let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQ = !inQ; continue; }
+      if (c === sep && !inQ) { fields.push(cur.trim()); cur = ""; continue; }
+      cur += c;
+    }
+    fields.push(cur.trim());
+    return fields;
+  };
+  const headers = parseRow(lines[0]).map(h => h.toLowerCase().replace(/[^\w\s]/g, "").trim());
+  // Find column indices - flexible matching for different Helium10 versions
+  const findCol = (...names) => headers.findIndex(h => names.some(n => h.includes(n)));
+  const colKw = findCol("keyword phrase", "keyword", "search term", "suchbegriff");
+  const colSV = findCol("search volume", "suchvolumen", "volume");
+  const colCPR = findCol("cpr", "cerebro product rank", "cpp");
+  const colOrg = findCol("organic rank", "organischer rang", "organic position");
+  const colSpon = findCol("sponsored rank", "sponsored position", "gesponsert");
+  const colComp = findCol("competing products", "competing", "konkurrenzprodukte");
+  const colSFR = findCol("search frequency rank", "sfr", "amazon search frequency");
+  const colTitleDensity = findCol("title density", "titeldichte");
+  if (colKw === -1) return null; // Must have keyword column
+  const keywords = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const row = parseRow(lines[i]);
+    const kw = row[colKw]?.trim();
+    if (!kw) continue;
+    const num = (idx) => { if (idx === -1 || !row[idx]) return null; const v = row[idx].replace(/[,.\s]/g, m => m === "." ? "" : m === "," ? "" : ""); const n = parseInt(v); return isNaN(n) ? null : n; };
+    keywords.push({
+      keyword: kw,
+      searchVolume: num(colSV),
+      cpr: num(colCPR),
+      organicRank: num(colOrg),
+      sponsoredRank: num(colSpon),
+      competingProducts: num(colComp),
+      sfr: num(colSFR),
+      titleDensity: num(colTitleDensity),
+    });
+  }
+  if (keywords.length === 0) return null;
+  return { keywords, totalCount: keywords.length, hasVolume: keywords.some(k => k.searchVolume !== null), hasCPR: keywords.some(k => k.cpr !== null) };
+}
+
+// Score and filter keywords by relevance (search volume + conversion strength)
+function filterH10Keywords(h10Data, maxVolume = 25, maxPurchase = 20) {
+  if (!h10Data?.keywords?.length) return null;
+  const kws = h10Data.keywords.filter(k => k.keyword && k.keyword.length > 1);
+  // Score each keyword: higher = more relevant
+  const scored = kws.map(k => {
+    let score = 0;
+    // Search volume score (0-50 points)
+    if (k.searchVolume !== null) {
+      if (k.searchVolume >= 10000) score += 50;
+      else if (k.searchVolume >= 5000) score += 40;
+      else if (k.searchVolume >= 1000) score += 30;
+      else if (k.searchVolume >= 300) score += 20;
+      else if (k.searchVolume >= 100) score += 10;
+      else score += 5;
+    }
+    // CPR score (lower = easier to rank = bonus, 0-30 points)
+    if (k.cpr !== null) {
+      if (k.cpr <= 5) score += 30;
+      else if (k.cpr <= 15) score += 25;
+      else if (k.cpr <= 50) score += 20;
+      else if (k.cpr <= 100) score += 15;
+      else score += 5;
+    }
+    // Organic rank bonus (if we rank, keyword is proven relevant)
+    if (k.organicRank !== null && k.organicRank > 0 && k.organicRank <= 50) score += 10;
+    // Title density bonus (others use it in title = important)
+    if (k.titleDensity !== null && k.titleDensity > 50) score += 5;
+    return { ...k, score };
+  });
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score);
+  // Volume keywords: high search volume, broad terms
+  const volumeKws = scored
+    .filter(k => k.searchVolume !== null && k.searchVolume >= 100)
+    .sort((a, b) => (b.searchVolume || 0) - (a.searchVolume || 0))
+    .slice(0, maxVolume);
+  // Purchase keywords: good conversion indicators (have CPR data or are long-tail with decent volume)
+  const purchaseKws = scored
+    .filter(k => {
+      const hasConversion = k.cpr !== null && k.cpr > 0;
+      const isLongTail = k.keyword.split(/\s+/).length >= 2;
+      const hasVolume = k.searchVolume !== null && k.searchVolume >= 50;
+      return (hasConversion && hasVolume) || (isLongTail && hasVolume);
+    })
+    .sort((a, b) => {
+      // Sort by conversion strength: low CPR first, then by volume
+      const cprA = a.cpr ?? 999, cprB = b.cpr ?? 999;
+      if (cprA !== cprB) return cprA - cprB;
+      return (b.searchVolume || 0) - (a.searchVolume || 0);
+    })
+    .slice(0, maxPurchase);
+  return { volume: volumeKws, purchase: purchaseKws, all: scored };
+}
+
 // ═══════ PROMPT ═══════
-const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, reviewData, refData, imageCount) => {
+const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, reviewData, refData, imageCount, h10Keywords) => {
   const hasA = asin && asin.trim();
   const numImages = imageCount || 7;
   const pd = productData || {};
@@ -32,20 +140,59 @@ const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, review
     if (pd.description) scraped += `Beschreibung: ${pd.description.substring(0, 300)}\n`;
   }
   let kwData = "";
-  const hasKwData = keywordData && (keywordData.searchTerms?.length > 0 || keywordData.competitors?.length > 0);
-  if (hasKwData) {
-    kwData = "\nAMAZON KEYWORD-DATEN (echte Bright Data Marktdaten):";
-    if (keywordData.searchTerms?.length) kwData += `\nTop-Suchbegriffe aus Titel: ${keywordData.searchTerms.slice(0, 15).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
-    if (keywordData.competitorKeywords?.length) kwData += `\nHäufige Wettbewerber-Keywords (aus Bullets): ${keywordData.competitorKeywords.slice(0, 10).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
-    if (keywordData.competitors?.length) {
-      kwData += `\nTOP-WETTBEWERBER (${keywordData.competitors.length} Produkte auf Seite 1):`;
+  // Use Helium10 keyword data if available (real search volumes + conversion metrics)
+  if (h10Keywords?.volume?.length || h10Keywords?.purchase?.length) {
+    kwData = "\nAMAZON KEYWORD-DATEN (Helium10 Cerebro — echte Suchvolumen & Conversion-Daten):";
+    if (h10Keywords.volume?.length) {
+      kwData += "\n\nHAUPT-KEYWORDS nach Suchvolumen:";
+      h10Keywords.volume.forEach(k => {
+        kwData += `\n  "${k.keyword}" | SV: ${k.searchVolume?.toLocaleString("de-DE") || "?"}/Monat`;
+        if (k.cpr) kwData += ` | CPR: ${k.cpr}`;
+        if (k.organicRank) kwData += ` | Org.Rank: #${k.organicRank}`;
+      });
+    }
+    if (h10Keywords.purchase?.length) {
+      kwData += "\n\nKAUFINTENT-KEYWORDS (hohe Conversion-Wahrscheinlichkeit):";
+      h10Keywords.purchase.forEach(k => {
+        kwData += `\n  "${k.keyword}" | SV: ${k.searchVolume?.toLocaleString("de-DE") || "?"}/Monat`;
+        if (k.cpr) kwData += ` | CPR: ${k.cpr} (${k.cpr <= 10 ? "leicht zu ranken" : k.cpr <= 50 ? "mittelschwer" : "schwer"})`;
+      });
+    }
+    kwData += "\n\nWICHTIG: Diese Keywords basieren auf echten Amazon-Suchdaten. Verwende VORRANGIG die Keywords mit hohem Suchvolumen in Headlines und Bullets. Die Kaufintent-Keywords sind besonders wertvoll für Conversion. Arbeite so viele wie möglich natürlich in die Texte ein.";
+    // Still include competitor data from Bright Data if available
+    if (keywordData?.competitors?.length) {
+      kwData += `\n\nWETTBEWERBER (${keywordData.competitors.length} Produkte auf Seite 1):`;
       keywordData.competitors.slice(0, 8).forEach((c, i) => {
         kwData += `\n  ${i + 1}. ${c.brand || "?"}: ${c.title?.substring(0, 80) || "?"} | ${c.price || "?"}${c.currency || ""} | ${c.rating || "?"}★ (${c.reviewCount || "?"} Rev.) | ${c.bulletCount} Bullets | ${c.imageCount} Bilder`;
       });
     }
-    kwData += "\nVerwende diese echten Amazon-Suchbegriffe als Basis für die Keywords im Output. Die Wettbewerberdaten nutzen für competitive-Sektion.";
   } else {
-    kwData = "\nKEINE KEYWORD-DATEN VERFÜGBAR (Bright Data Scraping fehlgeschlagen). WICHTIG: Recherchiere die Keywords besonders sorgfältig basierend auf deinem Wissen über Amazon-Suchverhalten für diese Produktkategorie. Kennzeichne alle Keywords im Output mit used:true/false. Markiere im JSON-Output keywords mit einer Anmerkung dass es KI-geschätzte Keywords sind (kein 'estimated' Feld nötig, aber schreibe es in die Competitive-Patterns).";
+    // Fallback: Bright Data word-frequency data
+    const hasKwData = keywordData && (keywordData.searchTerms?.length > 0 || keywordData.competitors?.length > 0);
+    if (hasKwData) {
+      kwData = "\nAMAZON KEYWORD-DATEN (Wettbewerber-Analyse):";
+      if (keywordData.searchTerms?.length) kwData += `\nHäufige Begriffe in Wettbewerber-Titeln: ${keywordData.searchTerms.slice(0, 15).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
+      if (keywordData.competitorKeywords?.length) kwData += `\nHäufige Begriffe in Wettbewerber-Bullets: ${keywordData.competitorKeywords.slice(0, 10).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
+      if (keywordData.competitors?.length) {
+        kwData += `\nTOP-WETTBEWERBER (${keywordData.competitors.length} Produkte auf Seite 1):`;
+        keywordData.competitors.slice(0, 8).forEach((c, i) => {
+          kwData += `\n  ${i + 1}. ${c.brand || "?"}: ${c.title?.substring(0, 80) || "?"} | ${c.price || "?"}${c.currency || ""} | ${c.rating || "?"}★ (${c.reviewCount || "?"} Rev.) | ${c.bulletCount} Bullets | ${c.imageCount} Bilder`;
+        });
+      }
+      kwData += "\nHinweis: Keine Helium10-Daten vorhanden. Die Keyword-Häufigkeiten basieren auf Wettbewerber-Analyse. Nutze dein Wissen über Amazon-Suchverhalten zusätzlich.";
+    } else {
+      kwData = "\nKEINE KEYWORD-DATEN VERFÜGBAR. WICHTIG: Recherchiere die Keywords besonders sorgfältig basierend auf deinem Wissen über Amazon-Suchverhalten für diese Produktkategorie. Kennzeichne alle Keywords im Output mit used:true/false.";
+    }
+  }
+  // Bestseller benchmark data
+  if (keywordData?.bestseller) {
+    const bs = keywordData.bestseller;
+    kwData += `\n\nKATEGORIE-BESTSELLER (#1 Benchmark):`;
+    kwData += `\n  ${bs.brand || "?"}: ${bs.title?.substring(0, 100) || "?"}`;
+    kwData += `\n  Preis: ${bs.price || "?"} | Bewertung: ${bs.rating || "?"}★ (${bs.reviewCount || "?"} Reviews)`;
+    if (bs.bsr) kwData += ` | BSR: #${bs.bsr}`;
+    if (bs.bullets?.length) kwData += `\n  Bullets: ${bs.bullets.slice(0, 5).map(b => "- " + b.substring(0, 80)).join("\n  ")}`;
+    kwData += "\n  Analysiere was diesen Bestseller erfolgreich macht und nutze Erkenntnisse für die Positionierung.";
   }
   let rvData = "";
   if (reviewData?.reviews?.length) {
@@ -121,7 +268,7 @@ function extractJSON(text) {
 }
 
 // ═══════ API ═══════
-async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordData, reviewData, refData, imageCount) {
+async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordData, reviewData, refData, imageCount, h10Keywords) {
   onS("Sende Analyse-Anfrage...");
   // Build user message content
   let userContent;
@@ -132,9 +279,9 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
       const mt = img.base64.match(/^data:([^;]+);/)?.[1] || "image/jpeg";
       return { type: "image", source: { type: "base64", media_type: mt, data: raw } };
     });
-    userContent = [...imgBlocks, { type: "text", text: buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, refData, imageCount) }];
+    userContent = [...imgBlocks, { type: "text", text: buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, refData, imageCount, h10Keywords) }];
   } else {
-    userContent = buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, null, imageCount);
+    userContent = buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, null, imageCount, h10Keywords);
   }
   let r;
   try {
@@ -310,6 +457,32 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
   const [refIsManual, setRefIsManual] = useState(false);
   const [newProductText, setNewProductText] = useState("");
   const manualUploadRef = useRef(null);
+  // Helium10 keyword data state
+  const [h10Open, setH10Open] = useState(false);
+  const [h10Raw, setH10Raw] = useState(null); // parsed CSV data
+  const [h10Filtered, setH10Filtered] = useState(null); // filtered/scored keywords
+  const [h10FileName, setH10FileName] = useState("");
+  const csvUploadRef = useRef(null);
+  // Bestseller ASIN state
+  const [bsAsin, setBsAsin] = useState("");
+  const handleCSVUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setH10FileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const parsed = parseHelium10CSV(ev.target.result);
+      if (parsed) {
+        setH10Raw(parsed);
+        setH10Filtered(filterH10Keywords(parsed));
+      } else {
+        setH10Raw(null); setH10Filtered(null);
+        setH10FileName("");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ""; // allow re-upload of same file
+  };
   const loadRef = async () => {
     if (!refAsin.trim() || refLoading) return;
     setRefLoading(true); setRefImages([]); setRefData(null); setRefIsManual(false);
@@ -339,6 +512,7 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
     });
   };
   const hasRef = refImages.length > 0;
+  const hasH10 = h10Filtered?.volume?.length > 0 || h10Filtered?.purchase?.length > 0;
   const ok = asin.trim() || pi.trim() || hasRef;
   const refPayload = hasRef ? { asin: refAsin || null, images: refImages, productData: refData, newProductText: newProductText.trim() || null, isManual: refIsManual } : null;
   return (
@@ -417,7 +591,61 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
                   </>}
                 </div>}
               </div>
-              <button onClick={() => ok && !loading && onStart(asin, mp, pi, ft, refPayload, imageCount)} disabled={!ok || loading} style={{ padding: "14px 24px", borderRadius: 14, border: "none", background: loading ? `${V.violet}80` : ok ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(0,0,0,0.08)", color: ok || loading ? "#fff" : V.textDim, fontSize: 14, fontWeight: 800, cursor: ok && !loading ? "pointer" : "default", fontFamily: FN, boxShadow: ok ? `0 4px 20px ${V.violet}35` : "none" }}>{loading ? "Analyse läuft..." : `${imageCount}-Bild Analyse starten${hasRef ? " (mit Referenz)" : ""}`}</button>
+              {/* ── KEYWORD-DATEN (Helium10 CSV) ── */}
+              <div style={{ ...gS, padding: 0, overflow: "hidden", border: hasH10 ? `1.5px solid ${V.blue}40` : "1px solid rgba(0,0,0,0.06)" }}>
+                <button onClick={() => setH10Open(o => !o)} style={{ width: "100%", padding: "12px 16px", border: "none", background: hasH10 ? `${V.blue}08` : "transparent", cursor: "pointer", fontFamily: FN, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: hasH10 ? V.blue : V.textMed, letterSpacing: ".04em", textTransform: "uppercase" }}>Keyword-Daten</span>
+                    {hasH10 && <span style={{ fontSize: 10, fontWeight: 700, color: V.blue, padding: "2px 8px", borderRadius: 6, background: `${V.blue}15` }}>{h10Raw.totalCount} Keywords geladen</span>}
+                  </div>
+                  <span style={{ fontSize: 12, color: V.textDim, fontWeight: 700 }}>{h10Open ? "▾" : "▸"}</span>
+                </button>
+                {h10Open && <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+                  <p style={{ fontSize: 11, color: V.textDim, margin: 0, lineHeight: 1.5 }}>Helium10 Cerebro CSV-Export hochladen für echte Suchvolumen und Conversion-Daten. Ohne Upload werden Keywords KI-geschätzt.</p>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input ref={csvUploadRef} type="file" accept=".csv,.tsv,.txt" style={{ display: "none" }} onChange={handleCSVUpload} />
+                    <button onClick={() => csvUploadRef.current?.click()} style={{ padding: "10px 16px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap" }}>CSV hochladen</button>
+                    {h10FileName && <span style={{ fontSize: 11, color: V.textMed, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h10FileName}</span>}
+                    {hasH10 && <button onClick={() => { setH10Raw(null); setH10Filtered(null); setH10FileName(""); }} style={{ ...gS, padding: "6px 10px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8 }}>Entfernen</button>}
+                  </div>
+                  {hasH10 && <div>
+                    <div style={{ display: "flex", gap: 12, marginBottom: 10 }}>
+                      <div style={{ ...gS, padding: "8px 14px", flex: 1, textAlign: "center" }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: V.blue }}>{h10Filtered.volume?.length || 0}</div>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: V.textDim, textTransform: "uppercase" }}>Volumen-KWs</div>
+                      </div>
+                      <div style={{ ...gS, padding: "8px 14px", flex: 1, textAlign: "center" }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: V.orange }}>{h10Filtered.purchase?.length || 0}</div>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: V.textDim, textTransform: "uppercase" }}>Kaufintent-KWs</div>
+                      </div>
+                      <div style={{ ...gS, padding: "8px 14px", flex: 1, textAlign: "center" }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: V.textMed }}>{h10Raw.totalCount}</div>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: V.textDim, textTransform: "uppercase" }}>Total</div>
+                      </div>
+                    </div>
+                    {h10Filtered.volume?.length > 0 && <div style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: V.blue, marginBottom: 4 }}>Top Suchvolumen:</div>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {h10Filtered.volume.slice(0, 8).map((k, i) => <span key={i} style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 6, background: `${V.blue}12`, color: V.blue, whiteSpace: "nowrap" }}>{k.keyword} <span style={{ opacity: 0.7 }}>{k.searchVolume?.toLocaleString("de-DE")}</span></span>)}
+                      </div>
+                    </div>}
+                    {h10Filtered.purchase?.length > 0 && <div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: V.orange, marginBottom: 4 }}>Top Kaufintent:</div>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {h10Filtered.purchase.slice(0, 6).map((k, i) => <span key={i} style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 6, background: `${V.orange}12`, color: V.orange, whiteSpace: "nowrap" }}>{k.keyword} {k.cpr ? `CPR:${k.cpr}` : ""}</span>)}
+                      </div>
+                    </div>}
+                  </div>}
+                  {h10Raw && !hasH10 && <div style={{ ...gS, padding: 10, background: `${V.rose}08`, border: `1px solid ${V.rose}20` }}><span style={{ fontSize: 11, color: V.rose }}>CSV konnte nicht verarbeitet werden. Stelle sicher, dass die Datei eine "Keyword Phrase" und "Search Volume" Spalte enthält.</span></div>}
+                </div>}
+              </div>
+              {/* ── BESTSELLER-ASIN (optional) ── */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6, display: "block" }}>Bestseller-ASIN (optional)</label>
+                <input type="text" autoComplete="off" value={bsAsin} onChange={e => setBsAsin(e.target.value)} placeholder="ASIN des Kategorie-Bestsellers" style={inpS} />
+                <div style={{ fontSize: 10, color: V.textDim, marginTop: 4 }}>Der #1 Bestseller der Produktkategorie wird als Benchmark analysiert.</div>
+              </div>
+              <button onClick={() => ok && !loading && onStart(asin, mp, pi, ft, refPayload, imageCount, h10Filtered, bsAsin.trim() || null)} disabled={!ok || loading} style={{ padding: "14px 24px", borderRadius: 14, border: "none", background: loading ? `${V.violet}80` : ok ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(0,0,0,0.08)", color: ok || loading ? "#fff" : V.textDim, fontSize: 14, fontWeight: 800, cursor: ok && !loading ? "pointer" : "default", fontFamily: FN, boxShadow: ok ? `0 4px 20px ${V.violet}35` : "none" }}>{loading ? "Analyse läuft..." : `${imageCount}-Bild Analyse starten${hasRef ? " (mit Referenz)" : ""}${hasH10 ? " (mit Keywords)" : ""}`}</button>
               {loading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 10, height: 10, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: 99, animation: "spin 0.7s linear infinite" }} /><span style={{ fontSize: 12, color: V.violet, fontWeight: 600 }}>{status}</span></div>}
             </div>
           </GC>
@@ -801,7 +1029,7 @@ export default function App() {
     if (hash && hash.startsWith("d=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }); }
   });
   const shareDesignerLink = useCallback(async () => { if (!data) return; const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel } }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }, [data, hlC, shC, bulSel, bdgSel]);
-  const go = useCallback(async (a, m, p, f, refData, imgCount) => {
+  const go = useCallback(async (a, m, p, f, refData, imgCount, h10Keywords, bestsellerAsin) => {
     setL(true); setE(null); setSt("Starte...");
     try {
       // Step 1: Scrape Amazon product data first (needed for keyword search term)
@@ -810,39 +1038,53 @@ export default function App() {
       const pd = scrapeResult.productData || {};
       // Derive best search term: product title keywords or user input
       const searchTerm = pd.title ? pd.title.split(/[,|·\-–—]/).slice(0, 2).join(" ").trim().substring(0, 60) : (p ? p.split(/[,.\n]/)[0].trim() : "");
-      // Step 2: All Bright Data queries in parallel
-      setSt("Recherchiere Keywords, Reviews & Wettbewerber...");
-      const [kwGlobal, kwSimple, rvResult] = await Promise.all([
-        // 1. Global keyword search (marketplace-specific) - für Wettbewerber + Keywords
+      // Step 2: All Bright Data queries in parallel (competitors + reviews)
+      // If Helium10 data is available, we still fetch BD for competitors & reviews
+      setSt(h10Keywords ? "Recherchiere Reviews & Wettbewerber..." : "Recherchiere Keywords, Reviews & Wettbewerber...");
+      const bdPromises = [
+        // 1. Global keyword search (marketplace-specific) - für Wettbewerber
         searchTerm ? fetchKeywordData(searchTerm, m) : Promise.resolve(null),
-        // 4. Simple keyword search (ergänzend) - breitere Keyword-Perspektive
+        // 2. Simple keyword search (ergänzend)
         searchTerm ? fetchSimpleKeywordData(searchTerm) : Promise.resolve(null),
-        // 3. Echte Reviews - für Review-Analyse
+        // 3. Echte Reviews
         a && a.trim() ? fetchReviewData(a, m) : Promise.resolve(null),
-        // 2. Brand discovery + 5. Best sellers - benötigen URLs die wir ggf. nicht haben
-        // Diese werden nur genutzt wenn brandUrl/categoryUrl vorhanden
-      ]);
-      // Merge keyword results from both endpoints
+      ];
+      // Step 2b: Scrape bestseller if provided
+      if (bestsellerAsin) {
+        setSt("Lade Bestseller-Daten...");
+        bdPromises.push(scrapeProduct(bestsellerAsin, m));
+      }
+      const results = await Promise.all(bdPromises);
+      const [kwGlobal, kwSimple, rvResult] = results;
+      const bsResult = bestsellerAsin ? results[3] : null;
+      // Merge keyword results from both BD endpoints (used for competitor data)
       let kwResult = mergeKeywordData(kwGlobal, kwSimple);
-      // If keyword data is empty but we had a search term, warn
+      // If we have a bestseller, add it to the keyword context
+      if (bsResult?.productData?.title) {
+        const bsPd = bsResult.productData;
+        if (!kwResult) kwResult = { searchTerms: [], competitorKeywords: [], competitors: [] };
+        kwResult.bestseller = { title: bsPd.title, brand: bsPd.brand, price: bsPd.price, rating: bsPd.rating, reviewCount: bsPd.reviewCount, bullets: bsPd.bullets, bsr: bsPd.bsr, asin: bestsellerAsin };
+      }
       const kwEmpty = !kwResult || (!kwResult.searchTerms?.length && !kwResult.competitors?.length);
-      if (kwEmpty && searchTerm) {
+      if (kwEmpty && searchTerm && !h10Keywords) {
         console.warn("[Keywords] Keine Keyword-Daten von Bright Data erhalten. Keywords im Briefing werden KI-geschätzt.");
       }
       // Log data collection results
       const bdSummary = [];
-      if (kwResult && !kwEmpty) bdSummary.push(`${kwResult.searchTerms?.length || 0} Keywords, ${kwResult.competitors?.length || 0} Wettbewerber`);
+      if (h10Keywords) bdSummary.push(`${(h10Keywords.volume?.length || 0) + (h10Keywords.purchase?.length || 0)} Helium10-Keywords`);
+      if (kwResult && !kwEmpty) bdSummary.push(`${kwResult.competitors?.length || 0} Wettbewerber`);
       if (rvResult) bdSummary.push(`${rvResult.totalReviews || 0} Reviews`);
-      if (kwEmpty && searchTerm) bdSummary.push("Keywords: Bright Data leer, KI-Schätzung");
-      setSt(bdSummary.length ? `Daten geladen: ${bdSummary.join(", ")}. Erstelle Briefing...` : "Erstelle Briefing (ohne Bright Data)...");
+      if (bsResult?.productData?.title) bdSummary.push(`Bestseller: ${bsResult.productData.title?.substring(0, 40)}`);
+      if (kwEmpty && searchTerm && !h10Keywords) bdSummary.push("Keywords: KI-Schätzung");
+      setSt(bdSummary.length ? `Daten geladen: ${bdSummary.join(", ")}. Erstelle Briefing...` : "Erstelle Briefing...");
       // Step 3: Run AI analysis with all scraped + researched data
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
-      const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7);
+      const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7, h10Keywords || null);
       setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, [txtDensity]);
-  const goNew = useCallback((a, m, p, f, ref, ic) => { data ? setP({ a, m, p, f, ref, ic }) : go(a, m, p, f, ref, ic); }, [data, go]);
+  const goNew = useCallback((a, m, p, f, ref, ic, h10, bs) => { data ? setP({ a, m, p, f, ref, ic, h10, bs }) : go(a, m, p, f, ref, ic, h10, bs); }, [data, go]);
   // Standalone views (no app features visible)
   if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} />;
   if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(asin || ""); setSN(false); }} txtDensity={txtDensity} setTD={setTD} />;
@@ -866,7 +1108,7 @@ export default function App() {
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
       </div>
       {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /><button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
-      {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic); }} onNo={() => setP(null)} />}
+      {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic, p.h10, p.bs); }} onNo={() => setP(null)} />}
     </div>
   );
 }
