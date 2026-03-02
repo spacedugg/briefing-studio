@@ -42,9 +42,16 @@ export default async function handler(req, res) {
       const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
       const timeFormatted = formatTime(seconds);
 
+      // Auto-detect the first sheet name (works with any language: Sheet1, Tabellenblatt1, etc.)
+      const sheetName = await getFirstSheetName(GOOGLE_SHEETS_ID, token);
+
       // Read existing rows to find projectId
-      const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/Sheet1!A:H`;
+      const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:H`;
       const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${token}` } });
+      if (!readRes.ok) {
+        const err = await readRes.json().catch(() => ({}));
+        return res.status(500).json({ error: `Failed to read sheet: ${err.error?.message || readRes.status}` });
+      }
       const readData = await readRes.json();
       const rows = readData.values || [];
 
@@ -58,29 +65,41 @@ export default async function handler(req, res) {
 
       if (rowIndex > 0) {
         // Update existing row
-        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/Sheet1!A${rowIndex + 1}:J${rowIndex + 1}?valueInputOption=RAW`;
-        await fetch(updateUrl, {
+        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${rowIndex + 1}:J${rowIndex + 1}?valueInputOption=RAW`;
+        const updateRes = await fetch(updateUrl, {
           method: 'PUT',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ values: [rowData] }),
         });
+        if (!updateRes.ok) {
+          const err = await updateRes.json().catch(() => ({}));
+          return res.status(500).json({ error: `Failed to update row: ${err.error?.message || updateRes.status}` });
+        }
       } else {
         // Ensure header row exists
         if (rows.length === 0) {
-          const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/Sheet1!A1:J1?valueInputOption=RAW`;
-          await fetch(headerUrl, {
+          const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A1:J1?valueInputOption=RAW`;
+          const headerRes = await fetch(headerUrl, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ values: [['Project ID', 'Product', 'Brand', 'ASIN', 'Marketplace', 'Time', 'Hours', 'Cost (USD)', 'Cost (EUR)', 'Last Updated']] }),
           });
+          if (!headerRes.ok) {
+            const err = await headerRes.json().catch(() => ({}));
+            return res.status(500).json({ error: `Failed to create header: ${err.error?.message || headerRes.status}` });
+          }
         }
         // Append new row
-        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/Sheet1!A:J:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-        await fetch(appendUrl, {
+        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:J:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+        const appendRes = await fetch(appendUrl, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ values: [rowData] }),
         });
+        if (!appendRes.ok) {
+          const err = await appendRes.json().catch(() => ({}));
+          return res.status(500).json({ error: `Failed to append row: ${err.error?.message || appendRes.status}` });
+        }
       }
 
       return res.status(200).json({ success: true, hours, costUsd, costEur, eurRate });
@@ -99,6 +118,15 @@ function formatTime(s) {
   return h > 0
     ? `${h}:${m.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`
     : `${m}:${ss.toString().padStart(2, '0')}`;
+}
+
+// Get the name of the first sheet tab (auto-detects language: Sheet1, Tabellenblatt1, etc.)
+async function getFirstSheetName(spreadsheetId, token) {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error('Failed to read spreadsheet metadata');
+  const data = await res.json();
+  return data.sheets?.[0]?.properties?.title || 'Sheet1';
 }
 
 // Generate Google API OAuth2 token from service account credentials
