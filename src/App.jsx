@@ -239,7 +239,7 @@ REGELN:
 - Headlines: max 25 Zeichen, 3 Varianten. KEINE Gedankenstriche (—, –, -) in Headlines, Subheadlines, Bullets oder Badges. Verwende auch keine Satzkonstruktionen, die Gedankenstriche erfordern. Keine Kommas.
   1. "USP": Nenne das KONKRETE Alleinstellungsmerkmal direkt beim Namen (z.B. "Premium-Silikon" statt "Hochwertig kochen", "3-Schicht-Filter" statt "Saubere Luft"). Das wichtigste Produktmerkmal MUSS in der Headline stehen.
   2. "Kundenvorteil": Formuliere den konkreten Nutzen aus Kundensicht (z.B. "Nie wieder Verbrennungen" statt "Sicher kochen"). Was hat der Kunde davon?
-  3. "Kreativ": Emotionale, aufmerksamkeitsstarke Variante (z.B. "Kochen wie ein Profi", "Dein Küchen-Upgrade").
+  3. "Kreativ": Emotionale, aufmerksamkeitsstarke Variante. MUSS ein grammatisch vollständiger, natürlich klingender deutscher Ausdruck sein (z.B. "Kochen wie ein Profi", "Dein Küchen-Upgrade", "Endlich sorglos grillen"). KEINE einzelnen Adjektive oder abgehackten Wortfragmente. Jede kreative Headline MUSS im normalen Sprachgebrauch Sinn ergeben.
 - HIERARCHIE: Die wichtigsten Produktaspekte (Material, Hauptfeature, Kernvorteil) MÜSSEN bereits in Headline/Subheadline stehen. Bullets vertiefen diese Aspekte, wiederholen sie aber nicht. Headline = Kernaussage, Subheadline = Erweiterung, Bullets = Details.
 - Subheadlines: 3 Varianten (kurz/erklärend/emotional). Dürfen auch leer bleiben falls nicht nötig. KEINE Gedankenstriche.
 - Bullets: So viele wie inhaltlich sinnvoll (2-6), NICHT immer gleich viele pro Bild. Orientiere dich am Bildinhalt. Schlüsselwörter mit **fett** markieren. Jeder Bullet max 1-2 Fettungen. KEINE Gedankenstriche. Achte auf korrekte deutsche Grammatik.
@@ -436,50 +436,53 @@ const Lbl = ({ children, c = V.violet }) => <div style={{ fontSize: 10, fontWeig
 const Check = ({ on }) => <span style={{ color: on ? V.emerald : V.textDim, fontSize: 11, fontWeight: 800 }}>{on ? "✓" : "○"}</span>;
 const Err = ({ msg, onX }) => msg ? <div style={{ ...gS, padding: "12px 18px", background: `${V.rose}10`, border: `1px solid ${V.rose}25`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><span style={{ fontSize: 12, color: V.rose, fontWeight: 600, lineHeight: 1.5 }}>{msg}</span>{onX && <button onClick={onX} style={{ background: "none", border: "none", color: V.rose, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 16 }}>×</button>}</div> : null;
 
-// ═══════ TIME TRACKER (single overall timer for designer view) ═══════
+// ═══════ TIME TRACKER (persistent per ASIN, restores on reload, time only increases) ═══════
 function TimeTracker({ productName, brand, asin, marketplace }) {
   const [secs, setSecs] = useState(0);
   const [running, setRunning] = useState(false);
   const [synced, setSynced] = useState(false);
   const [syncErr, setSyncErr] = useState(false);
+  const [restored, setRestored] = useState(false);
   const iRef = useRef(null);
-  // Stable unique project ID: timestamp + product hash (survives component re-renders but unique per briefing session)
-  const projectId = useRef((() => {
-    const ts = Date.now().toString(36);
-    const src = (productName || "") + (asin || "") + ts;
-    let h = 0; for (let i = 0; i < src.length; i++) { h = ((h << 5) - h + src.charCodeAt(i)) | 0; }
-    return ts + "-" + Math.abs(h).toString(36);
-  })());
-  useEffect(() => { if (iRef.current) clearInterval(iRef.current); if (running) { iRef.current = setInterval(() => setSecs(p => p + 1), 1000); } return () => clearInterval(iRef.current); }, [running]);
-  // Auto-sync to Google Sheets every 20 minutes while running, and on pause
   const syncRef = useRef(null);
   const secsRef = useRef(secs);
   secsRef.current = secs;
+  // Restore saved time from server on mount (per ASIN)
+  useEffect(() => {
+    if (!asin) { setRestored(true); return; }
+    fetch("/api/timesheet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "get", asin }) })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.seconds > 0) setSecs(d.seconds); setRestored(true); })
+      .catch(() => setRestored(true));
+  }, [asin]);
+  useEffect(() => { if (iRef.current) clearInterval(iRef.current); if (running) { iRef.current = setInterval(() => setSecs(p => p + 1), 1000); } return () => clearInterval(iRef.current); }, [running]);
   const syncToSheet = useCallback(async (s) => {
+    if (!asin) return;
     try {
       const r = await fetch("/api/timesheet", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "update", projectId: projectId.current, productName, brand, asin, marketplace, seconds: s }),
+        body: JSON.stringify({ action: "update", productName, brand, asin, marketplace, seconds: s }),
       });
-      if (r.ok) { setSynced(true); setSyncErr(false); }
-      else { setSyncErr(true); }
+      if (r.ok) {
+        const d = await r.json();
+        // Server may return higher seconds (time only increases)
+        if (d.seconds > secsRef.current) setSecs(d.seconds);
+        setSynced(true); setSyncErr(false);
+      } else { setSyncErr(true); }
     } catch { setSyncErr(true); }
   }, [productName, brand, asin, marketplace]);
   useEffect(() => {
     if (syncRef.current) clearInterval(syncRef.current);
-    if (running) {
-      syncRef.current = setInterval(() => syncToSheet(secsRef.current), 10000); // 10 seconds
-    }
+    if (running) { syncRef.current = setInterval(() => syncToSheet(secsRef.current), 10000); }
     return () => clearInterval(syncRef.current);
   }, [running, syncToSheet]);
-  // Sync on pause
   const handleToggle = () => {
     if (running && secs > 0) syncToSheet(secs);
     setRunning(r => !r);
   };
   const fmt = s => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60; return h > 0 ? `${h}:${m.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}` : `${m}:${ss.toString().padStart(2, "0")}`; };
   return <div style={{ ...glass, padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 0, borderLeft: "none", borderRight: "none", borderTop: "none" }}>
-    <div><div style={{ fontSize: 10, fontWeight: 800, color: V.teal, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 2 }}>Time Tracking</div><div style={{ fontSize: 11, color: V.textDim }}>{productName || "Briefing"}{synced && !syncErr ? <span style={{ fontSize: 9, color: V.emerald, marginLeft: 8 }}>synced</span> : ""}{syncErr ? <span style={{ fontSize: 9, color: V.rose, marginLeft: 8 }}>sync failed</span> : ""}</div></div>
+    <div><div style={{ fontSize: 10, fontWeight: 800, color: V.teal, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 2 }}>Time Tracking</div><div style={{ fontSize: 11, color: V.textDim }}>{productName || "Briefing"}{synced && !syncErr ? <span style={{ fontSize: 9, color: V.emerald, marginLeft: 8 }}>synced</span> : ""}{syncErr ? <span style={{ fontSize: 9, color: V.rose, marginLeft: 8 }}>sync failed</span> : ""}{restored && secs > 0 && !running && !synced ? <span style={{ fontSize: 9, color: V.blue, marginLeft: 8 }}>restored</span> : ""}</div></div>
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
       <span style={{ fontSize: 28, fontWeight: 800, color: running ? V.teal : V.ink, fontVariantNumeric: "tabular-nums", fontFamily: FN }}>{fmt(secs)}</span>
       <button onClick={handleToggle} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: running ? V.rose : `linear-gradient(135deg, ${V.teal}, ${V.emerald})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN, minWidth: 80 }}>{running ? "Pause" : secs > 0 ? "Resume" : "Start"}</button>
@@ -730,13 +733,13 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
       <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>{D.images.map((im, i) => {
         const h = im.texts?.headlines || (im.texts?.headline ? [im.texts.headline] : []);
         const ov = h.some(x => x.length > MAX_HL);
-        const tabLabel = IMG_LABELS[i] || im.label;
+        const tabLabel = getImgLabel(D.images, i);
         const theme = im.theme || "";
         return <button key={i} onClick={() => setSel(i)} style={{ ...gS, padding: "8px 14px", background: sel === i ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(255,255,255,0.5)", color: sel === i ? "#fff" : ov ? V.rose : V.textDim, border: ov && sel !== i ? `1.5px solid ${V.rose}50` : sel === i ? "none" : "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: sel === i ? `0 4px 20px ${V.violet}40` : "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 0 }}><span style={{ fontSize: 11, fontWeight: 800 }}>{tabLabel}</span>{theme && <span style={{ fontSize: 9, fontWeight: 500, opacity: sel === i ? 0.85 : 0.7, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis" }}>{theme}</span>}{ov && <span style={{ fontSize: 8, color: sel === i ? "#fff" : V.rose }}>!</span>}</button>;
       })}</div>
       <GC>
         <div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}><span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{IMG_LABELS[sel] || img.label}</span><span style={{ fontSize: 12, color: V.textDim }}>{img.role}</span></div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}><span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{getImgLabel(D.images, sel)}</span><span style={{ fontSize: 12, color: V.textDim }}>{img.role}</span></div>
           {te && <CopyBtn text={allTxt} label="Alle Texte" />}
         </div>
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
@@ -851,10 +854,40 @@ function AnalyseTab({ D, lqs }) {
 
 // ═══════ BRIEFING EXPORT ═══════
 const IMG_LABELS = ["Main Image", "PT.01", "PT.02", "PT.03", "PT.04", "PT.05", "PT.06"];
+// Dynamic image label that supports multiple MAIN images
+function getImgLabel(images, idx) {
+  const img = images[idx];
+  const id = (img?.id || "").toLowerCase();
+  if (id.startsWith("main")) {
+    const mainCount = images.filter(im => (im.id || "").toLowerCase().startsWith("main")).length;
+    if (mainCount <= 1) return "Main Image";
+    const mainIdx = images.slice(0, idx + 1).filter(im => (im.id || "").toLowerCase().startsWith("main")).length;
+    return mainIdx === 1 ? "Main Image" : `Main Image ${mainIdx}`;
+  }
+  const ptIdx = images.slice(0, idx + 1).filter(im => !(im.id || "").toLowerCase().startsWith("main")).length;
+  return `PT.${String(ptIdx).padStart(2, "0")}`;
+}
+function getImgFileName(images, idx, asin) {
+  const img = images[idx];
+  const id = (img?.id || "").toLowerCase();
+  let label;
+  if (id.startsWith("main")) {
+    const mainCount = images.filter(im => (im.id || "").toLowerCase().startsWith("main")).length;
+    if (mainCount <= 1) { label = "MAIN"; }
+    else {
+      const mainIdx = images.slice(0, idx + 1).filter(im => (im.id || "").toLowerCase().startsWith("main")).length;
+      label = mainIdx === 1 ? "MAIN" : `MAIN${mainIdx}`;
+    }
+  } else {
+    const ptIdx = images.slice(0, idx + 1).filter(im => !(im.id || "").toLowerCase().startsWith("main")).length;
+    label = `PT${String(ptIdx).padStart(2, "0")}`;
+  }
+  return asin ? `${asin}.${label}` : label;
+}
 function genBrief(D, hlC, shC, bulSel, bdgSel) {
   let t = `AMAZON GALLERY IMAGE BRIEFING\n${"=".repeat(50)}\nProduct: ${D.product?.name} | ${D.product?.brand}\nMarketplace: ${D.product?.marketplace}\n\n`;
   (D.images || []).forEach((im, idx) => {
-    const expLabel = IMG_LABELS[idx] + (im.theme ? " | " + im.theme : "") + " (" + (im.role || im.label) + ")";
+    const expLabel = getImgLabel(D.images, idx) + (im.theme ? " | " + im.theme : "") + " (" + (im.role || im.label) + ")";
     t += `${"-".repeat(50)}\n${expLabel}\n${"-".repeat(50)}\nCONCEPT:\n${im.concept}\n\nRATIONALE:\n${im.rationale}\n`;
     if (im.eyecatchers?.length) t += `\nEYECATCHER IDEAS:\n${im.eyecatchers.map((e, i) => `  ${i + 1}. ${e.idea} [${e.risk}]`).join("\n")}\n`;
     if (im.texts) {
@@ -880,18 +913,60 @@ function genBrief(D, hlC, shC, bulSel, bdgSel) {
   return t;
 }
 // ═══════ DESIGNER VIEW (standalone shareable page - final decisions only) ═══════
-function DesignerView({ D, selections }) {
+function DesignerView({ D, selections, briefingId, serverVersion }) {
   const hlC = selections?.hlC || {}, shC = selections?.shC || {}, bulSel = selections?.bulSel || {}, bdgSel = selections?.bdgSel || {};
   const links = selections?.links || {};
+  const prevData = selections?._previousData || null;
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [changedFields, setChangedFields] = useState(new Set());
+  const versionRef = useRef(serverVersion || 1);
+  // Poll for briefing updates every 30 seconds
+  useEffect(() => {
+    if (!briefingId) return;
+    const check = async () => {
+      try {
+        const r = await fetch("/api/briefing?id=" + briefingId);
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.version && d.version > versionRef.current) {
+          setUpdateAvailable(true);
+          setUpdateDismissed(false);
+          // Detect which images changed
+          const newBriefing = d.data?.briefing;
+          const changes = new Set();
+          if (newBriefing?.images && D?.images) {
+            newBriefing.images.forEach((ni, idx) => {
+              const oi = D.images[idx];
+              if (!oi || JSON.stringify(ni) !== JSON.stringify(oi)) changes.add(idx);
+            });
+          }
+          setChangedFields(changes);
+        }
+      } catch {}
+    };
+    const iv = setInterval(check, 30000);
+    return () => clearInterval(iv);
+  }, [briefingId, D]);
+  // Detect changes from previous version (on initial load)
+  useEffect(() => {
+    if (!prevData?.briefing?.images || !D?.images) return;
+    const changes = new Set();
+    const prev = prevData.briefing;
+    D.images.forEach((ni, idx) => {
+      const oi = prev.images?.[idx];
+      if (!oi || JSON.stringify(ni) !== JSON.stringify(oi)) changes.add(idx);
+    });
+    if (changes.size > 0) { setChangedFields(changes); setUpdateAvailable(true); }
+  }, []);
+  const handleRefresh = () => { window.location.reload(); };
   if (!D?.images?.length) return null;
   const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1");
   const asin = D.product?.sku || "";
-  // Inline copy button for individual text elements
   const ICopy = ({ text, children, style: s = {} }) => {
     const [ok, set] = useState(false);
-    return <div onClick={() => { navigator.clipboard.writeText(strip(text)); set(true); setTimeout(() => set(false), 1200); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, cursor: "pointer", background: ok ? `${V.emerald}12` : "transparent", border: ok ? `1px solid ${V.emerald}25` : "1px solid transparent", transition: "all 0.15s", ...s }} onMouseEnter={e => { if (!ok) e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }} onMouseLeave={e => { if (!ok) e.currentTarget.style.background = "transparent"; }}>{children}<span style={{ fontSize: 9, fontWeight: 700, color: ok ? V.emerald : V.textDim, opacity: ok ? 1 : 0, transition: "opacity 0.15s", flexShrink: 0 }}>{ok ? "Copied" : ""}</span></div>;
+    return <div onClick={() => { navigator.clipboard.writeText(strip(text)); set(true); setTimeout(() => set(false), 1200); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, cursor: "pointer", background: ok ? `${V.emerald}12` : "transparent", border: ok ? `1px solid ${V.emerald}25` : "1px solid transparent", transition: "all 0.15s", ...s }} onMouseEnter={e => { if (!ok) e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }} onMouseLeave={e => { if (!ok) e.currentTarget.style.background = "transparent"; }}>{children}<span style={{ fontSize: 10, fontWeight: 700, color: ok ? V.emerald : V.textDim, opacity: ok ? 1 : 0, transition: "opacity 0.15s", flexShrink: 0 }}>{ok ? "Copied" : ""}</span></div>;
   };
-  // Helper to get final selections for an image
   const getImageData = (img) => {
     const te = img?.texts;
     const hls = te?.headlines || (te?.headline ? [te.headline] : []);
@@ -910,11 +985,26 @@ function DesignerView({ D, selections }) {
       hasTexts: !!te,
     };
   };
-  // Image file naming
+  // Image file naming — supports multiple MAIN images: MAIN, MAIN2, MAIN3...
   const imgName = (idx) => {
-    const labels = ["MAIN", "PT01", "PT02", "PT03", "PT04", "PT05", "PT06"];
-    const prefix = asin || "";
-    return prefix ? `${prefix}.${labels[idx]}` : labels[idx];
+    // Count how many "main" images there are (id starts with "main")
+    const mainCount = D.images.filter(im => (im.id || "").toLowerCase().startsWith("main")).length;
+    const img = D.images[idx];
+    const id = (img?.id || "").toLowerCase();
+    let label;
+    if (id.startsWith("main")) {
+      if (mainCount <= 1) { label = "MAIN"; }
+      else {
+        // MAIN, MAIN2, MAIN3...
+        const mainIdx = D.images.slice(0, idx + 1).filter(im => (im.id || "").toLowerCase().startsWith("main")).length;
+        label = mainIdx === 1 ? "MAIN" : `MAIN${mainIdx}`;
+      }
+    } else {
+      // PT images: count non-main images before this one
+      const ptIdx = D.images.slice(0, idx + 1).filter(im => !(im.id || "").toLowerCase().startsWith("main")).length;
+      label = `PT${String(ptIdx).padStart(2, "0")}`;
+    }
+    return asin ? `${asin}.${label}` : label;
   };
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}>
@@ -925,92 +1015,104 @@ function DesignerView({ D, selections }) {
         <TimeTracker productName={D.product?.name} brand={D.product?.brand} asin={D.product?.sku} marketplace={D.product?.marketplace} />
       </div>
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 20px 80px", position: "relative", zIndex: 1 }}>
+        {/* Update banner */}
+        {updateAvailable && !updateDismissed && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, background: `${V.blue}12`, border: `2px solid ${V.blue}40`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: V.blue, marginBottom: 2 }}>Briefing Updated</div>
+            <div style={{ fontSize: 12, color: V.text }}>The briefing has been updated since you last opened it. {changedFields.size > 0 ? `Changes in ${changedFields.size} image${changedFields.size > 1 ? "s" : ""} (highlighted below).` : ""} This is the latest version.</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <button onClick={handleRefresh} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Refresh</button>
+            <button onClick={() => setUpdateDismissed(true)} style={{ ...gS, padding: "8px 12px", fontSize: 11, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8 }}>Dismiss</button>
+          </div>
+        </div>}
         {/* Header */}
-        <div style={{ ...glass, padding: "16px 22px", marginBottom: 18 }}>
-          <div style={{ background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontSize: 20, fontWeight: 900, marginBottom: 4 }}>Designer Briefing</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{D.product?.name}</div>
-          <div style={{ fontSize: 11, color: V.textDim }}>{D.product?.brand} · {D.product?.marketplace}{asin ? ` · ${asin}` : ""}</div>
+        <div style={{ ...glass, padding: "18px 24px", marginBottom: 18 }}>
+          <div style={{ background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontSize: 22, fontWeight: 900, marginBottom: 4 }}>Designer Briefing</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: V.ink }}>{D.product?.name}</div>
+          <div style={{ fontSize: 13, color: V.textDim }}>{D.product?.brand} · {D.product?.marketplace}{asin ? ` · ${asin}` : ""}</div>
         </div>
         {/* Links section */}
         {(links.inputUrl || links.outputUrl) && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, display: "flex", gap: 14, flexWrap: "wrap" }}>
-          {links.inputUrl && <a href={links.inputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 12, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Assets / Source Files</a>}
-          {links.outputUrl && <a href={links.outputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.emerald}, ${V.teal})`, color: "#fff", fontSize: 12, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Upload Results</a>}
+          {links.inputUrl && <a href={links.inputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Assets / Source Files</a>}
+          {links.outputUrl && <a href={links.outputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.emerald}, ${V.teal})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Upload Results</a>}
         </div>}
         {/* File naming convention */}
-        <div style={{ ...gS, padding: "10px 18px", marginBottom: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 10, fontWeight: 800, color: V.textMed, textTransform: "uppercase", letterSpacing: ".06em" }}>File naming:</span>
-          {D.images.map((_, i) => <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.violet, padding: "3px 10px", borderRadius: 6, background: `${V.violet}10`, fontFamily: "monospace" }}>{imgName(i)}</span>)}
-          <span style={{ fontSize: 10, color: V.textDim }}>.jpg / .png, max 5 MB each</span>
+        <div style={{ ...gS, padding: "12px 18px", marginBottom: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: V.textMed, textTransform: "uppercase", letterSpacing: ".06em" }}>File naming:</span>
+          {D.images.map((_, i) => <span key={i} style={{ fontSize: 12, fontWeight: 700, color: V.violet, padding: "4px 10px", borderRadius: 6, background: `${V.violet}10`, fontFamily: "monospace" }}>{imgName(i)}</span>)}
+          <span style={{ fontSize: 11, color: V.textDim }}>.jpg / .png, max 5 MB each</span>
         </div>
         {/* All images listed sequentially */}
         {D.images.map((img, idx) => {
           const d = getImageData(img);
-          const isMain = idx === 0;
-          return <GC key={idx} style={{ marginBottom: 16 }}>
-            <div style={{ padding: "14px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          const isMain = (img.id || "").toLowerCase().startsWith("main");
+          const isChanged = changedFields.has(idx);
+          return <GC key={idx} style={{ marginBottom: 18, border: isChanged ? `2px solid ${V.blue}50` : undefined }}>
+            {isChanged && <div style={{ padding: "6px 22px", background: `${V.blue}10`, borderBottom: `1px solid ${V.blue}20`, fontSize: 11, fontWeight: 700, color: V.blue }}>Updated in latest revision</div>}
+            <div style={{ padding: "16px 24px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                <span style={{ fontSize: 16, fontWeight: 800, color: V.ink }}>{imgName(idx)}</span>
+                <span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{imgName(idx)}</span>
                 {img.theme && <Pill c={V.violet}>{img.theme}</Pill>}
-                <span style={{ fontSize: 11, color: V.textDim }}>{img.role}</span>
+                <span style={{ fontSize: 12, color: V.textDim }}>{img.role}</span>
               </div>
               {d.hasTexts && <CopyBtn text={[d.headline, d.subheadline, ...d.bullets.map(strip), ...d.badges].filter(Boolean).join("\n")} label="Copy All" />}
             </div>
-            <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
               {/* Concept + Visual side by side */}
-              <div style={{ display: "grid", gridTemplateColumns: img.visual ? "1fr 1fr" : "1fr", gap: 14 }}>
-                {img.concept && <div><Lbl c={V.blue}>Concept</Lbl><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.concept}</p></div>}
-                {img.visual && <div><Lbl c={V.textDim}>Visual Notes</Lbl><p style={{ fontSize: 12, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
+              <div style={{ display: "grid", gridTemplateColumns: img.visual ? "1fr 1fr" : "1fr", gap: 16 }}>
+                {img.concept && <div><Lbl c={V.blue}>Concept</Lbl><p style={{ fontSize: 14, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.concept}</p></div>}
+                {img.visual && <div><Lbl c={V.textDim}>Visual Notes</Lbl><p style={{ fontSize: 13, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
               </div>
-              {img.rationale && <div style={{ background: `${V.violet}06`, borderRadius: 12, padding: 14, border: `1px solid ${V.violet}10` }}><Lbl c={V.violet}>Rationale</Lbl><p style={{ fontSize: 12, color: V.text, lineHeight: 1.7, margin: 0 }}>{img.rationale}</p></div>}
-              {/* Eyecatchers - Main Image only, no risk tags */}
+              {img.rationale && <div style={{ background: `${V.violet}06`, borderRadius: 12, padding: 16, border: `1px solid ${V.violet}10` }}><Lbl c={V.violet}>Rationale</Lbl><p style={{ fontSize: 13, color: V.text, lineHeight: 1.7, margin: 0 }}>{img.rationale}</p></div>}
+              {/* Eyecatchers - Main Image only */}
               {isMain && img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher Elements</Lbl><div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{img.eyecatchers.map((ec, i) => {
-                // Determine if this is a literal badge text or a visual description
                 const isShort = ec.idea.length <= 30 && !ec.idea.includes(" ");
                 const looksLikeBadgeText = isShort || /^[A-ZÄÖÜ0-9]/.test(ec.idea) && ec.idea.split(" ").length <= 4;
                 return <div key={i} style={{ ...gS, padding: "10px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: V.amber, flexShrink: 0, marginTop: 2 }}>{i + 1}.</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: V.amber, flexShrink: 0, marginTop: 2 }}>{i + 1}.</span>
                   <div style={{ flex: 1 }}>
                     {looksLikeBadgeText ? (
-                      <ICopy text={ec.idea}><span style={{ padding: "4px 12px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 13, fontWeight: 800, color: V.amber }}>{ec.idea}</span></ICopy>
+                      <ICopy text={ec.idea}><span style={{ padding: "5px 14px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 14, fontWeight: 800, color: V.amber }}>{ec.idea}</span></ICopy>
                     ) : (
-                      <div><Pill c={V.textDim} s={{ marginBottom: 4 }}>Visual description</Pill><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.6, margin: "4px 0 0" }}>{ec.idea}</p></div>
+                      <div><Pill c={V.textDim} s={{ marginBottom: 4 }}>Visual description</Pill><p style={{ fontSize: 14, color: V.text, lineHeight: 1.6, margin: "4px 0 0" }}>{ec.idea}</p></div>
                     )}
                   </div>
                 </div>;
               })}</div></div>}
-              {/* Final text selections - individually copyable, clearly labeled */}
-              {d.hasTexts && <div style={{ background: `${V.orange}06`, borderRadius: 14, padding: 16, border: `1px solid ${V.orange}10` }}>
-                <Lbl c={V.orange}>Image Texts</Lbl>
-                {/* HEADLINE */}
-                {d.headline && <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 9, fontWeight: 800, color: V.orange, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Heading</div>
-                  <ICopy text={d.headline}><span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{d.headline}</span></ICopy>
+              {/* ── IMAGE TEXTS ── clearly separated from concept/visual above */}
+              {d.hasTexts && <div style={{ background: `${V.orange}06`, borderRadius: 14, padding: 18, border: `2px solid ${V.orange}18`, marginTop: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 900, color: V.orange, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 14, paddingBottom: 10, borderBottom: `2px solid ${V.orange}20` }}>Image Texts</div>
+                {/* HEADLINE — prominent, clearly distinct */}
+                {d.headline && <div style={{ marginBottom: 14, padding: "12px 14px", background: "rgba(255,255,255,0.7)", borderRadius: 10, border: `1px solid ${V.orange}15` }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: V.orange, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>Headline</div>
+                  <ICopy text={d.headline}><span style={{ fontSize: 20, fontWeight: 800, color: V.ink, lineHeight: 1.3 }}>{d.headline}</span></ICopy>
                 </div>}
                 {/* SUBHEADLINE */}
-                {d.subheadline && <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 9, fontWeight: 800, color: V.blue, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Subheading</div>
-                  <ICopy text={d.subheadline}><span style={{ fontSize: 14, color: V.textMed }}>{d.subheadline}</span></ICopy>
+                {d.subheadline && <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: V.blue, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>Subheadline</div>
+                  <ICopy text={d.subheadline}><span style={{ fontSize: 15, color: V.textMed, lineHeight: 1.4 }}>{d.subheadline}</span></ICopy>
                 </div>}
                 {/* BULLETS */}
-                {d.bullets.length > 0 && <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 9, fontWeight: 800, color: V.teal, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Bullet Points (+ Icons)</div>
-                  {d.bullets.map((b, i) => <ICopy key={i} text={strip(b)} style={{ marginBottom: 2 }}>
+                {d.bullets.length > 0 && <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: V.teal, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>Bullet Points (+ Icons)</div>
+                  {d.bullets.map((b, i) => <ICopy key={i} text={strip(b)} style={{ marginBottom: 3 }}>
                     <span style={{ color: V.teal, fontWeight: 800, flexShrink: 0 }}>-</span>
-                    <span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />
+                    <span style={{ fontSize: 14, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />
                   </ICopy>)}
                 </div>}
                 {/* BADGES */}
-                {d.badges.length > 0 && <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 9, fontWeight: 800, color: V.amber, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Badge</div>
-                  {d.badges.map((b, i) => <ICopy key={i} text={b}><span style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 12, fontWeight: 800, color: V.amber }}>{b}</span></ICopy>)}
+                {d.badges.length > 0 && <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: V.amber, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>Badge</div>
+                  {d.badges.map((b, i) => <ICopy key={i} text={b}><span style={{ padding: "6px 14px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 14, fontWeight: 800, color: V.amber }}>{b}</span></ICopy>)}
                 </div>}
                 {/* FOOTNOTES */}
-                {d.footnotes.length > 0 && <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${V.textDim}15` }}>
-                  <div style={{ fontSize: 9, fontWeight: 800, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Footnotes</div>
-                  {d.footnotes.map((f, i) => <ICopy key={i} text={f}><span style={{ fontSize: 11, color: V.textDim, lineHeight: 1.5 }}>{f}</span></ICopy>)}
+                {d.footnotes.length > 0 && <div style={{ marginTop: 8, paddingTop: 10, borderTop: `1px solid ${V.textDim}15` }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: V.textDim, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>Footnotes</div>
+                  {d.footnotes.map((f, i) => <ICopy key={i} text={f}><span style={{ fontSize: 12, color: V.textDim, lineHeight: 1.5 }}>{f}</span></ICopy>)}
                 </div>}
               </div>}
-              {!d.hasTexts && <div style={{ padding: 16, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>No text overlay. Visual-only image.</span></div>}
+              {!d.hasTexts && <div style={{ padding: 18, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 13, color: V.textDim }}>No text overlay. Visual-only image.</span></div>}
             </div>
           </GC>;
         })}
@@ -1138,10 +1240,14 @@ export default function App() {
   const [shareUrl, setShareUrl] = useState(null);
   const [shareLoading, setShareLoading] = useState(false);
   const [designerMode, setDesignerMode] = useState(null);
+  const [designerBriefingId, setDesignerBriefingId] = useState(null);
+  const [designerVersion, setDesignerVersion] = useState(1);
   // Input/Output links for designer collaboration
   const [inputUrl, setInputUrl] = useState("");
   const [outputUrl, setOutputUrl] = useState("");
   const [showLinks, setShowLinks] = useState(false);
+  // Track the shared briefing ID so we can update it instead of creating duplicates
+  const [sharedBriefingId, setSharedBriefingId] = useState(null);
   // Load briefing from shared URL on mount (short ID or legacy hash)
   useState(() => {
     const hash = window.location.hash.slice(1);
@@ -1149,9 +1255,38 @@ export default function App() {
     if (hash && hash.startsWith("d=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }); return; }
     // New: /d/<id> short URL
     const m = window.location.pathname.match(/^\/d\/([A-Za-z0-9]{6,12})$/);
-    if (m) { fetch("/api/briefing?id=" + m[1]).then(r => r.ok ? r.json() : null).then(d => { if (d?.data?.briefing?.product) setDesignerMode(d.data); }).catch(() => {}); }
+    if (m) {
+      const bId = m[1];
+      fetch("/api/briefing?id=" + bId).then(r => r.ok ? r.json() : null).then(d => {
+        if (d?.data?.briefing?.product) {
+          setDesignerMode(d.data);
+          setDesignerBriefingId(bId);
+          setDesignerVersion(d.version || 1);
+        }
+      }).catch(() => {});
+    }
   });
-  const shareDesignerLink = useCallback(async () => { if (!data) return; setShareLoading(true); const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } } }; try { const res = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); if (res.ok) { const { id } = await res.json(); const url = window.location.origin + "/d/" + id; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } else { throw new Error("API error"); } } catch { /* Fallback to hash-based URL */ const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } } setShareLoading(false); }, [data, hlC, shC, bulSel, bdgSel, inputUrl, outputUrl]);
+  const shareDesignerLink = useCallback(async () => {
+    if (!data) return;
+    setShareLoading(true);
+    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } } };
+    // If we already shared this briefing, update it (same URL, new version)
+    if (sharedBriefingId) payload._updateId = sharedBriefingId;
+    try {
+      const res = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (res.ok) {
+        const { id } = await res.json();
+        if (!sharedBriefingId) setSharedBriefingId(id);
+        const url = window.location.origin + "/d/" + (sharedBriefingId || id);
+        setShareUrl(url);
+        try { await navigator.clipboard.writeText(url); } catch {}
+      } else { throw new Error("API error"); }
+    } catch {
+      const enc = await encodeBriefing(payload);
+      if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
+    }
+    setShareLoading(false);
+  }, [data, hlC, shC, bulSel, bdgSel, inputUrl, outputUrl, sharedBriefingId]);
   const go = useCallback(async (a, m, p, f, refData, imgCount, h10Keywords, bestsellerAsin) => {
     setL(true); setE(null); setSt("Starte...");
     try {
@@ -1209,7 +1344,7 @@ export default function App() {
   }, [txtDensity]);
   const goNew = useCallback((a, m, p, f, ref, ic, h10, bs) => { data ? setP({ a, m, p, f, ref, ic, h10, bs }) : go(a, m, p, f, ref, ic, h10, bs); }, [data, go]);
   // Standalone views (no app features visible)
-  if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} />;
+  if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} briefingId={designerBriefingId} serverVersion={designerVersion} />;
   if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(asin || ""); setSN(false); }} txtDensity={txtDensity} setTD={setTD} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
@@ -1243,7 +1378,7 @@ export default function App() {
             <div style={{ ...gS, padding: "10px 14px" }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: V.textMed, marginBottom: 4 }}>Dateinamen-Konvention:</div>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {(data?.images || []).map((_, i) => { const labels = ["MAIN", "PT01", "PT02", "PT03", "PT04", "PT05", "PT06"]; const prefix = curAsin || ""; return <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.violet, padding: "2px 8px", borderRadius: 6, background: `${V.violet}10`, fontFamily: "monospace" }}>{prefix ? `${prefix}.${labels[i]}` : labels[i]}</span>; })}
+                {(data?.images || []).map((_, i) => <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.violet, padding: "2px 8px", borderRadius: 6, background: `${V.violet}10`, fontFamily: "monospace" }}>{getImgFileName(data.images, i, curAsin)}</span>)}
                 <span style={{ fontSize: 10, color: V.textDim, alignSelf: "center" }}>.jpg / .png, max 5 MB</span>
               </div>
             </div>

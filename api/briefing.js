@@ -13,9 +13,14 @@ async function init() {
     CREATE TABLE IF NOT EXISTS briefings (
       id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      version INTEGER DEFAULT 1
     )
   `);
+  // Add columns if they don't exist (for existing tables)
+  try { await db.execute(`ALTER TABLE briefings ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))`); } catch {}
+  try { await db.execute(`ALTER TABLE briefings ADD COLUMN version INTEGER DEFAULT 1`); } catch {}
   initialized = true;
 }
 
@@ -39,27 +44,48 @@ export default async function handler(req, res) {
   try {
     await init();
 
-    // GET /api/briefing?id=xxx — load briefing
+    // GET /api/briefing?id=xxx — load briefing (includes version for change detection)
     if (req.method === "GET") {
       const { id } = req.query;
       if (!id) return res.status(400).json({ error: "Missing id" });
 
-      const result = await db.execute({ sql: "SELECT data FROM briefings WHERE id = ?", args: [id] });
+      const result = await db.execute({ sql: "SELECT data, version, updated_at FROM briefings WHERE id = ?", args: [id] });
       if (!result.rows.length) return res.status(404).json({ error: "Briefing not found" });
 
-      return res.status(200).json({ id, data: JSON.parse(result.rows[0].data) });
+      const row = result.rows[0];
+      return res.status(200).json({ id, data: JSON.parse(row.data), version: row.version || 1, updatedAt: row.updated_at || null });
     }
 
-    // POST /api/briefing — save briefing, return short ID
+    // POST /api/briefing — save or update briefing
     if (req.method === "POST") {
       const body = req.body;
       if (!body?.briefing) return res.status(400).json({ error: "Missing briefing data" });
 
-      const id = generateId();
       const json = JSON.stringify(body);
 
-      await db.execute({ sql: "INSERT INTO briefings (id, data) VALUES (?, ?)", args: [id, json] });
+      // If an existing ID is provided, update the briefing (increment version, store previous data for diff)
+      if (body._updateId) {
+        const existingId = body._updateId;
+        const existing = await db.execute({ sql: "SELECT data, version FROM briefings WHERE id = ?", args: [existingId] });
+        if (existing.rows.length) {
+          const oldVersion = existing.rows[0].version || 1;
+          const oldData = existing.rows[0].data;
+          // Store previous version data for change detection
+          const newBody = { ...body };
+          delete newBody._updateId;
+          newBody._previousData = JSON.parse(oldData);
+          const newJson = JSON.stringify(newBody);
+          await db.execute({
+            sql: "UPDATE briefings SET data = ?, version = ?, updated_at = datetime('now') WHERE id = ?",
+            args: [newJson, oldVersion + 1, existingId],
+          });
+          return res.status(200).json({ id: existingId, version: oldVersion + 1 });
+        }
+      }
 
+      // Create new briefing
+      const id = generateId();
+      await db.execute({ sql: "INSERT INTO briefings (id, data) VALUES (?, ?)", args: [id, json] });
       return res.status(201).json({ id });
     }
 
