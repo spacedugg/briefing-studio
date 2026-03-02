@@ -32,7 +32,8 @@ const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, review
     if (pd.description) scraped += `Beschreibung: ${pd.description.substring(0, 300)}\n`;
   }
   let kwData = "";
-  if (keywordData) {
+  const hasKwData = keywordData && (keywordData.searchTerms?.length > 0 || keywordData.competitors?.length > 0);
+  if (hasKwData) {
     kwData = "\nAMAZON KEYWORD-DATEN (echte Bright Data Marktdaten):";
     if (keywordData.searchTerms?.length) kwData += `\nTop-Suchbegriffe aus Titel: ${keywordData.searchTerms.slice(0, 15).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
     if (keywordData.competitorKeywords?.length) kwData += `\nHäufige Wettbewerber-Keywords (aus Bullets): ${keywordData.competitorKeywords.slice(0, 10).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
@@ -43,6 +44,8 @@ const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, review
       });
     }
     kwData += "\nVerwende diese echten Amazon-Suchbegriffe als Basis für die Keywords im Output. Die Wettbewerberdaten nutzen für competitive-Sektion.";
+  } else {
+    kwData = "\nKEINE KEYWORD-DATEN VERFÜGBAR (Bright Data Scraping fehlgeschlagen). WICHTIG: Recherchiere die Keywords besonders sorgfältig basierend auf deinem Wissen über Amazon-Suchverhalten für diese Produktkategorie. Kennzeichne alle Keywords im Output mit used:true/false. Markiere im JSON-Output keywords mit einer Anmerkung dass es KI-geschätzte Keywords sind (kein 'estimated' Feld nötig, aber schreibe es in die Competitive-Patterns).";
   }
   let rvData = "";
   if (reviewData?.reviews?.length) {
@@ -133,20 +136,34 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
   } else {
     userContent = buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, null, imageCount);
   }
+  const baseBody = {
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 16000,
+    system: "Amazon Listing Analyst. Antworte NUR mit validem JSON. Kein Markdown/Codeblocks/Text. Antwort beginnt mit { und endet mit }.",
+    messages: [{ role: "user", content: userContent }],
+  };
+  // Try with web_search first, fallback without on error
   let r;
-  try {
-    r = await fetch("/api/analyze", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 16000,
-        system: "Amazon Listing Analyst. Antworte NUR mit validem JSON. Kein Markdown/Codeblocks/Text. Antwort beginnt mit { und endet mit }.",
-        messages: [{ role: "user", content: userContent }],
-        tools: [{ type: "web_search_20250305", name: "web_search" }],
-      }),
-    });
-  } catch { throw new Error("Netzwerkfehler: API nicht erreichbar."); }
-  if (!r.ok) { let m = "API " + r.status; try { const e = await r.json(); m += ": " + (e.error?.message || ""); } catch {} throw new Error(m); }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const body = attempt === 0 ? { ...baseBody, tools: [{ type: "web_search_20250305", name: "web_search" }] } : baseBody;
+    try {
+      r = await fetch("/api/analyze", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch { throw new Error("Netzwerkfehler: API nicht erreichbar."); }
+    if (r.ok) break;
+    // On first failure, retry without tools
+    if (attempt === 0) {
+      const errData = await r.json().catch(() => ({}));
+      const errMsg = errData.error?.message || "";
+      console.warn("[Analyse] Erster Versuch fehlgeschlagen (" + r.status + ": " + errMsg + "), wiederhole ohne web_search...");
+      onS("Wiederhole Anfrage ohne Web-Suche...");
+      continue;
+    }
+    // Second attempt also failed
+    let m = "API " + r.status; try { const e = await r.json(); m += ": " + (e.error?.message || ""); } catch {} throw new Error(m);
+  }
   onS("Analysiere Ergebnisse...");
   const d = await r.json();
   if (d.stop_reason === "max_tokens") throw new Error("Antwort wurde abgeschnitten (Token-Limit). Bitte versuche es erneut.");
@@ -187,22 +204,41 @@ async function scrapeProduct(asin, marketplace) {
   } catch { return { images: [], productData: {} }; }
 }
 
-// Bright Data API helper
-async function bdFetch(body) {
-  try {
-    const r = await fetch("/api/keyword-research", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      console.warn(`[BrightData] ${body.type} failed:`, err.error || r.status);
+// Bright Data API helper with retry
+async function bdFetch(body, retries = 1) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await fetch("/api/keyword-research", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        console.warn(`[BrightData] ${body.type} attempt ${attempt + 1} failed:`, err.error || r.status);
+        if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
+        return null;
+      }
+      const d = await r.json();
+      if (!d.success) {
+        console.warn(`[BrightData] ${body.type} attempt ${attempt + 1}: no success`, d.error);
+        if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
+        return null;
+      }
+      // Check if data is actually useful (not empty)
+      if (d.data && (d.data.searchTerms?.length > 0 || d.data.competitors?.length > 0 || d.data.totalReviews > 0 || d.data.reviews?.length > 0)) {
+        return d.data;
+      }
+      // Data returned but empty - retry
+      console.warn(`[BrightData] ${body.type} attempt ${attempt + 1}: empty data`);
+      if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
+      return d.data; // Return empty data on last attempt
+    } catch (e) {
+      console.warn(`[BrightData] ${body.type} attempt ${attempt + 1} error:`, e.message);
+      if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
       return null;
     }
-    const d = await r.json();
-    if (!d.success) console.warn(`[BrightData] ${body.type}: no success`, d.error);
-    return d.success ? d.data : null;
-  } catch (e) { console.warn(`[BrightData] ${body.type} error:`, e.message); return null; }
+  }
+  return null;
 }
 
 // 1. Keyword-Recherche (Global, marktplatzspezifisch)
@@ -809,11 +845,17 @@ export default function App() {
         // Diese werden nur genutzt wenn brandUrl/categoryUrl vorhanden
       ]);
       // Merge keyword results from both endpoints
-      const kwResult = mergeKeywordData(kwGlobal, kwSimple);
+      let kwResult = mergeKeywordData(kwGlobal, kwSimple);
+      // If keyword data is empty but we had a search term, warn
+      const kwEmpty = !kwResult || (!kwResult.searchTerms?.length && !kwResult.competitors?.length);
+      if (kwEmpty && searchTerm) {
+        console.warn("[Keywords] Keine Keyword-Daten von Bright Data erhalten. Keywords im Briefing werden KI-geschätzt.");
+      }
       // Log data collection results
       const bdSummary = [];
-      if (kwResult) bdSummary.push(`${kwResult.searchTerms?.length || 0} Keywords, ${kwResult.competitors?.length || 0} Wettbewerber`);
+      if (kwResult && !kwEmpty) bdSummary.push(`${kwResult.searchTerms?.length || 0} Keywords, ${kwResult.competitors?.length || 0} Wettbewerber`);
       if (rvResult) bdSummary.push(`${rvResult.totalReviews || 0} Reviews`);
+      if (kwEmpty && searchTerm) bdSummary.push("Keywords: Bright Data leer, KI-Schätzung");
       setSt(bdSummary.length ? `Daten geladen: ${bdSummary.join(", ")}. Erstelle Briefing...` : "Erstelle Briefing (ohne Bright Data)...");
       // Step 3: Run AI analysis with all scraped + researched data
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
