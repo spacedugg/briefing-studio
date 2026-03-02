@@ -16,8 +16,9 @@ function encodeBriefing(d) { try { const json = JSON.stringify(d); const bytes =
 function decodeBriefing(s) { try { const b64 = s.replace(/-/g, "+").replace(/_/g, "/"); const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")); return new Response(ds).text().then(t => JSON.parse(t)); } catch { return Promise.resolve(null); } }
 
 // ═══════ PROMPT ═══════
-const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, reviewData, refData) => {
+const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, reviewData, refData, imageCount) => {
   const hasA = asin && asin.trim();
+  const numImages = imageCount || 7;
   const pd = productData || {};
   let scraped = "";
   if (pd.title || pd.brand || pd.price || pd.bullets?.length) {
@@ -52,7 +53,12 @@ const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, review
   const densityHint = density === "light" ? "\nTEXTDICHTE: Wenig Text. Kurze Headlines, kurze Bullets (max 4-5 Wörter), weniger Bullets (max 3). Subheadlines optional." : "";
   let refSection = "";
   if (refData?.images?.length > 0) {
-    refSection = `\n\nREFERENZ-MODUS: Die oben angehängten ${refData.images.length} Bilder sind die aktuellen Galeriebilder eines BESTEHENDEN Amazon-Listings (Referenz-ASIN: ${refData.asin || "unbekannt"}).`;
+    const isManual = refData.isManual;
+    if (isManual) {
+      refSection = `\n\nREFERENZ-MODUS (MANUELL HOCHGELADEN): Die oben angehängten ${refData.images.length} Bilder sind bereits fertige Produktbilder eines BESTEHENDEN Listings dieser Marke.`;
+    } else {
+      refSection = `\n\nREFERENZ-MODUS: Die oben angehängten ${refData.images.length} Bilder sind die aktuellen Galeriebilder eines BESTEHENDEN Amazon-Listings (Referenz-ASIN: ${refData.asin || "unbekannt"}).`;
+    }
     if (refData.productData?.title) refSection += `\nReferenz-Produkt: ${refData.productData.title}`;
     if (refData.productData?.brand) refSection += ` | Marke: ${refData.productData.brand}`;
     refSection += `\n\nANALYSIERE die Referenz-Bilder visuell und übernimm EXAKT:
@@ -66,8 +72,9 @@ ERSTELLE ein NEUES Briefing mit EXAKT diesem Aufbau und Stil, aber tausche ALLE 
     if (refData.newProductText) refSection += `\n\nNEUE PRODUKTDATEN (diese Inhalte verwenden statt der Referenz-Inhalte):\n${refData.newProductText}`;
     refSection += "\n";
   }
-  return `Analysiere ${hasA ? "ASIN " + asin + " auf " : ""}${mp || "Amazon.de"}. Erstelle 7-Bild-Briefing.
-${pi ? "Produkt: " + pi : ""}${ft ? "\nHinweise: " + ft : ""}${scraped}${kwData}${rvData}${densityHint}${refSection}
+  const imgCountHint = numImages < 7 ? `\nBILDANZAHL: Erstelle ein Briefing für EXAKT ${numImages} Bild${numImages === 1 ? "" : "er"} (1 Main Image${numImages > 1 ? ` + ${numImages - 1} weitere Bilder` : ""}). ALLE relevanten USPs, Features und Produktvorteile MÜSSEN auf diesen ${numImages} Bildern untergebracht werden. Keine Informationen weglassen, sondern auf die vorhandenen Bilder verdichten.` : "";
+  return `Analysiere ${hasA ? "ASIN " + asin + " auf " : ""}${mp || "Amazon.de"}. Erstelle ${numImages}-Bild-Briefing.
+${pi ? "Produkt: " + pi : ""}${ft ? "\nHinweise: " + ft : ""}${scraped}${kwData}${rvData}${densityHint}${refSection}${imgCountHint}
 REGELN:
 - Headlines: max 25 Zeichen, 3 Varianten. KEINE Gedankenstriche (—, –, -) in Headlines, Subheadlines, Bullets oder Badges. Verwende auch keine Satzkonstruktionen, die Gedankenstriche erfordern. Keine Kommas.
   1. "USP": Nenne das KONKRETE Alleinstellungsmerkmal direkt beim Namen (z.B. "Premium-Silikon" statt "Hochwertig kochen", "3-Schicht-Filter" statt "Saubere Luft"). Das wichtigste Produktmerkmal MUSS in der Headline stehen.
@@ -83,13 +90,14 @@ REGELN:
 - Reviews: relative %, absteigend, deutlich unterschiedlich (nicht alle 30-35%).
 - Blacklist: vulgaer, negative Laendernennung, Wettbewerber-Vergleiche, unbelegte Statistiken.
 - Siegel: nur beantragungspflichtige. Kaufausloeser absteigend. Keywords: used true/false.
+- NUTZER-ANWEISUNGEN: Falls der Nutzer in der Produktbeschreibung oder den Hinweisen Vorgaben macht, MÜSSEN diese beachtet werden. Das können sein: konkrete Bild-Zuordnungen ("Bild 1 soll X zeigen"), grobe thematische Ideen ("irgendwas mit Nachhaltigkeit auf einem Bild"), gewünschte Aspekte die vorkommen sollen ("Bitte die Verpackung hervorheben"), Image-Ideen die aufgegriffen und professionell ausformuliert werden sollen, oder generelle Hinweise zu Stil/Tonalität. Konkrete Vorgaben exakt übernehmen, vage Anregungen professionell interpretieren und ins Briefing einarbeiten.
 - KEYWORDS: Recherchiere echte Amazon-Suchbegriffe, die Kunden tatsächlich in die Amazon-Suche eingeben würden, um dieses spezifische Produkt zu finden. Volume-Keywords = Hauptsuchbegriffe mit hohem Suchvolumen (z.B. "Nudelsieb", "Sieb Küche", "Abtropfsieb"). Purchase-Keywords = Kaufentscheidende Suchbegriffe, die auf konkrete Kaufabsicht hindeuten (z.B. "Nudelsieb Silikon", "Nudelsieb faltbar"). KEINE generischen Adjektive wie "BPA-frei" oder "hitzebeständig" als alleinstehende Keywords verwenden.
 
-BILDER: Main(kein Text, 3 Eyecatcher mit risk:low/medium), PT01(STAERKSTER Kauftrigger), PT02(Differenzierung), PT03(Lifestyle/emotional), PT04-06(Einwandbehandlung neg. Reviews).
+BILDER: ${numImages === 7 ? "Main(kein Text, 3 Eyecatcher mit risk:low/medium), PT01(STAERKSTER Kauftrigger), PT02(Differenzierung), PT03(Lifestyle/emotional), PT04-06(Einwandbehandlung neg. Reviews)." : `Erstelle EXAKT ${numImages} Bilder. Main Image (kein Text, 3 Eyecatcher). Die weiteren ${numImages - 1} Bilder decken die wichtigsten USPs, Features und Kauftrigger ab. ALLE relevanten Produktinformationen auf ${numImages} Bilder verteilen, nichts weglassen.`}
 Jedes Bild MUSS ein "theme" Feld haben: Kurze Beschreibung des Bildthemas (2-4 Wörter, DE), z.B. "Materialqualität", "Lifestyle Küche", "Größenvergleich".
 
 NUR JSON, keine Backticks/Markdown:
-{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[7 Objekte mit id:main/pt01-pt06, label, theme(DE kurz 2-4 Wörter), role, concept(EN), rationale(EN), visual(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:["variabel viele, **fett** markiert"],badges:["max 1 oder leer"],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
+{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[${numImages} Objekte mit id:main${numImages > 1 ? "/pt01" : ""}${numImages > 2 ? `-pt0${Math.min(numImages - 1, 6)}` : ""}, label, theme(DE kurz 2-4 Wörter), role, concept(EN), rationale(EN), visual(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:["variabel viele, **fett** markiert"],badges:["max 1 oder leer"],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
 };
 
 // ═══════ JSON EXTRACTION ═══════
@@ -110,7 +118,7 @@ function extractJSON(text) {
 }
 
 // ═══════ API ═══════
-async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordData, reviewData, refData) {
+async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordData, reviewData, refData, imageCount) {
   onS("Sende Analyse-Anfrage...");
   // Build user message content
   let userContent;
@@ -121,9 +129,9 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
       const mt = img.base64.match(/^data:([^;]+);/)?.[1] || "image/jpeg";
       return { type: "image", source: { type: "base64", media_type: mt, data: raw } };
     });
-    userContent = [...imgBlocks, { type: "text", text: buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, refData) }];
+    userContent = [...imgBlocks, { type: "text", text: buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, refData, imageCount) }];
   } else {
-    userContent = buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, null);
+    userContent = buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, null, imageCount);
   }
   let r;
   try {
@@ -278,16 +286,19 @@ function TimeTracker({ productName }) {
 function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDensity, setTD }) {
   const [asin, sa] = useState(""); const [mp, sm] = useState("Amazon.de"); const [pi, sp] = useState(""); const [ft, sf] = useState("");
   const [hist] = useState(loadH);
+  const [imageCount, setImageCount] = useState(7);
   // Reference listing state
   const [refAsin, setRefAsin] = useState("");
   const [refLoading, setRefLoading] = useState(false);
   const [refImages, setRefImages] = useState([]);
   const [refData, setRefData] = useState(null);
   const [refOpen, setRefOpen] = useState(false);
+  const [refIsManual, setRefIsManual] = useState(false);
   const [newProductText, setNewProductText] = useState("");
+  const manualUploadRef = useRef(null);
   const loadRef = async () => {
     if (!refAsin.trim() || refLoading) return;
-    setRefLoading(true); setRefImages([]); setRefData(null);
+    setRefLoading(true); setRefImages([]); setRefData(null); setRefIsManual(false);
     try {
       const res = await scrapeProduct(refAsin.trim(), mp);
       setRefImages(res.images || []);
@@ -295,9 +306,27 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
     } catch { setRefImages([]); setRefData(null); }
     setRefLoading(false);
   };
+  const handleManualUpload = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    const results = [];
+    files.slice(0, 7).forEach(f => {
+      const r = new FileReader();
+      r.onload = ev => {
+        results.push({ base64: ev.target.result });
+        if (results.length === Math.min(files.length, 7)) {
+          setRefImages(results);
+          setRefData(null);
+          setRefAsin("");
+          setRefIsManual(true);
+        }
+      };
+      r.readAsDataURL(f);
+    });
+  };
   const hasRef = refImages.length > 0;
   const ok = asin.trim() || pi.trim() || hasRef;
-  const refPayload = hasRef ? { asin: refAsin, images: refImages, productData: refData, newProductText: newProductText.trim() || null } : null;
+  const refPayload = hasRef ? { asin: refAsin || null, images: refImages, productData: refData, newProductText: newProductText.trim() || null, isManual: refIsManual } : null;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs />
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
@@ -322,30 +351,38 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
               </div>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6, display: "block" }}>Produktbeschreibung</label>
-                <textarea value={pi} onChange={e => sp(e.target.value)} placeholder="Features, Materialien, USPs..." rows={3} style={{ ...inpS, resize: "vertical", lineHeight: 1.6 }} />
+                <textarea value={pi} onChange={e => sp(e.target.value)} placeholder="Features, Materialien, USPs... Du kannst auch spezifische Anweisungen pro Bild geben, z.B. 'Bild 1: Materialqualität zeigen, Bild 2: Anwendungsszenarien'" rows={3} style={{ ...inpS, resize: "vertical", lineHeight: 1.6 }} />
               </div>
               <div>
                 <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6, display: "block" }}>Zusätzliche Hinweise (optional)</label>
-                <textarea value={ft} onChange={e => sf(e.target.value)} placeholder="Wettbewerber, Markenwerte, Tonalität..." rows={2} style={{ ...inpS, resize: "vertical", lineHeight: 1.6 }} />
+                <textarea value={ft} onChange={e => sf(e.target.value)} placeholder="Wettbewerber, Markenwerte, Tonalität, Bild-spezifische Anweisungen..." rows={2} style={{ ...inpS, resize: "vertical", lineHeight: 1.6 }} />
               </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 8, display: "block" }}>Textdichte</label>
-                <div style={{ display: "flex", gap: 8 }}>{[["light", "Wenig Text"], ["normal", "Normal"]].map(([val, lbl]) => <button key={val} onClick={() => setTD(val)} style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: txtDensity === val ? `2px solid ${V.violet}` : "1px solid rgba(0,0,0,0.08)", background: txtDensity === val ? `${V.violet}10` : "rgba(255,255,255,0.5)", color: txtDensity === val ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{lbl}</button>)}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 8, display: "block" }}>Textdichte</label>
+                  <div style={{ display: "flex", gap: 8 }}>{[["light", "Wenig Text"], ["normal", "Normal"]].map(([val, lbl]) => <button key={val} onClick={() => setTD(val)} style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: txtDensity === val ? `2px solid ${V.violet}` : "1px solid rgba(0,0,0,0.08)", background: txtDensity === val ? `${V.violet}10` : "rgba(255,255,255,0.5)", color: txtDensity === val ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{lbl}</button>)}</div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 8, display: "block" }}>Anzahl Bilder</label>
+                  <div style={{ display: "flex", gap: 4 }}>{[1,2,3,4,5,6,7].map(n => <button key={n} onClick={() => setImageCount(n)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: imageCount === n ? `2px solid ${V.cyan}` : "1px solid rgba(0,0,0,0.08)", background: imageCount === n ? `${V.cyan}10` : "rgba(255,255,255,0.5)", color: imageCount === n ? V.cyan : V.textDim, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>{n}</button>)}</div>
+                </div>
               </div>
               {/* ── REFERENZ-LISTING ── */}
               <div style={{ ...gS, padding: 0, overflow: "hidden", border: hasRef ? `1.5px solid ${V.orange}40` : "1px solid rgba(0,0,0,0.06)" }}>
                 <button onClick={() => setRefOpen(o => !o)} style={{ width: "100%", padding: "12px 16px", border: "none", background: hasRef ? `${V.orange}08` : "transparent", cursor: "pointer", fontFamily: FN, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontSize: 11, fontWeight: 800, color: hasRef ? V.orange : V.textMed, letterSpacing: ".04em", textTransform: "uppercase" }}>Referenz-Listing</span>
-                    {hasRef && <span style={{ fontSize: 10, fontWeight: 700, color: V.orange, padding: "2px 8px", borderRadius: 6, background: `${V.orange}15` }}>{refImages.length} Bilder geladen</span>}
+                    {hasRef && <span style={{ fontSize: 10, fontWeight: 700, color: V.orange, padding: "2px 8px", borderRadius: 6, background: `${V.orange}15` }}>{refImages.length} Bilder {refIsManual ? "(hochgeladen)" : "geladen"}</span>}
                   </div>
                   <span style={{ fontSize: 12, color: V.textDim, fontWeight: 700 }}>{refOpen ? "▾" : "▸"}</span>
                 </button>
                 {refOpen && <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
-                  <p style={{ fontSize: 11, color: V.textDim, margin: 0, lineHeight: 1.5 }}>Bestehendes Listing als Stil-Vorlage verwenden. Die KI analysiert Bildaufbau, Text-Verhältnis und Stil und übernimmt die Struktur.</p>
+                  <p style={{ fontSize: 11, color: V.textDim, margin: 0, lineHeight: 1.5 }}>Bestehendes Listing als Stil-Vorlage verwenden. Per ASIN von Amazon scrapen oder Bilder manuell hochladen.</p>
                   <div style={{ display: "flex", gap: 8 }}>
                     <input type="text" autoComplete="off" value={refAsin} onChange={e => setRefAsin(e.target.value)} placeholder="Referenz-ASIN" style={{ ...inpS, flex: 1 }} onKeyDown={e => e.key === "Enter" && loadRef()} />
-                    <button onClick={loadRef} disabled={!refAsin.trim() || refLoading} style={{ padding: "10px 18px", borderRadius: 12, border: "none", background: refLoading ? `${V.orange}60` : refAsin.trim() ? `linear-gradient(135deg, ${V.orange}, ${V.amber})` : "rgba(0,0,0,0.06)", color: refAsin.trim() || refLoading ? "#fff" : V.textDim, fontSize: 12, fontWeight: 800, cursor: refAsin.trim() && !refLoading ? "pointer" : "default", fontFamily: FN, whiteSpace: "nowrap", flexShrink: 0 }}>{refLoading ? "Lade..." : "Laden"}</button>
+                    <button onClick={loadRef} disabled={!refAsin.trim() || refLoading} style={{ padding: "10px 14px", borderRadius: 12, border: "none", background: refLoading ? `${V.orange}60` : refAsin.trim() ? `linear-gradient(135deg, ${V.orange}, ${V.amber})` : "rgba(0,0,0,0.06)", color: refAsin.trim() || refLoading ? "#fff" : V.textDim, fontSize: 12, fontWeight: 800, cursor: refAsin.trim() && !refLoading ? "pointer" : "default", fontFamily: FN, whiteSpace: "nowrap", flexShrink: 0 }}>{refLoading ? "..." : "ASIN"}</button>
+                    <input ref={manualUploadRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={handleManualUpload} />
+                    <button onClick={() => manualUploadRef.current?.click()} style={{ padding: "10px 14px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.teal}, ${V.emerald})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", flexShrink: 0 }}>Upload</button>
                   </div>
                   {hasRef && <>
                     {refData && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -362,11 +399,11 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
                       <label style={{ fontSize: 11, fontWeight: 700, color: V.orange, marginBottom: 6, display: "block" }}>Neue Produktdaten (ersetzen Referenz-Inhalte)</label>
                       <textarea value={newProductText} onChange={e => setNewProductText(e.target.value)} placeholder="Produktname, Features, USPs, Materialien, Anwendung... Alles was das neue Produkt beschreibt." rows={4} style={{ ...inpS, resize: "vertical", lineHeight: 1.6, borderColor: `${V.orange}30` }} />
                     </div>
-                    <button onClick={() => { setRefAsin(""); setRefImages([]); setRefData(null); setNewProductText(""); }} style={{ ...gS, padding: "6px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8, alignSelf: "flex-start" }}>Referenz entfernen</button>
+                    <button onClick={() => { setRefAsin(""); setRefImages([]); setRefData(null); setNewProductText(""); setRefIsManual(false); }} style={{ ...gS, padding: "6px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8, alignSelf: "flex-start" }}>Referenz entfernen</button>
                   </>}
                 </div>}
               </div>
-              <button onClick={() => ok && !loading && onStart(asin, mp, pi, ft, refPayload)} disabled={!ok || loading} style={{ padding: "14px 24px", borderRadius: 14, border: "none", background: loading ? `${V.violet}80` : ok ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(0,0,0,0.08)", color: ok || loading ? "#fff" : V.textDim, fontSize: 14, fontWeight: 800, cursor: ok && !loading ? "pointer" : "default", fontFamily: FN, boxShadow: ok ? `0 4px 20px ${V.violet}35` : "none" }}>{loading ? "Analyse läuft..." : hasRef ? "Analyse starten (mit Referenz)" : "Analyse starten"}</button>
+              <button onClick={() => ok && !loading && onStart(asin, mp, pi, ft, refPayload, imageCount)} disabled={!ok || loading} style={{ padding: "14px 24px", borderRadius: 14, border: "none", background: loading ? `${V.violet}80` : ok ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(0,0,0,0.08)", color: ok || loading ? "#fff" : V.textDim, fontSize: 14, fontWeight: 800, cursor: ok && !loading ? "pointer" : "default", fontFamily: FN, boxShadow: ok ? `0 4px 20px ${V.violet}35` : "none" }}>{loading ? "Analyse läuft..." : `${imageCount}-Bild Analyse starten${hasRef ? " (mit Referenz)" : ""}`}</button>
               {loading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 10, height: 10, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: 99, animation: "spin 0.7s linear infinite" }} /><span style={{ fontSize: 12, color: V.violet, fontWeight: 600 }}>{status}</span></div>}
             </div>
           </GC>
@@ -750,7 +787,7 @@ export default function App() {
     if (hash && hash.startsWith("d=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }); }
   });
   const shareDesignerLink = useCallback(async () => { if (!data) return; const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel } }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }, [data, hlC, shC, bulSel, bdgSel]);
-  const go = useCallback(async (a, m, p, f, refData) => {
+  const go = useCallback(async (a, m, p, f, refData, imgCount) => {
     setL(true); setE(null); setSt("Starte...");
     try {
       // Step 1: Scrape Amazon product data first (needed for keyword search term)
@@ -780,12 +817,12 @@ export default function App() {
       setSt(bdSummary.length ? `Daten geladen: ${bdSummary.join(", ")}. Erstelle Briefing...` : "Erstelle Briefing (ohne Bright Data)...");
       // Step 3: Run AI analysis with all scraped + researched data
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
-      const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null);
+      const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7);
       setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, [txtDensity]);
-  const goNew = useCallback((a, m, p, f, ref) => { data ? setP({ a, m, p, f, ref }) : go(a, m, p, f, ref); }, [data, go]);
+  const goNew = useCallback((a, m, p, f, ref, ic) => { data ? setP({ a, m, p, f, ref, ic }) : go(a, m, p, f, ref, ic); }, [data, go]);
   // Standalone views (no app features visible)
   if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} />;
   if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(asin || ""); setSN(false); }} txtDensity={txtDensity} setTD={setTD} />;
@@ -809,7 +846,7 @@ export default function App() {
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
       </div>
       {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /><button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
-      {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref); }} onNo={() => setP(null)} />}
+      {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic); }} onNo={() => setP(null)} />}
     </div>
   );
 }
