@@ -443,10 +443,18 @@ function TimeTracker({ productName, brand, asin, marketplace }) {
   const [synced, setSynced] = useState(false);
   const [syncErr, setSyncErr] = useState(false);
   const iRef = useRef(null);
-  const projectId = useRef(Date.now().toString(36) + Math.random().toString(36).substr(2, 6));
+  // Stable unique project ID: timestamp + product hash (survives component re-renders but unique per briefing session)
+  const projectId = useRef((() => {
+    const ts = Date.now().toString(36);
+    const src = (productName || "") + (asin || "") + ts;
+    let h = 0; for (let i = 0; i < src.length; i++) { h = ((h << 5) - h + src.charCodeAt(i)) | 0; }
+    return ts + "-" + Math.abs(h).toString(36);
+  })());
   useEffect(() => { if (iRef.current) clearInterval(iRef.current); if (running) { iRef.current = setInterval(() => setSecs(p => p + 1), 1000); } return () => clearInterval(iRef.current); }, [running]);
-  // Auto-sync to Google Sheets every 30 seconds while running, and on pause
+  // Auto-sync to Google Sheets every 20 minutes while running, and on pause
   const syncRef = useRef(null);
+  const secsRef = useRef(secs);
+  secsRef.current = secs;
   const syncToSheet = useCallback(async (s) => {
     try {
       const r = await fetch("/api/timesheet", {
@@ -459,11 +467,11 @@ function TimeTracker({ productName, brand, asin, marketplace }) {
   }, [productName, brand, asin, marketplace]);
   useEffect(() => {
     if (syncRef.current) clearInterval(syncRef.current);
-    if (running && secs > 0) {
-      syncRef.current = setInterval(() => syncToSheet(secs), 30000);
+    if (running) {
+      syncRef.current = setInterval(() => syncToSheet(secsRef.current), 20 * 60 * 1000); // 20 minutes
     }
     return () => clearInterval(syncRef.current);
-  }, [running, secs, syncToSheet]);
+  }, [running, syncToSheet]);
   // Sync on pause
   const handleToggle = () => {
     if (running && secs > 0) syncToSheet(secs);
