@@ -45,6 +45,8 @@ function parseHelium10CSV(csvText) {
   const colComp = findCol("competing products", "competing", "konkurrenzprodukte");
   const colSFR = findCol("search frequency rank", "sfr", "amazon search frequency");
   const colTitleDensity = findCol("title density", "titeldichte");
+  const colIQ = findCol("cerebro iq", "iq score");
+  const colKwSales = findCol("keyword sales", "kw sales");
   if (colKw === -1) return null; // Must have keyword column
   const keywords = [];
   for (let i = 1; i < lines.length; i++) {
@@ -62,6 +64,8 @@ function parseHelium10CSV(csvText) {
       competingProducts: num(colComp),
       sfr: num(colSFR),
       titleDensity: num(colTitleDensity),
+      cerebroIQ: num(colIQ),
+      keywordSales: num(colKwSales),
     });
   }
   if (keywords.length === 0) return null;
@@ -96,6 +100,10 @@ function filterH10Keywords(h10Data, maxVolume = 25, maxPurchase = 20) {
     if (k.organicRank !== null && k.organicRank > 0 && k.organicRank <= 50) score += 10;
     // Title density bonus (others use it in title = important)
     if (k.titleDensity !== null && k.titleDensity > 50) score += 5;
+    // Cerebro IQ bonus (high = good opportunity)
+    if (k.cerebroIQ !== null && k.cerebroIQ >= 3) score += 10;
+    // Keyword sales bonus (proven revenue keyword)
+    if (k.keywordSales !== null && k.keywordSales > 0) score += 15;
     return { ...k, score };
   });
   // Sort by score descending
@@ -149,6 +157,7 @@ const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, review
         kwData += `\n  "${k.keyword}" | SV: ${k.searchVolume?.toLocaleString("de-DE") || "?"}/Monat`;
         if (k.cpr) kwData += ` | CPR: ${k.cpr}`;
         if (k.organicRank) kwData += ` | Org.Rank: #${k.organicRank}`;
+        if (k.keywordSales) kwData += ` | Sales: ~${k.keywordSales}/Monat`;
       });
     }
     if (h10Keywords.purchase?.length) {
@@ -156,6 +165,7 @@ const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, review
       h10Keywords.purchase.forEach(k => {
         kwData += `\n  "${k.keyword}" | SV: ${k.searchVolume?.toLocaleString("de-DE") || "?"}/Monat`;
         if (k.cpr) kwData += ` | CPR: ${k.cpr} (${k.cpr <= 10 ? "leicht zu ranken" : k.cpr <= 50 ? "mittelschwer" : "schwer"})`;
+        if (k.keywordSales) kwData += ` | Sales: ~${k.keywordSales}/Monat`;
       });
     }
     kwData += "\n\nWICHTIG: Diese Keywords basieren auf echten Amazon-Suchdaten. Verwende VORRANGIG die Keywords mit hohem Suchvolumen in Headlines und Bullets. Die Kaufintent-Keywords sind besonders wertvoll für Conversion. Arbeite so viele wie möglich natürlich in die Texte ein.";
