@@ -15,8 +15,124 @@ function saveH(d, asin) { const id = Date.now().toString(36) + Math.random().toS
 function encodeBriefing(d) { try { const json = JSON.stringify(d); const bytes = new TextEncoder().encode(json); const cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")); return new Response(cs).arrayBuffer().then(buf => { let b = ""; const u8 = new Uint8Array(buf); for (let i = 0; i < u8.length; i++) b += String.fromCharCode(u8[i]); return btoa(b).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }); } catch { return Promise.resolve(null); } }
 function decodeBriefing(s) { try { const b64 = s.replace(/-/g, "+").replace(/_/g, "/"); const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")); return new Response(ds).text().then(t => JSON.parse(t)); } catch { return Promise.resolve(null); } }
 
+// ═══════ HELIUM10 CSV PARSER ═══════
+function parseHelium10CSV(csvText) {
+  if (!csvText || !csvText.trim()) return null;
+  const lines = csvText.trim().split(/\r?\n/);
+  if (lines.length < 2) return null;
+  // Detect separator (comma or semicolon)
+  const sep = lines[0].includes("\t") ? "\t" : lines[0].split(";").length > lines[0].split(",").length ? ";" : ",";
+  // Parse header row - handle quoted fields
+  const parseRow = (line) => {
+    const fields = []; let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQ = !inQ; continue; }
+      if (c === sep && !inQ) { fields.push(cur.trim()); cur = ""; continue; }
+      cur += c;
+    }
+    fields.push(cur.trim());
+    return fields;
+  };
+  const headers = parseRow(lines[0]).map(h => h.toLowerCase().replace(/[^\w\s]/g, "").trim());
+  // Find column indices - flexible matching for different Helium10 versions
+  const findCol = (...names) => headers.findIndex(h => names.some(n => h.includes(n)));
+  const colKw = findCol("keyword phrase", "keyword", "search term", "suchbegriff");
+  const colSV = findCol("search volume", "suchvolumen", "volume");
+  const colCPR = findCol("cpr", "cerebro product rank", "cpp");
+  const colOrg = findCol("organic rank", "organischer rang", "organic position");
+  const colSpon = findCol("sponsored rank", "sponsored position", "gesponsert");
+  const colComp = findCol("competing products", "competing", "konkurrenzprodukte");
+  const colSFR = findCol("search frequency rank", "sfr", "amazon search frequency");
+  const colTitleDensity = findCol("title density", "titeldichte");
+  const colIQ = findCol("cerebro iq", "iq score");
+  const colKwSales = findCol("keyword sales", "kw sales");
+  if (colKw === -1) return null; // Must have keyword column
+  const keywords = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const row = parseRow(lines[i]);
+    const kw = row[colKw]?.trim();
+    if (!kw) continue;
+    const num = (idx) => { if (idx === -1 || !row[idx]) return null; const v = row[idx].replace(/[,.\s]/g, m => m === "." ? "" : m === "," ? "" : ""); const n = parseInt(v); return isNaN(n) ? null : n; };
+    keywords.push({
+      keyword: kw,
+      searchVolume: num(colSV),
+      cpr: num(colCPR),
+      organicRank: num(colOrg),
+      sponsoredRank: num(colSpon),
+      competingProducts: num(colComp),
+      sfr: num(colSFR),
+      titleDensity: num(colTitleDensity),
+      cerebroIQ: num(colIQ),
+      keywordSales: num(colKwSales),
+    });
+  }
+  if (keywords.length === 0) return null;
+  return { keywords, totalCount: keywords.length, hasVolume: keywords.some(k => k.searchVolume !== null), hasCPR: keywords.some(k => k.cpr !== null) };
+}
+
+// Score and filter keywords by relevance (search volume + conversion strength)
+function filterH10Keywords(h10Data, maxVolume = 25, maxPurchase = 20) {
+  if (!h10Data?.keywords?.length) return null;
+  const kws = h10Data.keywords.filter(k => k.keyword && k.keyword.length > 1);
+  // Score each keyword: higher = more relevant
+  const scored = kws.map(k => {
+    let score = 0;
+    // Search volume score (0-50 points)
+    if (k.searchVolume !== null) {
+      if (k.searchVolume >= 10000) score += 50;
+      else if (k.searchVolume >= 5000) score += 40;
+      else if (k.searchVolume >= 1000) score += 30;
+      else if (k.searchVolume >= 300) score += 20;
+      else if (k.searchVolume >= 100) score += 10;
+      else score += 5;
+    }
+    // CPR score (lower = easier to rank = bonus, 0-30 points)
+    if (k.cpr !== null) {
+      if (k.cpr <= 5) score += 30;
+      else if (k.cpr <= 15) score += 25;
+      else if (k.cpr <= 50) score += 20;
+      else if (k.cpr <= 100) score += 15;
+      else score += 5;
+    }
+    // Organic rank bonus (if we rank, keyword is proven relevant)
+    if (k.organicRank !== null && k.organicRank > 0 && k.organicRank <= 50) score += 10;
+    // Title density bonus (others use it in title = important)
+    if (k.titleDensity !== null && k.titleDensity > 50) score += 5;
+    // Cerebro IQ bonus (high = good opportunity)
+    if (k.cerebroIQ !== null && k.cerebroIQ >= 3) score += 10;
+    // Keyword sales bonus (proven revenue keyword)
+    if (k.keywordSales !== null && k.keywordSales > 0) score += 15;
+    return { ...k, score };
+  });
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score);
+  // Volume keywords: high search volume, broad terms
+  const volumeKws = scored
+    .filter(k => k.searchVolume !== null && k.searchVolume >= 100)
+    .sort((a, b) => (b.searchVolume || 0) - (a.searchVolume || 0))
+    .slice(0, maxVolume);
+  // Purchase keywords: good conversion indicators (have CPR data or are long-tail with decent volume)
+  const purchaseKws = scored
+    .filter(k => {
+      const hasConversion = k.cpr !== null && k.cpr > 0;
+      const isLongTail = k.keyword.split(/\s+/).length >= 2;
+      const hasVolume = k.searchVolume !== null && k.searchVolume >= 50;
+      return (hasConversion && hasVolume) || (isLongTail && hasVolume);
+    })
+    .sort((a, b) => {
+      // Sort by conversion strength: low CPR first, then by volume
+      const cprA = a.cpr ?? 999, cprB = b.cpr ?? 999;
+      if (cprA !== cprB) return cprA - cprB;
+      return (b.searchVolume || 0) - (a.searchVolume || 0);
+    })
+    .slice(0, maxPurchase);
+  return { volume: volumeKws, purchase: purchaseKws, all: scored };
+}
+
 // ═══════ PROMPT ═══════
-const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, reviewData, refData, imageCount) => {
+const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, reviewData, refData, imageCount, h10Keywords) => {
   const hasA = asin && asin.trim();
   const numImages = imageCount || 7;
   const pd = productData || {};
@@ -32,17 +148,61 @@ const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, review
     if (pd.description) scraped += `Beschreibung: ${pd.description.substring(0, 300)}\n`;
   }
   let kwData = "";
-  if (keywordData) {
-    kwData = "\nAMAZON KEYWORD-DATEN (echte Bright Data Marktdaten):";
-    if (keywordData.searchTerms?.length) kwData += `\nTop-Suchbegriffe aus Titel: ${keywordData.searchTerms.slice(0, 15).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
-    if (keywordData.competitorKeywords?.length) kwData += `\nHäufige Wettbewerber-Keywords (aus Bullets): ${keywordData.competitorKeywords.slice(0, 10).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
-    if (keywordData.competitors?.length) {
-      kwData += `\nTOP-WETTBEWERBER (${keywordData.competitors.length} Produkte auf Seite 1):`;
+  // Use Helium10 keyword data if available (real search volumes + conversion metrics)
+  if (h10Keywords?.volume?.length || h10Keywords?.purchase?.length) {
+    kwData = "\nAMAZON KEYWORD-DATEN (Helium10 Cerebro — echte Suchvolumen & Conversion-Daten):";
+    if (h10Keywords.volume?.length) {
+      kwData += "\n\nHAUPT-KEYWORDS nach Suchvolumen:";
+      h10Keywords.volume.forEach(k => {
+        kwData += `\n  "${k.keyword}" | SV: ${k.searchVolume?.toLocaleString("de-DE") || "?"}/Monat`;
+        if (k.cpr) kwData += ` | CPR: ${k.cpr}`;
+        if (k.organicRank) kwData += ` | Org.Rank: #${k.organicRank}`;
+        if (k.keywordSales) kwData += ` | Sales: ~${k.keywordSales}/Monat`;
+      });
+    }
+    if (h10Keywords.purchase?.length) {
+      kwData += "\n\nKAUFINTENT-KEYWORDS (hohe Conversion-Wahrscheinlichkeit):";
+      h10Keywords.purchase.forEach(k => {
+        kwData += `\n  "${k.keyword}" | SV: ${k.searchVolume?.toLocaleString("de-DE") || "?"}/Monat`;
+        if (k.cpr) kwData += ` | CPR: ${k.cpr} (${k.cpr <= 10 ? "leicht zu ranken" : k.cpr <= 50 ? "mittelschwer" : "schwer"})`;
+        if (k.keywordSales) kwData += ` | Sales: ~${k.keywordSales}/Monat`;
+      });
+    }
+    kwData += "\n\nWICHTIG: Diese Keywords basieren auf echten Amazon-Suchdaten. Verwende VORRANGIG die Keywords mit hohem Suchvolumen in Headlines und Bullets. Die Kaufintent-Keywords sind besonders wertvoll für Conversion. Arbeite so viele wie möglich natürlich in die Texte ein.";
+    // Still include competitor data from Bright Data if available
+    if (keywordData?.competitors?.length) {
+      kwData += `\n\nWETTBEWERBER (${keywordData.competitors.length} Produkte auf Seite 1):`;
       keywordData.competitors.slice(0, 8).forEach((c, i) => {
         kwData += `\n  ${i + 1}. ${c.brand || "?"}: ${c.title?.substring(0, 80) || "?"} | ${c.price || "?"}${c.currency || ""} | ${c.rating || "?"}★ (${c.reviewCount || "?"} Rev.) | ${c.bulletCount} Bullets | ${c.imageCount} Bilder`;
       });
     }
-    kwData += "\nVerwende diese echten Amazon-Suchbegriffe als Basis für die Keywords im Output. Die Wettbewerberdaten nutzen für competitive-Sektion.";
+  } else {
+    // Fallback: Bright Data word-frequency data
+    const hasKwData = keywordData && (keywordData.searchTerms?.length > 0 || keywordData.competitors?.length > 0);
+    if (hasKwData) {
+      kwData = "\nAMAZON KEYWORD-DATEN (Wettbewerber-Analyse):";
+      if (keywordData.searchTerms?.length) kwData += `\nHäufige Begriffe in Wettbewerber-Titeln: ${keywordData.searchTerms.slice(0, 15).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
+      if (keywordData.competitorKeywords?.length) kwData += `\nHäufige Begriffe in Wettbewerber-Bullets: ${keywordData.competitorKeywords.slice(0, 10).map(t => t.term + "(" + t.frequency + "x)").join(", ")}`;
+      if (keywordData.competitors?.length) {
+        kwData += `\nTOP-WETTBEWERBER (${keywordData.competitors.length} Produkte auf Seite 1):`;
+        keywordData.competitors.slice(0, 8).forEach((c, i) => {
+          kwData += `\n  ${i + 1}. ${c.brand || "?"}: ${c.title?.substring(0, 80) || "?"} | ${c.price || "?"}${c.currency || ""} | ${c.rating || "?"}★ (${c.reviewCount || "?"} Rev.) | ${c.bulletCount} Bullets | ${c.imageCount} Bilder`;
+        });
+      }
+      kwData += "\nHinweis: Keine Helium10-Daten vorhanden. Die Keyword-Häufigkeiten basieren auf Wettbewerber-Analyse. Nutze dein Wissen über Amazon-Suchverhalten zusätzlich.";
+    } else {
+      kwData = "\nKEINE KEYWORD-DATEN VERFÜGBAR. WICHTIG: Recherchiere die Keywords besonders sorgfältig basierend auf deinem Wissen über Amazon-Suchverhalten für diese Produktkategorie. Kennzeichne alle Keywords im Output mit used:true/false.";
+    }
+  }
+  // Bestseller benchmark data
+  if (keywordData?.bestseller) {
+    const bs = keywordData.bestseller;
+    kwData += `\n\nKATEGORIE-BESTSELLER (#1 Benchmark):`;
+    kwData += `\n  ${bs.brand || "?"}: ${bs.title?.substring(0, 100) || "?"}`;
+    kwData += `\n  Preis: ${bs.price || "?"} | Bewertung: ${bs.rating || "?"}★ (${bs.reviewCount || "?"} Reviews)`;
+    if (bs.bsr) kwData += ` | BSR: #${bs.bsr}`;
+    if (bs.bullets?.length) kwData += `\n  Bullets: ${bs.bullets.slice(0, 5).map(b => "- " + b.substring(0, 80)).join("\n  ")}`;
+    kwData += "\n  Analysiere was diesen Bestseller erfolgreich macht und nutze Erkenntnisse für die Positionierung.";
   }
   let rvData = "";
   if (reviewData?.reviews?.length) {
@@ -118,7 +278,7 @@ function extractJSON(text) {
 }
 
 // ═══════ API ═══════
-async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordData, reviewData, refData, imageCount) {
+async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordData, reviewData, refData, imageCount, h10Keywords) {
   onS("Sende Analyse-Anfrage...");
   // Build user message content
   let userContent;
@@ -129,9 +289,9 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
       const mt = img.base64.match(/^data:([^;]+);/)?.[1] || "image/jpeg";
       return { type: "image", source: { type: "base64", media_type: mt, data: raw } };
     });
-    userContent = [...imgBlocks, { type: "text", text: buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, refData, imageCount) }];
+    userContent = [...imgBlocks, { type: "text", text: buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, refData, imageCount, h10Keywords) }];
   } else {
-    userContent = buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, null, imageCount);
+    userContent = buildPrompt(asin, mp, pi, ft, productData, density, keywordData, reviewData, null, imageCount, h10Keywords);
   }
   let r;
   try {
@@ -146,7 +306,11 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
       }),
     });
   } catch { throw new Error("Netzwerkfehler: API nicht erreichbar."); }
-  if (!r.ok) { let m = "API " + r.status; try { const e = await r.json(); m += ": " + (e.error?.message || ""); } catch {} throw new Error(m); }
+  if (!r.ok) {
+    let m = "API-Fehler " + r.status;
+    try { const e = await r.json(); m = e.error?.message || m; } catch {}
+    throw new Error(m);
+  }
   onS("Analysiere Ergebnisse...");
   const d = await r.json();
   if (d.stop_reason === "max_tokens") throw new Error("Antwort wurde abgeschnitten (Token-Limit). Bitte versuche es erneut.");
@@ -187,7 +351,7 @@ async function scrapeProduct(asin, marketplace) {
   } catch { return { images: [], productData: {} }; }
 }
 
-// Bright Data API helper
+// Bright Data API helper — retries are now handled server-side
 async function bdFetch(body) {
   try {
     const r = await fetch("/api/keyword-research", {
@@ -196,13 +360,20 @@ async function bdFetch(body) {
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
-      console.warn(`[BrightData] ${body.type} failed:`, err.error || r.status);
+      console.warn(`[BrightData] ${body.type} HTTP ${r.status}:`, err.error || "unknown");
       return null;
     }
     const d = await r.json();
-    if (!d.success) console.warn(`[BrightData] ${body.type}: no success`, d.error);
-    return d.success ? d.data : null;
-  } catch (e) { console.warn(`[BrightData] ${body.type} error:`, e.message); return null; }
+    if (d.debug) console.log(`[BrightData] ${body.type} debug:`, d.debug);
+    if (!d.success) {
+      console.warn(`[BrightData] ${body.type}: success=false`, d.error || "(empty data from Bright Data)");
+      return d.data || null; // Return whatever data we got (may be empty)
+    }
+    return d.data;
+  } catch (e) {
+    console.warn(`[BrightData] ${body.type} network error:`, e.message);
+    return null;
+  }
 }
 
 // 1. Keyword-Recherche (Global, marktplatzspezifisch)
@@ -266,18 +437,53 @@ const Check = ({ on }) => <span style={{ color: on ? V.emerald : V.textDim, font
 const Err = ({ msg, onX }) => msg ? <div style={{ ...gS, padding: "12px 18px", background: `${V.rose}10`, border: `1px solid ${V.rose}25`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><span style={{ fontSize: 12, color: V.rose, fontWeight: 600, lineHeight: 1.5 }}>{msg}</span>{onX && <button onClick={onX} style={{ background: "none", border: "none", color: V.rose, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 16 }}>×</button>}</div> : null;
 
 // ═══════ TIME TRACKER (single overall timer for designer view) ═══════
-function TimeTracker({ productName }) {
+function TimeTracker({ productName, brand, asin, marketplace }) {
   const [secs, setSecs] = useState(0);
   const [running, setRunning] = useState(false);
+  const [synced, setSynced] = useState(false);
+  const [syncErr, setSyncErr] = useState(false);
   const iRef = useRef(null);
+  // Stable unique project ID: timestamp + product hash (survives component re-renders but unique per briefing session)
+  const projectId = useRef((() => {
+    const ts = Date.now().toString(36);
+    const src = (productName || "") + (asin || "") + ts;
+    let h = 0; for (let i = 0; i < src.length; i++) { h = ((h << 5) - h + src.charCodeAt(i)) | 0; }
+    return ts + "-" + Math.abs(h).toString(36);
+  })());
   useEffect(() => { if (iRef.current) clearInterval(iRef.current); if (running) { iRef.current = setInterval(() => setSecs(p => p + 1), 1000); } return () => clearInterval(iRef.current); }, [running]);
+  // Auto-sync to Google Sheets every 20 minutes while running, and on pause
+  const syncRef = useRef(null);
+  const secsRef = useRef(secs);
+  secsRef.current = secs;
+  const syncToSheet = useCallback(async (s) => {
+    try {
+      const r = await fetch("/api/timesheet", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update", projectId: projectId.current, productName, brand, asin, marketplace, seconds: s }),
+      });
+      if (r.ok) { setSynced(true); setSyncErr(false); }
+      else { setSyncErr(true); }
+    } catch { setSyncErr(true); }
+  }, [productName, brand, asin, marketplace]);
+  useEffect(() => {
+    if (syncRef.current) clearInterval(syncRef.current);
+    if (running) {
+      syncRef.current = setInterval(() => syncToSheet(secsRef.current), 20 * 60 * 1000); // 20 minutes
+    }
+    return () => clearInterval(syncRef.current);
+  }, [running, syncToSheet]);
+  // Sync on pause
+  const handleToggle = () => {
+    if (running && secs > 0) syncToSheet(secs);
+    setRunning(r => !r);
+  };
   const fmt = s => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60; return h > 0 ? `${h}:${m.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}` : `${m}:${ss.toString().padStart(2, "0")}`; };
-  return <div style={{ ...glass, padding: "20px 28px", marginBottom: 18, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-    <div><div style={{ fontSize: 10, fontWeight: 800, color: V.teal, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 }}>Zeiterfassung</div><div style={{ fontSize: 11, color: V.textDim }}>{productName || "Briefing"}</div></div>
+  return <div style={{ ...glass, padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 0, borderLeft: "none", borderRight: "none", borderTop: "none" }}>
+    <div><div style={{ fontSize: 10, fontWeight: 800, color: V.teal, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 2 }}>Time Tracking</div><div style={{ fontSize: 11, color: V.textDim }}>{productName || "Briefing"}{synced && !syncErr ? <span style={{ fontSize: 9, color: V.emerald, marginLeft: 8 }}>synced</span> : ""}{syncErr ? <span style={{ fontSize: 9, color: V.rose, marginLeft: 8 }}>sync failed</span> : ""}</div></div>
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
       <span style={{ fontSize: 28, fontWeight: 800, color: running ? V.teal : V.ink, fontVariantNumeric: "tabular-nums", fontFamily: FN }}>{fmt(secs)}</span>
-      <button onClick={() => setRunning(r => !r)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: running ? V.rose : `linear-gradient(135deg, ${V.teal}, ${V.emerald})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN, minWidth: 80 }}>{running ? "Pause" : secs > 0 ? "Weiter" : "Start"}</button>
-      {secs > 0 && !running && <button onClick={() => { navigator.clipboard.writeText(`${productName || "Briefing"}: ${fmt(secs)}`); }} style={{ ...gS, padding: "10px 14px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8 }}>Kopieren</button>}
+      <button onClick={handleToggle} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: running ? V.rose : `linear-gradient(135deg, ${V.teal}, ${V.emerald})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN, minWidth: 80 }}>{running ? "Pause" : secs > 0 ? "Resume" : "Start"}</button>
+      {secs > 0 && !running && <button onClick={() => { navigator.clipboard.writeText(`${productName || "Briefing"}: ${fmt(secs)}`); }} style={{ ...gS, padding: "10px 14px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8 }}>Copy</button>}
     </div>
   </div>;
 }
@@ -296,6 +502,32 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
   const [refIsManual, setRefIsManual] = useState(false);
   const [newProductText, setNewProductText] = useState("");
   const manualUploadRef = useRef(null);
+  // Helium10 keyword data state
+  const [h10Open, setH10Open] = useState(false);
+  const [h10Raw, setH10Raw] = useState(null); // parsed CSV data
+  const [h10Filtered, setH10Filtered] = useState(null); // filtered/scored keywords
+  const [h10FileName, setH10FileName] = useState("");
+  const csvUploadRef = useRef(null);
+  // Bestseller ASIN state
+  const [bsAsin, setBsAsin] = useState("");
+  const handleCSVUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setH10FileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const parsed = parseHelium10CSV(ev.target.result);
+      if (parsed) {
+        setH10Raw(parsed);
+        setH10Filtered(filterH10Keywords(parsed));
+      } else {
+        setH10Raw(null); setH10Filtered(null);
+        setH10FileName("");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ""; // allow re-upload of same file
+  };
   const loadRef = async () => {
     if (!refAsin.trim() || refLoading) return;
     setRefLoading(true); setRefImages([]); setRefData(null); setRefIsManual(false);
@@ -325,6 +557,7 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
     });
   };
   const hasRef = refImages.length > 0;
+  const hasH10 = h10Filtered?.volume?.length > 0 || h10Filtered?.purchase?.length > 0;
   const ok = asin.trim() || pi.trim() || hasRef;
   const refPayload = hasRef ? { asin: refAsin || null, images: refImages, productData: refData, newProductText: newProductText.trim() || null, isManual: refIsManual } : null;
   return (
@@ -403,7 +636,61 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
                   </>}
                 </div>}
               </div>
-              <button onClick={() => ok && !loading && onStart(asin, mp, pi, ft, refPayload, imageCount)} disabled={!ok || loading} style={{ padding: "14px 24px", borderRadius: 14, border: "none", background: loading ? `${V.violet}80` : ok ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(0,0,0,0.08)", color: ok || loading ? "#fff" : V.textDim, fontSize: 14, fontWeight: 800, cursor: ok && !loading ? "pointer" : "default", fontFamily: FN, boxShadow: ok ? `0 4px 20px ${V.violet}35` : "none" }}>{loading ? "Analyse läuft..." : `${imageCount}-Bild Analyse starten${hasRef ? " (mit Referenz)" : ""}`}</button>
+              {/* ── KEYWORD-DATEN (Helium10 CSV) ── */}
+              <div style={{ ...gS, padding: 0, overflow: "hidden", border: hasH10 ? `1.5px solid ${V.blue}40` : "1px solid rgba(0,0,0,0.06)" }}>
+                <button onClick={() => setH10Open(o => !o)} style={{ width: "100%", padding: "12px 16px", border: "none", background: hasH10 ? `${V.blue}08` : "transparent", cursor: "pointer", fontFamily: FN, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: hasH10 ? V.blue : V.textMed, letterSpacing: ".04em", textTransform: "uppercase" }}>Keyword-Daten</span>
+                    {hasH10 && <span style={{ fontSize: 10, fontWeight: 700, color: V.blue, padding: "2px 8px", borderRadius: 6, background: `${V.blue}15` }}>{h10Raw.totalCount} Keywords geladen</span>}
+                  </div>
+                  <span style={{ fontSize: 12, color: V.textDim, fontWeight: 700 }}>{h10Open ? "▾" : "▸"}</span>
+                </button>
+                {h10Open && <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+                  <p style={{ fontSize: 11, color: V.textDim, margin: 0, lineHeight: 1.5 }}>Helium10 Cerebro CSV-Export hochladen für echte Suchvolumen und Conversion-Daten. Ohne Upload werden Keywords KI-geschätzt.</p>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input ref={csvUploadRef} type="file" accept=".csv,.tsv,.txt" style={{ display: "none" }} onChange={handleCSVUpload} />
+                    <button onClick={() => csvUploadRef.current?.click()} style={{ padding: "10px 16px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap" }}>CSV hochladen</button>
+                    {h10FileName && <span style={{ fontSize: 11, color: V.textMed, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h10FileName}</span>}
+                    {hasH10 && <button onClick={() => { setH10Raw(null); setH10Filtered(null); setH10FileName(""); }} style={{ ...gS, padding: "6px 10px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8 }}>Entfernen</button>}
+                  </div>
+                  {hasH10 && <div>
+                    <div style={{ display: "flex", gap: 12, marginBottom: 10 }}>
+                      <div style={{ ...gS, padding: "8px 14px", flex: 1, textAlign: "center" }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: V.blue }}>{h10Filtered.volume?.length || 0}</div>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: V.textDim, textTransform: "uppercase" }}>Volumen-KWs</div>
+                      </div>
+                      <div style={{ ...gS, padding: "8px 14px", flex: 1, textAlign: "center" }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: V.orange }}>{h10Filtered.purchase?.length || 0}</div>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: V.textDim, textTransform: "uppercase" }}>Kaufintent-KWs</div>
+                      </div>
+                      <div style={{ ...gS, padding: "8px 14px", flex: 1, textAlign: "center" }}>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: V.textMed }}>{h10Raw.totalCount}</div>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: V.textDim, textTransform: "uppercase" }}>Total</div>
+                      </div>
+                    </div>
+                    {h10Filtered.volume?.length > 0 && <div style={{ marginBottom: 8 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: V.blue, marginBottom: 4 }}>Top Suchvolumen:</div>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {h10Filtered.volume.slice(0, 8).map((k, i) => <span key={i} style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 6, background: `${V.blue}12`, color: V.blue, whiteSpace: "nowrap" }}>{k.keyword} <span style={{ opacity: 0.7 }}>{k.searchVolume?.toLocaleString("de-DE")}</span></span>)}
+                      </div>
+                    </div>}
+                    {h10Filtered.purchase?.length > 0 && <div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: V.orange, marginBottom: 4 }}>Top Kaufintent:</div>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {h10Filtered.purchase.slice(0, 6).map((k, i) => <span key={i} style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 6, background: `${V.orange}12`, color: V.orange, whiteSpace: "nowrap" }}>{k.keyword} {k.cpr ? `CPR:${k.cpr}` : ""}</span>)}
+                      </div>
+                    </div>}
+                  </div>}
+                  {h10Raw && !hasH10 && <div style={{ ...gS, padding: 10, background: `${V.rose}08`, border: `1px solid ${V.rose}20` }}><span style={{ fontSize: 11, color: V.rose }}>CSV konnte nicht verarbeitet werden. Stelle sicher, dass die Datei eine "Keyword Phrase" und "Search Volume" Spalte enthält.</span></div>}
+                </div>}
+              </div>
+              {/* ── BESTSELLER-ASIN (optional) ── */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6, display: "block" }}>Bestseller-ASIN (optional)</label>
+                <input type="text" autoComplete="off" value={bsAsin} onChange={e => setBsAsin(e.target.value)} placeholder="ASIN des Kategorie-Bestsellers" style={inpS} />
+                <div style={{ fontSize: 10, color: V.textDim, marginTop: 4 }}>Der #1 Bestseller der Produktkategorie wird als Benchmark analysiert.</div>
+              </div>
+              <button onClick={() => ok && !loading && onStart(asin, mp, pi, ft, refPayload, imageCount, h10Filtered, bsAsin.trim() || null)} disabled={!ok || loading} style={{ padding: "14px 24px", borderRadius: 14, border: "none", background: loading ? `${V.violet}80` : ok ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(0,0,0,0.08)", color: ok || loading ? "#fff" : V.textDim, fontSize: 14, fontWeight: 800, cursor: ok && !loading ? "pointer" : "default", fontFamily: FN, boxShadow: ok ? `0 4px 20px ${V.violet}35` : "none" }}>{loading ? "Analyse läuft..." : `${imageCount}-Bild Analyse starten${hasRef ? " (mit Referenz)" : ""}${hasH10 ? " (mit Keywords)" : ""}`}</button>
               {loading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 10, height: 10, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: 99, animation: "spin 0.7s linear infinite" }} /><span style={{ fontSize: 12, color: V.violet, fontWeight: 600 }}>{status}</span></div>}
             </div>
           </GC>
@@ -595,8 +882,15 @@ function genBrief(D, hlC, shC, bulSel, bdgSel) {
 // ═══════ DESIGNER VIEW (standalone shareable page - final decisions only) ═══════
 function DesignerView({ D, selections }) {
   const hlC = selections?.hlC || {}, shC = selections?.shC || {}, bulSel = selections?.bulSel || {}, bdgSel = selections?.bdgSel || {};
+  const links = selections?.links || {};
   if (!D?.images?.length) return null;
   const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1");
+  const asin = D.product?.sku || "";
+  // Inline copy button for individual text elements
+  const ICopy = ({ text, children, style: s = {} }) => {
+    const [ok, set] = useState(false);
+    return <div onClick={() => { navigator.clipboard.writeText(strip(text)); set(true); setTimeout(() => set(false), 1200); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, cursor: "pointer", background: ok ? `${V.emerald}12` : "transparent", border: ok ? `1px solid ${V.emerald}25` : "1px solid transparent", transition: "all 0.15s", ...s }} onMouseEnter={e => { if (!ok) e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }} onMouseLeave={e => { if (!ok) e.currentTarget.style.background = "transparent"; }}>{children}<span style={{ fontSize: 9, fontWeight: 700, color: ok ? V.emerald : V.textDim, opacity: ok ? 1 : 0, transition: "opacity 0.15s", flexShrink: 0 }}>{ok ? "Copied" : ""}</span></div>;
+  };
   // Helper to get final selections for an image
   const getImageData = (img) => {
     const te = img?.texts;
@@ -616,28 +910,50 @@ function DesignerView({ D, selections }) {
       hasTexts: !!te,
     };
   };
+  // Image file naming
+  const imgName = (idx) => {
+    const labels = ["MAIN", "PT01", "PT02", "PT03", "PT04", "PT05", "PT06"];
+    const prefix = asin || "";
+    return prefix ? `${prefix}.${labels[idx]}` : labels[idx];
+  };
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-      <Orbs /><style>{`*, *::before, *::after { box-sizing: border-box; } @media print { body { background: white !important; } }`}</style>
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 20px 80px", position: "relative", zIndex: 1 }}>
-        <TimeTracker productName={D.product?.name} />
+      <Orbs /><style>{`*, *::before, *::after { box-sizing: border-box; } @media print { body { background: white !important; } } @keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      {/* Sticky Time Tracker */}
+      <div style={{ position: "sticky", top: 0, zIndex: 100 }}>
+        <TimeTracker productName={D.product?.name} brand={D.product?.brand} asin={D.product?.sku} marketplace={D.product?.marketplace} />
+      </div>
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 20px 80px", position: "relative", zIndex: 1 }}>
+        {/* Header */}
         <div style={{ ...glass, padding: "16px 22px", marginBottom: 18 }}>
-          <div style={{ background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontSize: 20, fontWeight: 900, marginBottom: 4 }}>Designer-Briefing</div>
+          <div style={{ background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontSize: 20, fontWeight: 900, marginBottom: 4 }}>Designer Briefing</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{D.product?.name}</div>
-          <div style={{ fontSize: 11, color: V.textDim }}>{D.product?.brand} · {D.product?.marketplace}</div>
+          <div style={{ fontSize: 11, color: V.textDim }}>{D.product?.brand} · {D.product?.marketplace}{asin ? ` · ${asin}` : ""}</div>
         </div>
-        {/* All images listed sequentially - no tabs, designer sees everything at once */}
+        {/* Links section */}
+        {(links.inputUrl || links.outputUrl) && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, display: "flex", gap: 14, flexWrap: "wrap" }}>
+          {links.inputUrl && <a href={links.inputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 12, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Assets / Source Files</a>}
+          {links.outputUrl && <a href={links.outputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.emerald}, ${V.teal})`, color: "#fff", fontSize: 12, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Upload Results</a>}
+        </div>}
+        {/* File naming convention */}
+        <div style={{ ...gS, padding: "10px 18px", marginBottom: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, color: V.textMed, textTransform: "uppercase", letterSpacing: ".06em" }}>File naming:</span>
+          {D.images.map((_, i) => <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.violet, padding: "3px 10px", borderRadius: 6, background: `${V.violet}10`, fontFamily: "monospace" }}>{imgName(i)}</span>)}
+          <span style={{ fontSize: 10, color: V.textDim }}>.jpg / .png, max 5 MB each</span>
+        </div>
+        {/* All images listed sequentially */}
         {D.images.map((img, idx) => {
           const d = getImageData(img);
+          const isMain = idx === 0;
           return <GC key={idx} style={{ marginBottom: 16 }}>
             <div style={{ padding: "14px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                <span style={{ fontSize: 16, fontWeight: 800, color: V.ink }}>{IMG_LABELS[idx] || img.label}</span>
+                <span style={{ fontSize: 16, fontWeight: 800, color: V.ink }}>{imgName(idx)}</span>
                 {img.theme && <Pill c={V.violet}>{img.theme}</Pill>}
                 <span style={{ fontSize: 11, color: V.textDim }}>{img.role}</span>
               </div>
-              {d.hasTexts && <CopyBtn text={[d.headline, d.subheadline, ...d.bullets.map(strip), ...d.badges].filter(Boolean).join("\n")} label="Texte kopieren" />}
+              {d.hasTexts && <CopyBtn text={[d.headline, d.subheadline, ...d.bullets.map(strip), ...d.badges].filter(Boolean).join("\n")} label="Copy All" />}
             </div>
             <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
               {/* Concept + Visual side by side */}
@@ -646,16 +962,55 @@ function DesignerView({ D, selections }) {
                 {img.visual && <div><Lbl c={V.textDim}>Visual Notes</Lbl><p style={{ fontSize: 12, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
               </div>
               {img.rationale && <div style={{ background: `${V.violet}06`, borderRadius: 12, padding: 14, border: `1px solid ${V.violet}10` }}><Lbl c={V.violet}>Rationale</Lbl><p style={{ fontSize: 12, color: V.text, lineHeight: 1.7, margin: 0 }}>{img.rationale}</p></div>}
-              {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher</Lbl><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{img.eyecatchers.map((ec, i) => <div key={i} style={{ ...gS, padding: "8px 12px", display: "flex", gap: 8, alignItems: "center" }}><span style={{ fontSize: 12, color: V.text }}>{ec.idea}</span><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk}</Pill></div>)}</div></div>}
-              {/* Final text selections - clean, no toggles */}
+              {/* Eyecatchers - Main Image only, no risk tags */}
+              {isMain && img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher Elements</Lbl><div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{img.eyecatchers.map((ec, i) => {
+                // Determine if this is a literal badge text or a visual description
+                const isShort = ec.idea.length <= 30 && !ec.idea.includes(" ");
+                const looksLikeBadgeText = isShort || /^[A-ZÄÖÜ0-9]/.test(ec.idea) && ec.idea.split(" ").length <= 4;
+                return <div key={i} style={{ ...gS, padding: "10px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: V.amber, flexShrink: 0, marginTop: 2 }}>{i + 1}.</span>
+                  <div style={{ flex: 1 }}>
+                    {looksLikeBadgeText ? (
+                      <ICopy text={ec.idea}><span style={{ padding: "4px 12px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 13, fontWeight: 800, color: V.amber }}>{ec.idea}</span></ICopy>
+                    ) : (
+                      <div><Pill c={V.textDim} s={{ marginBottom: 4 }}>Visual description</Pill><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.6, margin: "4px 0 0" }}>{ec.idea}</p></div>
+                    )}
+                  </div>
+                </div>;
+              })}</div></div>}
+              {/* Final text selections - individually copyable, clearly labeled */}
               {d.hasTexts && <div style={{ background: `${V.orange}06`, borderRadius: 14, padding: 16, border: `1px solid ${V.orange}10` }}>
-                <Lbl c={V.orange}>Finale Texte</Lbl>
-                {d.headline && <div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 6 }}>{d.headline}</div>}
-                {d.subheadline && <div style={{ fontSize: 14, color: V.textMed, marginBottom: 10 }}>{d.subheadline}</div>}
-                {d.bullets.length > 0 && <div style={{ marginBottom: 8 }}>{d.bullets.map((b, i) => <div key={i} style={{ display: "flex", gap: 8, marginBottom: 4 }}><span style={{ color: V.teal, fontWeight: 800, flexShrink: 0 }}>-</span><span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} /></div>)}</div>}
-                {d.badges.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{d.badges.map((b, i) => <span key={i} style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 12, fontWeight: 800, color: V.amber }}>{b}</span>)}</div>}
-                {d.footnotes.length > 0 && <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${V.textDim}15` }}>{d.footnotes.map((f, i) => <div key={i} style={{ fontSize: 10, color: V.textDim, lineHeight: 1.5 }}>{f}</div>)}</div>}
+                <Lbl c={V.orange}>Image Texts</Lbl>
+                {/* HEADLINE */}
+                {d.headline && <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: V.orange, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Heading</div>
+                  <ICopy text={d.headline}><span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{d.headline}</span></ICopy>
+                </div>}
+                {/* SUBHEADLINE */}
+                {d.subheadline && <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: V.blue, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Subheading</div>
+                  <ICopy text={d.subheadline}><span style={{ fontSize: 14, color: V.textMed }}>{d.subheadline}</span></ICopy>
+                </div>}
+                {/* BULLETS */}
+                {d.bullets.length > 0 && <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: V.teal, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Bullet Points (+ Icons)</div>
+                  {d.bullets.map((b, i) => <ICopy key={i} text={strip(b)} style={{ marginBottom: 2 }}>
+                    <span style={{ color: V.teal, fontWeight: 800, flexShrink: 0 }}>-</span>
+                    <span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />
+                  </ICopy>)}
+                </div>}
+                {/* BADGES */}
+                {d.badges.length > 0 && <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: V.amber, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Badge</div>
+                  {d.badges.map((b, i) => <ICopy key={i} text={b}><span style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 12, fontWeight: 800, color: V.amber }}>{b}</span></ICopy>)}
+                </div>}
+                {/* FOOTNOTES */}
+                {d.footnotes.length > 0 && <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${V.textDim}15` }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Footnotes</div>
+                  {d.footnotes.map((f, i) => <ICopy key={i} text={f}><span style={{ fontSize: 11, color: V.textDim, lineHeight: 1.5 }}>{f}</span></ICopy>)}
+                </div>}
               </div>}
+              {!d.hasTexts && <div style={{ padding: 16, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>No text overlay. Visual-only image.</span></div>}
             </div>
           </GC>;
         })}
@@ -782,12 +1137,16 @@ export default function App() {
   const [data, setData] = useState(null), [tab, setTab] = useState("b"), [showExp, setSE] = useState(false), [pdfL, setPL] = useState(false), [loading, setL] = useState(false), [status, setSt] = useState(""), [error, setE] = useState(null), [showNew, setSN] = useState(false), [pending, setP] = useState(null), [hlC, setHlC] = useState({}), [shC, setShC] = useState({}), [bulSel, setBulSel] = useState({}), [bdgSel, setBdgSel] = useState({}), [curAsin, setCurAsin] = useState(""), [showHist, setShowHist] = useState(false), [productData, setPD] = useState(null), [txtDensity, setTD] = useState("normal");
   const [shareUrl, setShareUrl] = useState(null);
   const [designerMode, setDesignerMode] = useState(null);
+  // Input/Output links for designer collaboration
+  const [inputUrl, setInputUrl] = useState("");
+  const [outputUrl, setOutputUrl] = useState("");
+  const [showLinks, setShowLinks] = useState(false);
   // Load briefing from shared URL on mount
   useState(() => { const hash = window.location.hash.slice(1);
     if (hash && hash.startsWith("d=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }); }
   });
-  const shareDesignerLink = useCallback(async () => { if (!data) return; const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel } }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }, [data, hlC, shC, bulSel, bdgSel]);
-  const go = useCallback(async (a, m, p, f, refData, imgCount) => {
+  const shareDesignerLink = useCallback(async () => { if (!data) return; const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } } }; const enc = await encodeBriefing(payload); if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} } }, [data, hlC, shC, bulSel, bdgSel, inputUrl, outputUrl]);
+  const go = useCallback(async (a, m, p, f, refData, imgCount, h10Keywords, bestsellerAsin) => {
     setL(true); setE(null); setSt("Starte...");
     try {
       // Step 1: Scrape Amazon product data first (needed for keyword search term)
@@ -796,33 +1155,53 @@ export default function App() {
       const pd = scrapeResult.productData || {};
       // Derive best search term: product title keywords or user input
       const searchTerm = pd.title ? pd.title.split(/[,|·\-–—]/).slice(0, 2).join(" ").trim().substring(0, 60) : (p ? p.split(/[,.\n]/)[0].trim() : "");
-      // Step 2: All Bright Data queries in parallel
-      setSt("Recherchiere Keywords, Reviews & Wettbewerber...");
-      const [kwGlobal, kwSimple, rvResult] = await Promise.all([
-        // 1. Global keyword search (marketplace-specific) - für Wettbewerber + Keywords
+      // Step 2: All Bright Data queries in parallel (competitors + reviews)
+      // If Helium10 data is available, we still fetch BD for competitors & reviews
+      setSt(h10Keywords ? "Recherchiere Reviews & Wettbewerber..." : "Recherchiere Keywords, Reviews & Wettbewerber...");
+      const bdPromises = [
+        // 1. Global keyword search (marketplace-specific) - für Wettbewerber
         searchTerm ? fetchKeywordData(searchTerm, m) : Promise.resolve(null),
-        // 4. Simple keyword search (ergänzend) - breitere Keyword-Perspektive
+        // 2. Simple keyword search (ergänzend)
         searchTerm ? fetchSimpleKeywordData(searchTerm) : Promise.resolve(null),
-        // 3. Echte Reviews - für Review-Analyse
+        // 3. Echte Reviews
         a && a.trim() ? fetchReviewData(a, m) : Promise.resolve(null),
-        // 2. Brand discovery + 5. Best sellers - benötigen URLs die wir ggf. nicht haben
-        // Diese werden nur genutzt wenn brandUrl/categoryUrl vorhanden
-      ]);
-      // Merge keyword results from both endpoints
-      const kwResult = mergeKeywordData(kwGlobal, kwSimple);
+      ];
+      // Step 2b: Scrape bestseller if provided
+      if (bestsellerAsin) {
+        setSt("Lade Bestseller-Daten...");
+        bdPromises.push(scrapeProduct(bestsellerAsin, m));
+      }
+      const results = await Promise.all(bdPromises);
+      const [kwGlobal, kwSimple, rvResult] = results;
+      const bsResult = bestsellerAsin ? results[3] : null;
+      // Merge keyword results from both BD endpoints (used for competitor data)
+      let kwResult = mergeKeywordData(kwGlobal, kwSimple);
+      // If we have a bestseller, add it to the keyword context
+      if (bsResult?.productData?.title) {
+        const bsPd = bsResult.productData;
+        if (!kwResult) kwResult = { searchTerms: [], competitorKeywords: [], competitors: [] };
+        kwResult.bestseller = { title: bsPd.title, brand: bsPd.brand, price: bsPd.price, rating: bsPd.rating, reviewCount: bsPd.reviewCount, bullets: bsPd.bullets, bsr: bsPd.bsr, asin: bestsellerAsin };
+      }
+      const kwEmpty = !kwResult || (!kwResult.searchTerms?.length && !kwResult.competitors?.length);
+      if (kwEmpty && searchTerm && !h10Keywords) {
+        console.warn("[Keywords] Keine Keyword-Daten von Bright Data erhalten. Keywords im Briefing werden KI-geschätzt.");
+      }
       // Log data collection results
       const bdSummary = [];
-      if (kwResult) bdSummary.push(`${kwResult.searchTerms?.length || 0} Keywords, ${kwResult.competitors?.length || 0} Wettbewerber`);
+      if (h10Keywords) bdSummary.push(`${(h10Keywords.volume?.length || 0) + (h10Keywords.purchase?.length || 0)} Helium10-Keywords`);
+      if (kwResult && !kwEmpty) bdSummary.push(`${kwResult.competitors?.length || 0} Wettbewerber`);
       if (rvResult) bdSummary.push(`${rvResult.totalReviews || 0} Reviews`);
-      setSt(bdSummary.length ? `Daten geladen: ${bdSummary.join(", ")}. Erstelle Briefing...` : "Erstelle Briefing (ohne Bright Data)...");
+      if (bsResult?.productData?.title) bdSummary.push(`Bestseller: ${bsResult.productData.title?.substring(0, 40)}`);
+      if (kwEmpty && searchTerm && !h10Keywords) bdSummary.push("Keywords: KI-Schätzung");
+      setSt(bdSummary.length ? `Daten geladen: ${bdSummary.join(", ")}. Erstelle Briefing...` : "Erstelle Briefing...");
       // Step 3: Run AI analysis with all scraped + researched data
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
-      const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7);
+      const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7, h10Keywords || null);
       setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, [txtDensity]);
-  const goNew = useCallback((a, m, p, f, ref, ic) => { data ? setP({ a, m, p, f, ref, ic }) : go(a, m, p, f, ref, ic); }, [data, go]);
+  const goNew = useCallback((a, m, p, f, ref, ic, h10, bs) => { data ? setP({ a, m, p, f, ref, ic, h10, bs }) : go(a, m, p, f, ref, ic, h10, bs); }, [data, go]);
   // Standalone views (no app features visible)
   if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} />;
   if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(asin || ""); setSN(false); }} txtDensity={txtDensity} setTD={setTD} />;
@@ -834,6 +1213,7 @@ export default function App() {
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
             <button onClick={() => setSN(true)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Neues Briefing</button>
             <button onClick={() => setShowHist(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, position: "relative" }}>Verlauf</button>
+            <button onClick={() => setShowLinks(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: showLinks ? V.blue : V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, border: showLinks ? `1.5px solid ${V.blue}40` : "1px solid rgba(0,0,0,0.08)" }}>Links</button>
             <button onClick={shareDesignerLink} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30` }}>Designer-Link</button>
           </div>
         </div>
@@ -841,12 +1221,35 @@ export default function App() {
       </div></div>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 80px", position: "relative", zIndex: 1 }}>
         {showHist && (() => { const hist = loadH(); return hist.length > 0 ? <GC style={{ padding: 0, marginBottom: 14 }}><div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl><button onClick={() => setShowHist(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div><div style={{ padding: "6px 10px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px", borderRadius: 10, cursor: "pointer" }} onClick={() => { setData(h.data); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(h.asin || ""); setShowHist(false); }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC> : <GC style={{ padding: 16, marginBottom: 14, textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Noch keine gespeicherten Briefings.</span></GC>; })()}
+        {showLinks && <GC style={{ padding: 0, marginBottom: 14 }}>
+          <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.blue}>Designer Links</Lbl><button onClick={() => setShowLinks(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div>
+          <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: V.blue, marginBottom: 6, display: "block" }}>Input Link (Assets / Source Files)</label>
+              <input type="url" value={inputUrl} onChange={e => setInputUrl(e.target.value)} placeholder="z.B. Google Drive, Dropbox, Figma..." style={inpS} />
+              <div style={{ fontSize: 10, color: V.textDim, marginTop: 3 }}>Link zu Produktfotos, Logos, Assets die der Designer braucht.</div>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: V.emerald, marginBottom: 6, display: "block" }}>Output Link (Upload-Ordner)</label>
+              <input type="url" value={outputUrl} onChange={e => setOutputUrl(e.target.value)} placeholder="z.B. Google Drive Upload-Ordner..." style={inpS} />
+              <div style={{ fontSize: 10, color: V.textDim, marginTop: 3 }}>Ordner in den der Designer seine fertigen Bilder hochlädt.</div>
+            </div>
+            <div style={{ ...gS, padding: "10px 14px" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: V.textMed, marginBottom: 4 }}>Dateinamen-Konvention:</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {(data?.images || []).map((_, i) => { const labels = ["MAIN", "PT01", "PT02", "PT03", "PT04", "PT05", "PT06"]; const prefix = curAsin || ""; return <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.violet, padding: "2px 8px", borderRadius: 6, background: `${V.violet}10`, fontFamily: "monospace" }}>{prefix ? `${prefix}.${labels[i]}` : labels[i]}</span>; })}
+                <span style={{ fontSize: 10, color: V.textDim, alignSelf: "center" }}>.jpg / .png, max 5 MB</span>
+              </div>
+            </div>
+            <div style={{ fontSize: 10, color: V.textDim }}>Diese Links werden im Designer-Export sichtbar. Klicke "Designer-Link" um den Link mit den aktuellen Einstellungen neu zu generieren.</div>
+          </div>
+        </GC>}
         {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} />}
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
       </div>
       {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /><button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
-      {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic); }} onNo={() => setP(null)} />}
+      {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic, p.h10, p.bs); }} onNo={() => setP(null)} />}
     </div>
   );
 }
