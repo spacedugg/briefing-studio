@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { jsPDF } from "jspdf";
 
-const MAX_HL = 25, FN = "'Outfit', system-ui, sans-serif";
+const MAX_HL = 35, SOFT_HL = 30, FN = "'Outfit', system-ui, sans-serif";
 const V = { violet: "#7C3AED", blue: "#2563EB", cyan: "#0891B2", teal: "#0D9488", emerald: "#059669", orange: "#EA580C", rose: "#E11D48", amber: "#D97706", ink: "#0F172A", text: "#334155", textMed: "#64748B", textDim: "#94A3B8" };
 const glass = { background: "rgba(255,255,255,0.55)", backdropFilter: "blur(20px) saturate(1.8)", WebkitBackdropFilter: "blur(20px) saturate(1.8)", border: "1px solid rgba(255,255,255,0.65)", borderRadius: 18, boxShadow: "0 4px 30px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.7)" };
 const gS = { ...glass, background: "rgba(255,255,255,0.4)", borderRadius: 12, boxShadow: "0 2px 16px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.5)" };
@@ -10,6 +10,18 @@ const Orbs = () => <div style={{ position: "fixed", inset: 0, pointerEvents: "no
 const inpS = { width: "100%", padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.6)", fontFamily: FN, fontSize: 13, color: V.ink, outline: "none", boxSizing: "border-box" };
 
 const HK = "briefing_history", MH = 5;
+// ═══════ SHARED HELPERS ═══════
+const strip = s => (s || "").replace(/\*\*(.+?)\*\*/g, "$1");
+const md2html = s => (s || "").replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+const html2md = s => (s || "").replace(/<b>(.*?)<\/b>/gi, '**$1**').replace(/<strong>(.*?)<\/strong>/gi, '**$1**').replace(/<[^>]+>/g, '');
+const getAllBadges = te => [...(te?.badges || []), ...(te?.callouts || [])];
+const getSelectedBadge = (bdgSel, imgId, allBadges) => {
+  const v = bdgSel?.[imgId];
+  if (v === false) return { idx: -1, badge: null }; // backward compat: old boolean false = no badge
+  const idx = typeof v === "number" ? v : (allBadges.length > 0 ? 0 : -1);
+  return { idx, badge: idx >= 0 && idx < allBadges.length ? allBadges[idx] : null };
+};
+const fmtDate = (d) => { try { return new Date(d + "Z").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return d || ""; } };
 function loadH() { try { return JSON.parse(localStorage.getItem(HK) || "[]"); } catch { return []; } }
 function saveH(d, asin) { const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 4); const h = loadH(); h.unshift({ id, name: d.product?.name || "?", brand: d.product?.brand || "", asin: asin || d.product?.sku || "", date: new Date().toLocaleDateString("de-DE"), data: d }); if (h.length > MH) h.pop(); try { localStorage.setItem(HK, JSON.stringify(h)); } catch {} return id; }
 function encodeBriefing(d) { try { const json = JSON.stringify(d); const bytes = new TextEncoder().encode(json); const cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")); return new Response(cs).arrayBuffer().then(buf => { let b = ""; const u8 = new Uint8Array(buf); for (let i = 0; i < u8.length; i++) b += String.fromCharCode(u8[i]); return btoa(b).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }); } catch { return Promise.resolve(null); } }
@@ -526,7 +538,11 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
 // ═══════ START ═══════
 function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDensity, setTD }) {
   const [asin, sa] = useState(""); const [mp, sm] = useState("Amazon.de"); const [pi, sp] = useState(""); const [ft, sf] = useState("");
-  const [hist] = useState(loadH);
+  const [hist, setHist] = useState([]);
+  const [histLoading, setHistLoading] = useState(true);
+  useEffect(() => {
+    fetch("/api/briefing?list=recent&limit=10").then(r => r.ok ? r.json() : { items: [] }).then(d => setHist(d.items || [])).catch(() => setHist(loadH())).finally(() => setHistLoading(false));
+  }, []);
   const [imageCount, setImageCount] = useState(7);
   // Reference listing state
   const [refAsin, setRefAsin] = useState("");
@@ -729,7 +745,11 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
               {loading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 10, height: 10, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: 99, animation: "spin 0.7s linear infinite" }} /><span style={{ fontSize: 12, color: V.violet, fontWeight: 600 }}>{status}</span></div>}
             </div>
           </GC>
-          {hist.length > 0 && <GC style={{ padding: 0 }}><div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl></div><div style={{ padding: "8px 12px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 10, cursor: "pointer" }} onClick={() => onLoad(h.data, h.asin)} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC>}
+          {histLoading ? <GC style={{ padding: 20, textAlign: "center" }}><div style={{ width: 20, height: 20, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto" }} /></GC> : hist.length > 0 && <GC style={{ padding: 0 }}><div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl></div><div style={{ padding: "8px 12px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 10, cursor: "pointer" }} onClick={() => {
+            fetch("/api/briefing?id=" + h.id).then(r => r.ok ? r.json() : null).then(d => {
+              if (d?.data?.briefing?.product) onLoad(d.data.briefing, h.asin);
+            }).catch(() => {});
+          }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""}{h.marketplace ? ` · ${h.marketplace}` : ""}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC>}
         </div>
       </div>
       {error === "ASIN_NOT_FOUND" && <AsinNotFoundErr onReset={onDismiss} />}
@@ -737,15 +757,36 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
   );
 }
 
+// ═══════ SERVER HISTORY ═══════
+function ServerHistory({ items, loading, onLoad, onClose }) {
+  return <GC style={{ padding: 0, marginBottom: 14 }}>
+    <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Alle Briefings</Lbl><button onClick={onClose} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div>
+    <div style={{ padding: "6px 10px", maxHeight: 400, overflowY: "auto" }}>
+      {loading && <div style={{ textAlign: "center", padding: 20 }}><div style={{ width: 20, height: 20, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto" }} /></div>}
+      {!loading && items.length === 0 && <div style={{ textAlign: "center", padding: 20, fontSize: 12, color: V.textDim }}>Noch keine Briefings vorhanden.</div>}
+      {items.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px", borderRadius: 10, cursor: "pointer" }} onClick={() => onLoad(h.id)} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</div>
+          <div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""}{h.marketplace ? ` · ${h.marketplace}` : ""} · {h.imageCount} Bilder · v{h.version}</div>
+          <div style={{ fontSize: 9, color: V.textDim }}>{fmtDate(h.updatedAt)}</div>
+        </div>
+        <span style={{ fontSize: 11, color: V.violet, fontWeight: 700, flexShrink: 0, marginLeft: 8 }}>Laden →</span>
+      </div>)}
+    </div>
+  </GC>;
+}
+
 function OverwriteWarn({ name, onOk, onNo }) {
   return <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={onNo}><GC style={{ maxWidth: 440, width: "100%", padding: 28, background: "rgba(255,255,255,0.9)", textAlign: "center" }} onClick={e => e.stopPropagation()}><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing überschreiben?</div><p style={{ fontSize: 13, color: V.textMed, lineHeight: 1.6, margin: "0 0 6px" }}>Das Briefing für <b>{name}</b> wird ersetzt.</p><p style={{ fontSize: 12, color: V.textDim, margin: "0 0 20px" }}>Die letzten {MH} Briefings bleiben abrufbar.</p><div style={{ display: "flex", gap: 8, justifyContent: "center" }}><button onClick={onNo} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.5)", color: V.textMed, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>Abbrechen</button><button onClick={onOk} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.rose}, ${V.orange})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Überschreiben</button></div></GC></div>;
 }
 
 // ═══════ BILD-BRIEFING ═══════
-function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, setBdgSel, onEditText }) {
+function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, setBdgSel, imgDisabled, setImgDisabled, refImages, setRefImages, onEditText }) {
   const [sel, setSel] = useState(0);
-  const [editField, setEditField] = useState(null); // { type: 'hl'|'sub'|'bul', idx: number }
+  const [editField, setEditField] = useState(null); // { type: 'hl'|'sub'|'bul'|'badge'|'concept'|'visual'|'rationale'|'eyecatcher', idx: number }
   const [editVal, setEditVal] = useState("");
+  const [dragIdx, setDragIdx] = useState(null); // bullet drag-and-drop
+  const [dragOver, setDragOver] = useState(null);
   if (!D.images?.length) return null;
   const img = D.images[sel], te = img?.texts;
   const hls = te?.headlines || (te?.headline ? [te.headline] : []);
@@ -757,9 +798,10 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
   const bullets = te?.bullets || [];
   const bSel = bulSel[bKey] || bullets.map(() => true);
   const selectedBullets = bullets.filter((_, i) => bSel[i]);
-  const allBadges = [...(te?.badges || []), ...(te?.callouts || [])];
-  const badgeOn = bdgSel[img.id] !== false;
-  const allTxt = te ? [curHl, curSh, ...selectedBullets, ...(badgeOn ? allBadges : [])].filter(Boolean).join("\n") : "";
+  const allBadges = getAllBadges(te);
+  const { idx: bdgIdx, badge: selectedBadge } = getSelectedBadge(bdgSel, img.id, allBadges);
+  const allTxt = te ? [curHl, curSh, ...selectedBullets, ...(selectedBadge ? [selectedBadge] : [])].filter(Boolean).join("\n") : "";
+  const isOff = imgDisabled?.[img.id];
   // Inline editing helpers
   const startEdit = (type, idx, val) => { setEditField({ type, idx }); setEditVal(val); };
   const commitEdit = () => {
@@ -770,32 +812,50 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
   };
   const cancelEdit = () => setEditField(null);
   const isEditing = (type, idx) => editField?.type === type && editField?.idx === idx;
+  // Reference image upload
+  const handleRefUpload = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setRefImages(prev => ({ ...prev, [img.id]: [...(prev[img.id] || []), reader.result] }));
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = "";
+  };
+  const removeRefImage = (imgId, idx) => {
+    setRefImages(prev => ({ ...prev, [imgId]: (prev[imgId] || []).filter((_, i) => i !== idx) }));
+  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>{D.images.map((im, i) => {
-        const h = im.texts?.headlines || (im.texts?.headline ? [im.texts.headline] : []);
-        const ov = h.some(x => x.length > MAX_HL);
         const tabLabel = getImgLabel(D.images, i);
         const theme = im.theme || "";
-        return <button key={i} onClick={() => setSel(i)} style={{ ...gS, padding: "8px 14px", background: sel === i ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(255,255,255,0.5)", color: sel === i ? "#fff" : ov ? V.rose : V.textDim, border: ov && sel !== i ? `1.5px solid ${V.rose}50` : sel === i ? "none" : "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: sel === i ? `0 4px 20px ${V.violet}40` : "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 0 }}><span style={{ fontSize: 11, fontWeight: 800 }}>{tabLabel}</span>{theme && <span style={{ fontSize: 9, fontWeight: 500, opacity: sel === i ? 0.85 : 0.7, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis" }}>{theme}</span>}{ov && <span style={{ fontSize: 8, color: sel === i ? "#fff" : V.rose }}>!</span>}</button>;
+        const isOff = imgDisabled?.[D.images[i]?.id];
+        return <button key={i} onClick={() => setSel(i)} style={{ ...gS, padding: "8px 14px", background: sel === i ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : isOff ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.5)", color: sel === i ? "#fff" : V.textDim, border: sel === i ? "none" : "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: sel === i ? `0 4px 20px ${V.violet}40` : "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 0, opacity: isOff ? 0.45 : 1, transition: "all 0.15s" }}><span style={{ fontSize: 11, fontWeight: 800 }}>{tabLabel}</span>{theme && <span style={{ fontSize: 9, fontWeight: 500, opacity: sel === i ? 0.85 : 0.7, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis" }}>{theme}</span>}{isOff && <span style={{ fontSize: 8, color: sel === i ? "#fff" : V.textDim }}>AUS</span>}</button>;
       })}</div>
       <GC>
         <div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}><span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{getImgLabel(D.images, sel)}</span><span style={{ fontSize: 12, color: V.textDim }}>{img.role}</span></div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}><span style={{ fontSize: 18, fontWeight: 800, color: isOff ? V.textDim : V.ink }}>{getImgLabel(D.images, sel)}</span><span style={{ fontSize: 12, color: V.textDim }}>{img.role}</span>
+            <button onClick={() => setImgDisabled(p => ({ ...p, [img.id]: !isOff }))} style={{ ...gS, padding: "4px 10px", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: FN, borderRadius: 8, color: isOff ? V.rose : V.emerald, background: isOff ? `${V.rose}10` : `${V.emerald}10`, border: isOff ? `1px solid ${V.rose}30` : `1px solid ${V.emerald}30`, marginLeft: 4 }}>{isOff ? "Deaktiviert" : "Aktiv"}</button>
+          </div>
           {te && <CopyBtn text={allTxt} label="Alle Texte" />}
         </div>
+        {isOff && <div style={{ padding: "10px 22px", background: `${V.rose}08`, borderBottom: `1px solid ${V.rose}15`, fontSize: 12, color: V.rose, fontWeight: 600 }}>Dieses Bild wird vom Briefing ausgeschlossen.</div>}
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
-          {img.concept && <div><Lbl c={V.blue}>Bildkonzept</Lbl><p style={{ fontSize: 13, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.concept}</p></div>}
-          {img.rationale && <div style={{ background: `${V.violet}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.violet}12` }}><Lbl c={V.violet}>Strategische Begründung</Lbl><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.rationale}</p></div>}
-          {img.visual && <div style={{ background: `${V.cyan}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.cyan}12` }}><Lbl c={V.cyan}>Visuelle Hinweise für Designer</Lbl><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
+          {img.concept && <div><Lbl c={V.blue}>Bildkonzept</Lbl>{isEditing("concept", 0) ? <textarea autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} style={{ ...inpS, fontSize: 13, lineHeight: 1.75, minHeight: 80, resize: "vertical" }} /> : <p onClick={() => startEdit("concept", 0, img.concept)} style={{ fontSize: 13, color: V.text, lineHeight: 1.75, margin: 0, cursor: "text", borderRadius: 8, padding: "4px 6px", transition: "background 0.15s" }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"} title="Klick zum Bearbeiten">{img.concept}</p>}</div>}
+          {img.rationale && <div style={{ background: `${V.violet}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.violet}12` }}><Lbl c={V.violet}>Strategische Begründung</Lbl>{isEditing("rationale", 0) ? <textarea autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} style={{ ...inpS, fontSize: 12.5, lineHeight: 1.75, minHeight: 80, resize: "vertical" }} /> : <p onClick={() => startEdit("rationale", 0, img.rationale)} style={{ fontSize: 12.5, color: V.text, lineHeight: 1.75, margin: 0, cursor: "text", borderRadius: 8, padding: "4px 6px", transition: "background 0.15s" }} onMouseEnter={e => e.currentTarget.style.background = `${V.violet}12`} onMouseLeave={e => e.currentTarget.style.background = "transparent"} title="Klick zum Bearbeiten">{img.rationale}</p>}</div>}
+          {img.visual && <div style={{ background: `${V.cyan}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.cyan}12` }}><Lbl c={V.cyan}>Visuelle Hinweise für Designer</Lbl>{isEditing("visual", 0) ? <textarea autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} style={{ ...inpS, fontSize: 12.5, lineHeight: 1.65, minHeight: 80, resize: "vertical" }} /> : <p onClick={() => startEdit("visual", 0, img.visual)} style={{ fontSize: 12.5, color: V.text, lineHeight: 1.65, margin: 0, fontStyle: "italic", cursor: "text", borderRadius: 8, padding: "4px 6px", transition: "background 0.15s" }} onMouseEnter={e => e.currentTarget.style.background = `${V.cyan}12`} onMouseLeave={e => e.currentTarget.style.background = "transparent"} title="Klick zum Bearbeiten">{img.visual}</p>}</div>}
 
-          {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher-Vorschläge</Lbl>{img.eyecatchers.map((ec, i) => <div key={i} style={{ ...gS, padding: 12, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", gap: 10 }}><span style={{ color: V.amber, fontWeight: 800 }}>{i + 1}.</span><span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.5 }}>{ec.idea}</span></div><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk === "low" ? "Geringes Risiko" : "Graubereich"}</Pill></div>)}</div>}
+          {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher-Vorschläge</Lbl>{img.eyecatchers.map((ec, i) => <div key={i} style={{ ...gS, padding: 12, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", gap: 10, flex: 1 }}><span style={{ color: V.amber, fontWeight: 800 }}>{i + 1}.</span>{isEditing("eyecatcher", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", flex: 1 }} /> : <span onClick={() => startEdit("eyecatcher", i, ec.idea)} style={{ fontSize: 12.5, color: V.text, lineHeight: 1.5, cursor: "text" }} title="Klick zum Bearbeiten">{ec.idea}</span>}</div><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk === "low" ? "Geringes Risiko" : "Graubereich"}</Pill></div>)}</div>}
 
           {te && hls.length > 0 ? <div><Lbl c={V.orange}>Bildtexte (Deutsch)</Lbl>
             {/* HEADLINES */}
             <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.orange}>HEADLINE-VARIANTEN</Pill><CopyBtn text={curHl} /></div>
-              {hls.map((h, i) => { const ov = h.length > MAX_HL, act = ci === i; const labels = ["USP", "Kundenvorteil", "Kreativ"]; const labelColors = [V.orange, V.emerald, V.violet]; return <div key={i} onClick={() => setHlC(p => ({ ...p, [img.id]: i }))} style={{ padding: "10px 14px", borderRadius: 10, border: act ? `2px solid ${V.violet}` : `1px solid ${ov ? V.rose + "40" : "rgba(0,0,0,0.06)"}`, background: act ? `${V.violet}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.violet}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.violet }} />}</div>{isEditing("hl", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 15, fontWeight: 800, padding: "4px 8px", flex: 1 }} /> : <span onDoubleClick={e => { e.stopPropagation(); startEdit("hl", i, h); }} style={{ fontSize: 15, fontWeight: 800, color: V.ink }} title="Doppelklick zum Bearbeiten">{h}</span>}</div><div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}><span style={{ fontSize: 9, color: labelColors[i] || V.textDim, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: `${labelColors[i] || V.textDim}12` }}>{labels[i] || ""}</span><span style={{ fontSize: 10, fontWeight: 700, color: ov ? V.rose : V.textDim }}>{h.length}/{MAX_HL}</span></div></div>; })}
+              {hls.map((h, i) => { const hlWarn = h.length > MAX_HL, hlSoft = h.length > SOFT_HL && h.length <= MAX_HL, act = ci === i; const labels = ["USP", "Kundenvorteil", "Kreativ"]; const labelColors = [V.orange, V.emerald, V.violet]; return <div key={i} onClick={() => setHlC(p => ({ ...p, [img.id]: i }))} style={{ padding: "10px 14px", borderRadius: 10, border: act ? `2px solid ${V.violet}` : "1px solid rgba(0,0,0,0.06)", background: act ? `${V.violet}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.violet}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.violet }} />}</div>{isEditing("hl", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 15, fontWeight: 800, padding: "4px 8px", flex: 1 }} /> : <span onDoubleClick={e => { e.stopPropagation(); startEdit("hl", i, h); }} style={{ fontSize: 15, fontWeight: 800, color: V.ink }} title="Doppelklick zum Bearbeiten">{h}</span>}</div><div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}><span style={{ fontSize: 9, color: labelColors[i] || V.textDim, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: `${labelColors[i] || V.textDim}12` }}>{labels[i] || ""}</span><span style={{ fontSize: 10, fontWeight: 700, color: hlWarn ? V.rose : hlSoft ? V.amber : V.textDim }}>{h.length}/{SOFT_HL}</span></div></div>; })}
             </div>
             {/* SUBHEADLINES */}
             {subs.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
@@ -805,13 +865,27 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             </div>}
             {/* Legacy single subheadline fallback */}
             {subs.length === 0 && te.subheadline && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><Pill c={V.blue}>SUBHEADLINE</Pill><CopyBtn text={te.subheadline} /></div><div style={{ fontSize: 13, color: V.textMed, lineHeight: 1.6 }}>{te.subheadline}</div></div>}
-            {/* BULLETS */}
-            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; return <div key={i} onClick={() => { const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ display: "flex", gap: 10, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: on ? `${V.teal}06` : "transparent", cursor: "pointer", opacity: on ? 1 : 0.45, transition: "all 0.15s" }}><div style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${V.teal}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>{on && <span style={{ color: V.teal, fontSize: 12, fontWeight: 800 }}>✓</span>}</div>{isEditing("bul", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", flex: 1 }} /> : <span onDoubleClick={e => { e.stopPropagation(); startEdit("bul", i, b.replace(/\*\*(.+?)\*\*/g, "$1")); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A">$1</b>') }} title="Doppelklick zum Bearbeiten" />}</div>; })}</div>}
-            {/* BADGE (max 1, selectable) */}
-            {allBadges.length > 0 && <div onClick={() => setBdgSel(p => ({ ...p, [img.id]: !badgeOn }))} style={{ ...gS, padding: 14, marginBottom: 10, cursor: "pointer", border: badgeOn ? `1.5px solid ${V.amber}40` : "1.5px solid rgba(0,0,0,0.04)", opacity: badgeOn ? 1 : 0.45, transition: "all 0.15s" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.amber}>BADGE</Pill><div style={{ width: 18, height: 18, borderRadius: 4, border: badgeOn ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{badgeOn && <span style={{ color: V.amber, fontSize: 12, fontWeight: 800 }}>✓</span>}</div></div><div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>{allBadges.map((b, i) => <span key={i} style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}12`, border: `1px solid ${V.amber}20`, fontSize: 12, fontWeight: 800, color: V.amber }}>{b}</span>)}</div></div>}
+            {/* BULLETS — with drag-and-drop reordering + rich text editing */}
+            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} draggable onDragStart={() => setDragIdx(i)} onDragEnd={() => { if (dragIdx !== null && dragOver !== null && dragIdx !== dragOver) onEditText(sel, "reorder_bullets", dragIdx, dragOver); setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); if (dragOver !== i) setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${V.teal}06` : "transparent", cursor: "grab", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, cursor: "grab", padding: "4px 2px", color: V.textDim, fontSize: 10, userSelect: "none" }} title="Ziehen zum Verschieben">⋮⋮</div>
+              <div onClick={e => { e.stopPropagation(); const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${V.teal}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, cursor: "pointer" }}>{on && <span style={{ color: V.teal, fontSize: 12, fontWeight: 800 }}>✓</span>}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>{isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div contentEditable suppressContentEditableWarning dangerouslySetInnerHTML={{ __html: editVal }} onInput={e => setEditVal(e.currentTarget.innerHTML)} onBlur={() => { onEditText(sel, "bul", i, html2md(editVal)); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); if (e.key === "b" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.execCommand("bold"); } }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", minHeight: 28, outline: "none", lineHeight: 1.6 }} /><div style={{ fontSize: 9, color: V.textDim }}>Strg+B = Fett · Esc = Abbrechen</div></div> : <span onClick={e => { e.stopPropagation(); startEdit("bul", i, md2html(b)); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6, cursor: "text", display: "block" }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A">$1</b>') }} title="Klick zum Bearbeiten" />}</div>
+            </div>; })}</div>}
+            {/* BADGE — select one from multiple options + inline editing */}
+            {allBadges.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.amber}>BADGE-VARIANTEN</Pill></div>
+              {allBadges.map((b, i) => { const act = bdgIdx === i; return <div key={i} onClick={() => setBdgSel(p => ({ ...p, [img.id]: act ? -1 : i }))} style={{ padding: "8px 12px", borderRadius: 10, border: act ? `2px solid ${V.amber}` : "1px solid rgba(0,0,0,0.06)", background: act ? `${V.amber}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center", opacity: act ? 1 : 0.6, transition: "all 0.15s" }}><div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div>{isEditing("badge", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 13, fontWeight: 800, padding: "4px 8px", flex: 1 }} /> : <span onClick={e => { e.stopPropagation(); startEdit("badge", i, b); }} style={{ fontSize: 13, fontWeight: 800, color: V.amber, cursor: "text" }} title="Klick zum Bearbeiten">{b}</span>}</div>{act && <CopyBtn text={b} />}</div>; })}
+              <div onClick={() => setBdgSel(p => ({ ...p, [img.id]: -1 }))} style={{ padding: "8px 12px", borderRadius: 10, border: bdgIdx === -1 ? `2px solid ${V.amber}` : "1px solid rgba(0,0,0,0.06)", background: bdgIdx === -1 ? `${V.amber}08` : "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: bdgIdx === -1 ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{bdgIdx === -1 && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div><span style={{ fontSize: 13, fontWeight: 600, color: V.textDim, fontStyle: "italic" }}>Kein Badge</span></div>
+            </div>}
             {/* FOOTNOTES */}
             {te.footnotes?.length > 0 && <div style={{ ...gS, padding: 12, background: `${V.textDim}08`, marginBottom: 10 }}><span style={{ fontSize: 10, fontWeight: 800, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em" }}>Fußnoten</span>{te.footnotes.map((f, i) => <div key={i} style={{ fontSize: 11, color: V.textDim, marginTop: 4, lineHeight: 1.5 }}>{f}</div>)}</div>}
           </div> : !te && <div style={{ padding: 16, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Kein Text-Overlay. Rein visuelles Bild.</span></div>}
+
+          {/* REFERENCE IMAGES — upload per image */}
+          <div style={{ ...gS, padding: 14, marginTop: 8, borderStyle: (refImages[img.id]?.length ? "solid" : "dashed") }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}><Lbl c={V.textMed}>Referenzbilder</Lbl><label style={{ fontSize: 10, fontWeight: 700, color: V.blue, cursor: "pointer", padding: "4px 10px", borderRadius: 6, background: `${V.blue}10`, border: `1px solid ${V.blue}25` }}>+ Hochladen<input type="file" accept="image/*" multiple onChange={handleRefUpload} style={{ display: "none" }} /></label></div>
+            {(refImages[img.id]?.length > 0) ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{refImages[img.id].map((src, ri) => <div key={ri} style={{ position: "relative", width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(0,0,0,0.08)" }}><img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /><button onClick={() => removeRefImage(img.id, ri)} style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 99, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button></div>)}</div> : <div style={{ textAlign: "center", padding: "12px 0", fontSize: 11, color: V.textDim }}>Beispielbilder hier hochladen, um dem Designer Inspiration zu geben.</div>}
+          </div>
 
         </div>
       </GC>
@@ -925,9 +999,10 @@ function getImgFileName(images, idx, asin) {
   }
   return asin ? `${asin}.${label}` : label;
 }
-function genBrief(D, hlC, shC, bulSel, bdgSel) {
+function genBrief(D, hlC, shC, bulSel, bdgSel, imgDisabled) {
   let t = `AMAZON GALLERY IMAGE BRIEFING\n${"=".repeat(50)}\nProduct: ${D.product?.name} | ${D.product?.brand}\nMarketplace: ${D.product?.marketplace}\n\n`;
   (D.images || []).forEach((im, idx) => {
+    if (imgDisabled?.[im.id]) return; // skip disabled images
     const expLabel = getImgLabel(D.images, idx) + (im.theme ? " | " + im.theme : "") + " (" + (im.role || im.label) + ")";
     t += `${"-".repeat(50)}\n${expLabel}\n${"-".repeat(50)}\nCONCEPT:\n${im.concept}\n\nRATIONALE:\n${im.rationale}\n`;
     if (im.eyecatchers?.length) t += `\nEYECATCHER IDEAS:\n${im.eyecatchers.map((e, i) => `  ${i + 1}. ${e.idea} [${e.risk}]`).join("\n")}\n`;
@@ -939,14 +1014,13 @@ function genBrief(D, hlC, shC, bulSel, bdgSel) {
       const bullets = im.texts.bullets || [];
       const bSel = bulSel?.[im.id] || bullets.map(() => true);
       const selBullets = bullets.filter((_, i) => bSel[i]);
-      const allBadges = [...(im.texts.badges || []), ...(im.texts.callouts || [])];
-      const bOn = bdgSel?.[im.id] !== false;
-      const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1");
+      const allBadges = getAllBadges(im.texts);
+      const { badge: selBadge } = getSelectedBadge(bdgSel, im.id, allBadges);
       t += "\nTEXTS (DE):\n";
       if (h.length) t += `  Headline: "${h[ci] || h[0]}"\n`;
       if (si !== -1 && subs.length > 0) { t += `  Subheadline: "${subs[si] || subs[0]}"\n`; }
       if (selBullets.length) t += `  Bullets:\n${selBullets.map(b => `    - "${strip(b)}"`).join("\n")}\n`;
-      if (bOn && allBadges.length > 0) t += `  Badge: "${allBadges[0]}"\n`;
+      if (selBadge) t += `  Badge: "${selBadge}"\n`;
       if (im.texts.footnotes?.length) t += `  Footnotes: ${im.texts.footnotes.map(f => `"${f}"`).join(" | ")}\n`;
     } else { t += "\nTEXTS: None — visual-only image\n"; }
     t += `\nVISUAL NOTES:\n${im.visual}\n\n`;
@@ -1055,12 +1129,13 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
     }
   }, []);
   if (!D?.images?.length) return null;
-  const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1");
   const asin = D.product?.sku || "";
   const ICopy = ({ text, children, style: s = {} }) => {
     const [ok, set] = useState(false);
     return <div onClick={() => { navigator.clipboard.writeText(strip(text)); set(true); setTimeout(() => set(false), 1200); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, cursor: "pointer", background: ok ? `${V.emerald}12` : "transparent", border: ok ? `1px solid ${V.emerald}25` : "1px solid transparent", transition: "all 0.15s", ...s }} onMouseEnter={e => { if (!ok) e.currentTarget.style.background = "rgba(0,0,0,0.03)"; }} onMouseLeave={e => { if (!ok) e.currentTarget.style.background = "transparent"; }}>{children}<span style={{ fontSize: 10, fontWeight: 700, color: ok ? V.emerald : V.textDim, opacity: ok ? 1 : 0, transition: "opacity 0.15s", flexShrink: 0 }}>{ok ? "Copied" : ""}</span></div>;
   };
+  const liveImgDisabled = liveSelections?.imgDisabled || {};
+  const liveRefImages = liveSelections?.refImages || {};
   const getImageData = (img) => {
     const te = img?.texts;
     const hls = te?.headlines || (te?.headline ? [te.headline] : []);
@@ -1069,12 +1144,13 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
     const si = shC[img.id] ?? 0;
     const bullets = te?.bullets || [];
     const bSel = bulSel[img.id] || bullets.map(() => true);
-    const allBadges = [...(te?.badges || []), ...(te?.callouts || [])];
+    const allBadges = getAllBadges(te);
+    const { badge: selBadge } = getSelectedBadge(bdgSel, img.id, allBadges);
     return {
       headline: hls[ci] || hls[0] || "",
       subheadline: si === -1 ? "" : (subs[si] || subs[0] || te?.subheadline || ""),
       bullets: bullets.filter((_, i) => bSel[i]),
-      badges: bdgSel[img.id] !== false ? allBadges : [],
+      badges: selBadge ? [selBadge] : [],
       footnotes: te?.footnotes || [],
       hasTexts: !!te,
     };
@@ -1135,14 +1211,16 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
         {/* File naming convention — click to copy */}
         <div style={{ ...gS, padding: "12px 18px", marginBottom: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span style={{ fontSize: 11, fontWeight: 800, color: V.textMed, textTransform: "uppercase", letterSpacing: ".06em" }}>File naming:</span>
-          {D.images.map((_, i) => <FileNameCopy key={i} name={imgName(i)} />)}
+          {D.images.map((img, i) => liveImgDisabled[img.id] ? null : <FileNameCopy key={i} name={imgName(i)} />)}
           <span style={{ fontSize: 11, color: V.textDim }}>.jpg / .png, max 5 MB each</span>
         </div>
         {/* All images listed sequentially */}
         {D.images.map((img, idx) => {
+          if (liveImgDisabled[img.id]) return null; // skip disabled images
           const d = getImageData(img);
           const isMain = (img.id || "").toLowerCase().startsWith("main");
           const isChanged = changedFields.has(idx);
+          const imgRefs = liveRefImages[img.id] || [];
           return <GC key={idx} style={{ marginBottom: 18, border: isChanged ? `2px solid ${V.orange}50` : undefined }}>
             {isChanged && <div style={{ padding: "8px 22px", background: `${V.orange}10`, borderBottom: `1px solid ${V.orange}20`, fontSize: 12, fontWeight: 700, color: V.orange }}>This image was changed in the latest update</div>}
             <div style={{ padding: "16px 24px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1208,6 +1286,11 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
                 </div>}
               </div>}
               {!d.hasTexts && <div style={{ padding: 18, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 13, color: V.textDim }}>No text overlay. Visual-only image.</span></div>}
+              {/* Reference images */}
+              {imgRefs.length > 0 && <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: V.textMed, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>Reference Images</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>{imgRefs.map((src, ri) => <img key={ri} src={src} alt="" style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 10, border: "1px solid rgba(0,0,0,0.08)" }} />)}</div>
+              </div>}
             </div>
           </GC>;
         })}
@@ -1337,6 +1420,14 @@ export default function App() {
   const [designerMode, setDesignerMode] = useState(null);
   const [designerBriefingId, setDesignerBriefingId] = useState(null);
   const [designerVersion, setDesignerVersion] = useState(1);
+  const [designerLoading, setDesignerLoading] = useState(false);
+  // Image enable/disable state (excluded images)
+  const [imgDisabled, setImgDisabled] = useState({});
+  // Reference images per briefing image (keyed by image id → array of data URLs)
+  const [refImages, setRefImages] = useState({});
+  // Server-side briefing history
+  const [serverHist, setServerHist] = useState([]);
+  const [histLoading, setHistLoading] = useState(false);
   // Input/Output links for designer collaboration
   const [inputUrl, setInputUrl] = useState("");
   const [outputUrl, setOutputUrl] = useState("");
@@ -1344,13 +1435,14 @@ export default function App() {
   // Track the shared briefing ID so we can update it instead of creating duplicates
   const [sharedBriefingId, setSharedBriefingId] = useState(null);
   // Load briefing from shared URL on mount (short ID or legacy hash)
-  useState(() => {
+  useEffect(() => {
     const hash = window.location.hash.slice(1);
     // Legacy: #d=<compressed> links still work
-    if (hash && hash.startsWith("d=")) { decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }); return; }
+    if (hash && hash.startsWith("d=")) { setDesignerLoading(true); decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }).finally(() => setDesignerLoading(false)); return; }
     // New: /d/<id> short URL
     const m = window.location.pathname.match(/^\/d\/([A-Za-z0-9]{6,12})$/);
     if (m) {
+      setDesignerLoading(true);
       const bId = m[1];
       fetch("/api/briefing?id=" + bId).then(r => r.ok ? r.json() : null).then(d => {
         if (d?.data?.briefing?.product) {
@@ -1358,13 +1450,19 @@ export default function App() {
           setDesignerBriefingId(bId);
           setDesignerVersion(d.version || 1);
         }
-      }).catch(() => {});
+      }).catch(() => {}).finally(() => setDesignerLoading(false));
     }
-  });
+  }, []);
+  // Fetch server-side history when panel opens
+  useEffect(() => {
+    if (!showHist) return;
+    setHistLoading(true);
+    fetch("/api/briefing?list=recent&limit=20").then(r => r.ok ? r.json() : { items: [] }).then(d => setServerHist(d.items || [])).catch(() => setServerHist([])).finally(() => setHistLoading(false));
+  }, [showHist]);
   const shareDesignerLink = useCallback(async () => {
     if (!data) return;
     setShareLoading(true);
-    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } } };
+    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } } };
     // If we already shared this briefing, update it (same URL, new version)
     if (sharedBriefingId) payload._updateId = sharedBriefingId;
     try {
@@ -1381,20 +1479,20 @@ export default function App() {
       if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
     }
     setShareLoading(false);
-  }, [data, hlC, shC, bulSel, bdgSel, inputUrl, outputUrl, sharedBriefingId]);
+  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId]);
   // Auto-sync changes to designer link whenever data/selections change (debounced 3s)
   const autoSyncRef = useRef(null);
   useEffect(() => {
     if (!sharedBriefingId || !data) return;
     if (autoSyncRef.current) clearTimeout(autoSyncRef.current);
     autoSyncRef.current = setTimeout(async () => {
-      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } }, _updateId: sharedBriefingId };
+      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } }, _updateId: sharedBriefingId };
       try {
         await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       } catch {}
     }, 3000);
     return () => clearTimeout(autoSyncRef.current);
-  }, [data, hlC, shC, bulSel, bdgSel, inputUrl, outputUrl, sharedBriefingId]);
+  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId]);
   const go = useCallback(async (a, m, p, f, refData, imgCount, h10Keywords, bestsellerAsin) => {
     setL(true); setE(null); setSt("Starte...");
     try {
@@ -1457,6 +1555,7 @@ export default function App() {
   const goNew = useCallback((a, m, p, f, ref, ic, h10, bs) => { data ? setP({ a, m, p, f, ref, ic, h10, bs }) : go(a, m, p, f, ref, ic, h10, bs); }, [data, go]);
   // Standalone views (no app features visible)
   if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} briefingId={designerBriefingId} serverVersion={designerVersion} />;
+  if (designerLoading) return <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, display: "flex", justifyContent: "center", alignItems: "center" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><div style={{ textAlign: "center" }}><div style={{ width: 32, height: 32, border: `3px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} /><div style={{ fontSize: 14, fontWeight: 700, color: V.textMed }}>Designer Briefing wird geladen...</div></div></div>;
   if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(asin || ""); setSN(false); }} txtDensity={txtDensity} setTD={setTD} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
@@ -1474,7 +1573,20 @@ export default function App() {
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
       </div></div>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 80px", position: "relative", zIndex: 1 }}>
-        {showHist && (() => { const hist = loadH(); return hist.length > 0 ? <GC style={{ padding: 0, marginBottom: 14 }}><div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl><button onClick={() => setShowHist(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div><div style={{ padding: "6px 10px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px", borderRadius: 10, cursor: "pointer" }} onClick={() => { setData(h.data); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(h.asin || ""); setShowHist(false); }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC> : <GC style={{ padding: 16, marginBottom: 14, textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Noch keine gespeicherten Briefings.</span></GC>; })()}
+        {showHist && <ServerHistory items={serverHist} loading={histLoading} onLoad={(briefingId) => {
+          fetch("/api/briefing?id=" + briefingId).then(r => r.ok ? r.json() : null).then(d => {
+            if (d?.data?.briefing?.product) {
+              setData(d.data.briefing); setTab("b");
+              const sel = d.data.selections || {};
+              setHlC(sel.hlC || {}); setShC(sel.shC || {}); setBulSel(sel.bulSel || {}); setBdgSel(sel.bdgSel || {}); setImgDisabled(sel.imgDisabled || {}); setRefImages(sel.refImages || {});
+              setCurAsin(d.data.briefing.product?.sku || "");
+              setSharedBriefingId(briefingId);
+              setShowHist(false);
+              if (sel.links?.inputUrl) setInputUrl(sel.links.inputUrl);
+              if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
+            }
+          }).catch(() => {});
+        }} onClose={() => setShowHist(false)} />}
         {showLinks && <GC style={{ padding: 0, marginBottom: 14 }}>
           <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.blue}>Designer Links</Lbl><button onClick={() => setShowLinks(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div>
           <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1498,9 +1610,15 @@ export default function App() {
             <div style={{ fontSize: 10, color: V.textDim }}>Diese Links werden im Designer-Export sichtbar. Klicke "Designer-Link" um den Link mit den aktuellen Einstellungen neu zu generieren.</div>
           </div>
         </GC>}
-        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} onEditText={(imgIdx, type, textIdx, newVal) => {
+        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} imgDisabled={imgDisabled} setImgDisabled={setImgDisabled} refImages={refImages} setRefImages={setRefImages} onEditText={(imgIdx, type, textIdx, newVal) => {
           setData(prev => {
             const next = JSON.parse(JSON.stringify(prev));
+            if (type === "concept") { next.images[imgIdx].concept = newVal; return next; }
+            if (type === "visual") { next.images[imgIdx].visual = newVal; return next; }
+            if (type === "rationale") { next.images[imgIdx].rationale = newVal; return next; }
+            if (type === "eyecatcher") { if (next.images[imgIdx].eyecatchers?.[textIdx]) next.images[imgIdx].eyecatchers[textIdx].idea = newVal; return next; }
+            if (type === "badge") { const te = next.images[imgIdx]?.texts; if (te?.badges?.[textIdx] !== undefined) te.badges[textIdx] = newVal; else if (te?.callouts?.[textIdx - (te.badges?.length || 0)] !== undefined) te.callouts[textIdx - (te.badges?.length || 0)] = newVal; return next; }
+            if (type === "reorder_bullets") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { const [from, to] = [textIdx, newVal]; const b = [...te.bullets]; const [moved] = b.splice(from, 1); b.splice(to, 0, moved); te.bullets = b; } return next; }
             const te = next.images[imgIdx]?.texts;
             if (!te) return prev;
             if (type === "hl") {

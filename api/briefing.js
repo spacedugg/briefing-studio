@@ -45,8 +45,38 @@ export default async function handler(req, res) {
     await init();
 
     // GET /api/briefing?id=xxx — load briefing (includes version for change detection)
+    // GET /api/briefing?list=recent — list recent briefings (metadata only)
     if (req.method === "GET") {
-      const { id } = req.query;
+      const { id, list } = req.query;
+
+      // List recent briefings (server-side history)
+      if (list === "recent") {
+        const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+        const result = await db.execute({
+          sql: `SELECT id,
+            json_extract(data, '$.briefing.product.name') as name,
+            json_extract(data, '$.briefing.product.brand') as brand,
+            json_extract(data, '$.briefing.product.sku') as asin,
+            json_extract(data, '$.briefing.product.marketplace') as marketplace,
+            json_array_length(json_extract(data, '$.briefing.images')) as image_count,
+            version, created_at, updated_at
+          FROM briefings ORDER BY updated_at DESC LIMIT ?`,
+          args: [limit],
+        });
+        const items = result.rows.map(row => ({
+          id: row.id,
+          name: row.name || "?",
+          brand: row.brand || "",
+          asin: row.asin || "",
+          marketplace: row.marketplace || "",
+          imageCount: row.image_count || 0,
+          version: row.version || 1,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        }));
+        return res.status(200).json({ items });
+      }
+
       if (!id) return res.status(400).json({ error: "Missing id" });
 
       const result = await db.execute({ sql: "SELECT data, version, updated_at FROM briefings WHERE id = ?", args: [id] });
@@ -70,10 +100,12 @@ export default async function handler(req, res) {
         if (existing.rows.length) {
           const oldVersion = existing.rows[0].version || 1;
           const oldData = existing.rows[0].data;
-          // Store previous version data for change detection
+          // Store previous version data for change detection (strip nested _previousData to prevent exponential growth)
           const newBody = { ...body };
           delete newBody._updateId;
-          newBody._previousData = JSON.parse(oldData);
+          const oldParsed = JSON.parse(oldData);
+          delete oldParsed._previousData;
+          newBody._previousData = oldParsed;
           const newJson = JSON.stringify(newBody);
           await db.execute({
             sql: "UPDATE briefings SET data = ?, version = ?, updated_at = datetime('now') WHERE id = ?",
