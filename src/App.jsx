@@ -435,6 +435,7 @@ const GC = ({ children, style: s = {}, onClick: oc }) => <div style={{ ...glass,
 const Lbl = ({ children, c = V.violet }) => <div style={{ fontSize: 10, fontWeight: 800, color: c, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 10 }}>{children}</div>;
 const Check = ({ on }) => <span style={{ color: on ? V.emerald : V.textDim, fontSize: 11, fontWeight: 800 }}>{on ? "✓" : "○"}</span>;
 const Err = ({ msg, onX }) => msg ? <div style={{ ...gS, padding: "12px 18px", background: `${V.rose}10`, border: `1px solid ${V.rose}25`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><span style={{ fontSize: 12, color: V.rose, fontWeight: 600, lineHeight: 1.5 }}>{msg}</span>{onX && <button onClick={onX} style={{ background: "none", border: "none", color: V.rose, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 16 }}>×</button>}</div> : null;
+const AsinNotFoundErr = ({ onReset }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }}><div style={{ ...glass, maxWidth: 440, width: "100%", padding: "36px 32px", background: "rgba(255,255,255,0.92)", textAlign: "center" }}><div style={{ width: 56, height: 56, borderRadius: 99, background: `${V.rose}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><span style={{ fontSize: 28, color: V.rose }}>!</span></div><div style={{ fontSize: 20, fontWeight: 800, color: V.rose, marginBottom: 8 }}>ASIN nicht gefunden</div><p style={{ fontSize: 14, color: V.text, lineHeight: 1.7, margin: "0 0 24px" }}>Das Produkt konnte auf Amazon nicht gefunden werden. Bitte überprüfe die ASIN und versuche es erneut.</p><button onClick={onReset} style={{ padding: "12px 28px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}35` }}>Neues Briefing starten</button></div></div>;
 
 // ═══════ TIME TRACKER (persistent per ASIN, restores on reload, time only increases) ═══════
 function TimeTracker({ productName, brand, asin, marketplace }) {
@@ -472,7 +473,21 @@ function TimeTracker({ productName, brand, asin, marketplace }) {
       })
       .catch(() => setRestored(true));
   }, [asin]);
-  useEffect(() => { if (iRef.current) clearInterval(iRef.current); if (running) { iRef.current = setInterval(() => setSecs(p => p + 1), 1000); } return () => clearInterval(iRef.current); }, [running]);
+  // Timer uses wall-clock time so it stays accurate even when the tab is in the background
+  const startTimeRef = useRef(null);
+  const startSecsRef = useRef(0);
+  useEffect(() => {
+    if (iRef.current) clearInterval(iRef.current);
+    if (running) {
+      startTimeRef.current = Date.now();
+      startSecsRef.current = secsRef.current;
+      iRef.current = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startTimeRef.current) / 1000);
+        setSecs(startSecsRef.current + elapsed);
+      }, 500);
+    }
+    return () => clearInterval(iRef.current);
+  }, [running]);
   const syncToSheet = useCallback(async (s) => {
     if (!asin) return;
     try {
@@ -591,7 +606,7 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
               <p style={{ fontSize: 13, color: V.textMed, margin: 0, lineHeight: 1.6 }}>ASIN eingeben oder Produktinfos beschreiben.</p>
             </div>
             <div style={{ padding: "20px 32px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
-              <Err msg={error} onX={onDismiss} />
+              {error && error !== "ASIN_NOT_FOUND" && <Err msg={error} onX={onDismiss} />}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div style={{ minWidth: 0 }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6, display: "block" }}>ASIN (optional)</label>
@@ -717,6 +732,7 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
           {hist.length > 0 && <GC style={{ padding: 0 }}><div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl></div><div style={{ padding: "8px 12px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 10, cursor: "pointer" }} onClick={() => onLoad(h.data, h.asin)} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC>}
         </div>
       </div>
+      {error === "ASIN_NOT_FOUND" && <AsinNotFoundErr onReset={onDismiss} />}
     </div>
   );
 }
@@ -771,6 +787,7 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
         <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 18 }}>
           {img.concept && <div><Lbl c={V.blue}>Bildkonzept</Lbl><p style={{ fontSize: 13, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.concept}</p></div>}
           {img.rationale && <div style={{ background: `${V.violet}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.violet}12` }}><Lbl c={V.violet}>Strategische Begründung</Lbl><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.rationale}</p></div>}
+          {img.visual && <div style={{ background: `${V.cyan}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.cyan}12` }}><Lbl c={V.cyan}>Visuelle Hinweise für Designer</Lbl><p style={{ fontSize: 12.5, color: V.text, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
 
           {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher-Vorschläge</Lbl>{img.eyecatchers.map((ec, i) => <div key={i} style={{ ...gS, padding: 12, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", gap: 10 }}><span style={{ color: V.amber, fontWeight: 800 }}>{i + 1}.</span><span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.5 }}>{ec.idea}</span></div><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk === "low" ? "Geringes Risiko" : "Graubereich"}</Pill></div>)}</div>}
 
@@ -796,7 +813,6 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             {te.footnotes?.length > 0 && <div style={{ ...gS, padding: 12, background: `${V.textDim}08`, marginBottom: 10 }}><span style={{ fontSize: 10, fontWeight: 800, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em" }}>Fußnoten</span>{te.footnotes.map((f, i) => <div key={i} style={{ fontSize: 11, color: V.textDim, marginTop: 4, lineHeight: 1.5 }}>{f}</div>)}</div>}
           </div> : !te && <div style={{ padding: 16, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Kein Text-Overlay. Rein visuelles Bild.</span></div>}
 
-          {img.visual && <div style={{ borderTop: "1px solid rgba(0,0,0,0.06)", paddingTop: 14 }}><Lbl c={V.textDim}>Visuelle Hinweise für Designer</Lbl><p style={{ fontSize: 12, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
         </div>
       </GC>
     </div>
@@ -937,16 +953,22 @@ function genBrief(D, hlC, shC, bulSel, bdgSel) {
   });
   return t;
 }
+// ═══════ FILE NAME COPY (click-to-copy for designer) ═══════
+function FileNameCopy({ name }) {
+  const [ok, set] = useState(false);
+  return <span onClick={() => { navigator.clipboard.writeText(name); set(true); setTimeout(() => set(false), 1200); }} style={{ fontSize: 12, fontWeight: 700, color: ok ? V.emerald : V.violet, padding: "4px 10px", borderRadius: 6, background: ok ? `${V.emerald}15` : `${V.violet}10`, fontFamily: "monospace", cursor: "pointer", border: ok ? `1px solid ${V.emerald}30` : "1px solid transparent", transition: "all 0.15s", userSelect: "all" }}>{ok ? "Copied!" : name}</span>;
+}
 // ═══════ DESIGNER VIEW (standalone shareable page - final decisions only) ═══════
-function DesignerView({ D, selections, briefingId, serverVersion }) {
-  const hlC = selections?.hlC || {}, shC = selections?.shC || {}, bulSel = selections?.bulSel || {}, bdgSel = selections?.bdgSel || {};
-  const links = selections?.links || {};
-  const prevData = selections?._previousData || null;
-  const [updateAvailable, setUpdateAvailable] = useState(false);
-  const [updateDismissed, setUpdateDismissed] = useState(false);
+function DesignerView({ D: initialD, selections: initialSelections, briefingId, serverVersion }) {
+  const [liveD, setLiveD] = useState(initialD);
+  const [liveSelections, setLiveSelections] = useState(initialSelections);
+  const D = liveD;
+  const hlC = liveSelections?.hlC || {}, shC = liveSelections?.shC || {}, bulSel = liveSelections?.bulSel || {}, bdgSel = liveSelections?.bdgSel || {};
+  const links = liveSelections?.links || {};
+  const [updateBanner, setUpdateBanner] = useState(null);
   const [changedFields, setChangedFields] = useState(new Set());
   const versionRef = useRef(serverVersion || 1);
-  // Poll for briefing updates every 30 seconds
+  // Poll for briefing updates every 15 seconds — auto-apply new data
   useEffect(() => {
     if (!briefingId) return;
     const check = async () => {
@@ -955,27 +977,51 @@ function DesignerView({ D, selections, briefingId, serverVersion }) {
         if (!r.ok) return;
         const d = await r.json();
         if (d.version && d.version > versionRef.current) {
-          setUpdateAvailable(true);
-          setUpdateDismissed(false);
-          // Detect which images changed
           const newBriefing = d.data?.briefing;
+          const newSelections = d.data?.selections;
+          // Detect which images changed
           const changes = new Set();
           if (newBriefing?.images && D?.images) {
             newBriefing.images.forEach((ni, idx) => {
-              const oi = D.images[idx];
+              const oi = D.images?.[idx];
               if (!oi || JSON.stringify(ni) !== JSON.stringify(oi)) changes.add(idx);
             });
+            // Check for added/removed images
+            if (newBriefing.images.length !== D.images.length) {
+              for (let i = D.images.length; i < newBriefing.images.length; i++) changes.add(i);
+            }
           }
+          // Also detect selection changes
+          const selKeys = ["hlC", "shC", "bulSel", "bdgSel", "links"];
+          const selChanges = [];
+          if (newSelections) {
+            selKeys.forEach(k => {
+              if (JSON.stringify(newSelections[k] || {}) !== JSON.stringify((liveSelections || {})[k] || {})) selChanges.push(k);
+            });
+          }
+          // Build change description
+          const parts = [];
+          if (changes.size > 0) parts.push(`${changes.size} Bild${changes.size > 1 ? "er" : ""} aktualisiert`);
+          if (selChanges.length > 0) parts.push("Textauswahl geändert");
+          // Auto-apply new data
+          if (newBriefing) setLiveD(newBriefing);
+          if (newSelections) setLiveSelections(newSelections);
+          versionRef.current = d.version;
           setChangedFields(changes);
+          if (parts.length > 0) {
+            setUpdateBanner(parts.join(", "));
+            setTimeout(() => setUpdateBanner(null), 8000);
+          }
         }
       } catch {}
     };
-    check(); // Check immediately on mount
+    check();
     const iv = setInterval(check, 15000);
     return () => clearInterval(iv);
-  }, [briefingId, D]);
+  }, [briefingId, D, liveSelections]);
   // Detect changes from previous version (on initial load)
   useEffect(() => {
+    const prevData = initialSelections?._previousData || null;
     if (!prevData?.briefing?.images || !D?.images) return;
     const changes = new Set();
     const prev = prevData.briefing;
@@ -983,9 +1029,8 @@ function DesignerView({ D, selections, briefingId, serverVersion }) {
       const oi = prev.images?.[idx];
       if (!oi || JSON.stringify(ni) !== JSON.stringify(oi)) changes.add(idx);
     });
-    if (changes.size > 0) { setChangedFields(changes); setUpdateAvailable(true); }
+    if (changes.size > 0) { setChangedFields(changes); setUpdateBanner(`${changes.size} Bild${changes.size > 1 ? "er" : ""} seit letzter Version geändert`); }
   }, []);
-  const handleRefresh = () => { window.location.reload(); };
   if (!D?.images?.length) return null;
   const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1");
   const asin = D.product?.sku || "";
@@ -1041,16 +1086,13 @@ function DesignerView({ D, selections, briefingId, serverVersion }) {
         <TimeTracker productName={D.product?.name} brand={D.product?.brand} asin={D.product?.sku} marketplace={D.product?.marketplace} />
       </div>
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 20px 80px", position: "relative", zIndex: 1 }}>
-        {/* Update banner */}
-        {updateAvailable && !updateDismissed && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, background: `${V.blue}12`, border: `2px solid ${V.blue}40`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+        {/* Update banner — auto-applied, shows what changed */}
+        {updateBanner && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, background: `${V.emerald}12`, border: `2px solid ${V.emerald}40`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: V.blue, marginBottom: 2 }}>Briefing Updated</div>
-            <div style={{ fontSize: 12, color: V.text }}>The briefing has been updated since you last opened it. {changedFields.size > 0 ? `Changes in ${changedFields.size} image${changedFields.size > 1 ? "s" : ""} (highlighted below).` : ""} This is the latest version.</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: V.emerald, marginBottom: 2 }}>Briefing aktualisiert</div>
+            <div style={{ fontSize: 12, color: V.text }}>{updateBanner}. Änderungen sind unten hervorgehoben.</div>
           </div>
-          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-            <button onClick={handleRefresh} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Refresh</button>
-            <button onClick={() => setUpdateDismissed(true)} style={{ ...gS, padding: "8px 12px", fontSize: 11, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8 }}>Dismiss</button>
-          </div>
+          <button onClick={() => { setUpdateBanner(null); setChangedFields(new Set()); }} style={{ ...gS, padding: "8px 12px", fontSize: 11, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8, flexShrink: 0 }}>OK</button>
         </div>}
         {/* Header */}
         <div style={{ ...glass, padding: "18px 24px", marginBottom: 18 }}>
@@ -1063,10 +1105,10 @@ function DesignerView({ D, selections, briefingId, serverVersion }) {
           {links.inputUrl && <a href={links.inputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Assets / Source Files</a>}
           {links.outputUrl && <a href={links.outputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.emerald}, ${V.teal})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Upload Results</a>}
         </div>}
-        {/* File naming convention */}
+        {/* File naming convention — click to copy */}
         <div style={{ ...gS, padding: "12px 18px", marginBottom: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span style={{ fontSize: 11, fontWeight: 800, color: V.textMed, textTransform: "uppercase", letterSpacing: ".06em" }}>File naming:</span>
-          {D.images.map((_, i) => <span key={i} style={{ fontSize: 12, fontWeight: 700, color: V.violet, padding: "4px 10px", borderRadius: 6, background: `${V.violet}10`, fontFamily: "monospace" }}>{imgName(i)}</span>)}
+          {D.images.map((_, i) => <FileNameCopy key={i} name={imgName(i)} />)}
           <span style={{ fontSize: 11, color: V.textDim }}>.jpg / .png, max 5 MB each</span>
         </div>
         {/* All images listed sequentially */}
@@ -1333,6 +1375,10 @@ export default function App() {
       setSt("Lade Amazon-Produktdaten...");
       const scrapeResult = a && a.trim() ? await scrapeProduct(a, m) : { images: [], productData: {} };
       const pd = scrapeResult.productData || {};
+      // If an ASIN was entered but nothing was found, show error and abort
+      if (a && a.trim() && !pd.title && !pd.brand && !pd.bullets?.length) {
+        throw new Error("ASIN_NOT_FOUND");
+      }
       // Derive best search term: product title keywords or user input
       const searchTerm = pd.title ? pd.title.split(/[,|·\-–—]/).slice(0, 2).join(" ").trim().substring(0, 60) : (p ? p.split(/[,.\n]/)[0].trim() : "");
       // Step 2: All Bright Data queries in parallel (competitors + reviews)
@@ -1394,7 +1440,8 @@ export default function App() {
             <button onClick={() => setSN(true)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Neues Briefing</button>
             <button onClick={() => setShowHist(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, position: "relative" }}>Verlauf</button>
             <button onClick={() => setShowLinks(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: showLinks ? V.blue : V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, border: showLinks ? `1.5px solid ${V.blue}40` : "1px solid rgba(0,0,0,0.08)" }}>Links</button>
-            <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30`, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Speichern..." : "Designer-Link"}</button>
+            {sharedBriefingId && <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: `1.5px solid ${V.emerald}40`, background: `${V.emerald}10`, color: V.emerald, fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Speichern..." : "Speichern"}</button>}
+            <button onClick={() => { if (sharedBriefingId) { const url = window.location.origin + "/d/" + sharedBriefingId; setShareUrl(url); try { navigator.clipboard.writeText(url); } catch {} } else { shareDesignerLink(); } }} disabled={shareLoading && !sharedBriefingId} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: shareLoading && !sharedBriefingId ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30`, opacity: shareLoading && !sharedBriefingId ? 0.7 : 1 }}>{shareLoading && !sharedBriefingId ? "Erstellen..." : "Designer-Link"}</button>
           </div>
         </div>
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
