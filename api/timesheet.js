@@ -15,7 +15,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Google Sheets credentials not configured. Set GOOGLE_SHEETS_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY in env.' });
   }
 
-  const { action, productName, brand, asin, marketplace, seconds } = req.body;
+  const { action, productName, brand, asin, marketplace, seconds, briefingUrl, outputUrl } = req.body;
   if (!action) return res.status(400).json({ error: 'Missing action' });
 
   try {
@@ -23,7 +23,7 @@ export default async function handler(req, res) {
     const sheetName = await getFirstSheetName(GOOGLE_SHEETS_ID, token);
 
     // Read all rows once (used by both actions)
-    const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:J`;
+    const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:M`;
     const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${token}` } });
     if (!readRes.ok) {
       const err = await readRes.json().catch(() => ({}));
@@ -88,11 +88,18 @@ export default async function handler(req, res) {
 
       // Use ASIN as the project ID for stable identification
       const projectId = asin.trim().toUpperCase();
-      const rowData = [projectId, productName || '', brand || '', asin || '', marketplace || '', timeFormatted, hours, costUsd, costEur, timestamp];
+      // Build Amazon product link from marketplace + ASIN
+      const mpDomain = (marketplace || 'Amazon.de').replace(/^Amazon\.?/i, '').toLowerCase() || 'de';
+      const amazonLink = asin ? `https://www.amazon.${mpDomain === 'com' ? 'com' : mpDomain || 'de'}/dp/${asin.trim().toUpperCase()}` : '';
+      // Preserve existing link columns when updating (don't overwrite with empty)
+      const existingBriefingUrl = rowIndex > 0 ? (rows[rowIndex][10] || '') : '';
+      const existingOutputUrl = rowIndex > 0 ? (rows[rowIndex][11] || '') : '';
+      const existingAmazonLink = rowIndex > 0 ? (rows[rowIndex][12] || '') : '';
+      const rowData = [projectId, productName || '', brand || '', asin || '', marketplace || '', timeFormatted, hours, costUsd, costEur, timestamp, briefingUrl || existingBriefingUrl, outputUrl || existingOutputUrl, amazonLink || existingAmazonLink];
 
       if (rowIndex > 0) {
         // Update existing row (same ASIN)
-        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${rowIndex + 1}:J${rowIndex + 1}?valueInputOption=RAW`;
+        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${rowIndex + 1}:M${rowIndex + 1}?valueInputOption=RAW`;
         const updateRes = await fetch(updateUrl, {
           method: 'PUT',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -105,11 +112,11 @@ export default async function handler(req, res) {
       } else {
         // Ensure header row exists
         if (rows.length === 0) {
-          const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A1:J1?valueInputOption=RAW`;
+          const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A1:M1?valueInputOption=RAW`;
           const headerRes = await fetch(headerUrl, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ values: [['Project ID', 'Product', 'Brand', 'ASIN', 'Marketplace', 'Time', 'Hours', 'Cost (USD)', 'Cost (EUR)', 'Last Updated']] }),
+            body: JSON.stringify({ values: [['Project ID', 'Product', 'Brand', 'ASIN', 'Marketplace', 'Time', 'Hours', 'Cost (USD)', 'Cost (EUR)', 'Last Updated', 'Briefing Link', 'Output Folder', 'Amazon Link']] }),
           });
           if (!headerRes.ok) {
             const err = await headerRes.json().catch(() => ({}));
@@ -117,7 +124,7 @@ export default async function handler(req, res) {
           }
         }
         // Append new row
-        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:J:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:M:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
         const appendRes = await fetch(appendUrl, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -152,15 +159,15 @@ export default async function handler(req, res) {
               const mHours = (mergedSeconds / 3600).toFixed(2);
               const mCostUsd = (parseFloat(mHours) * 14).toFixed(2);
               const mCostEur = (parseFloat(mCostUsd) * eurRate).toFixed(2);
-              const mergedRow = [projectId, productName || '', brand || '', asin || '', marketplace || '', formatTime(mergedSeconds), mHours, mCostUsd, mCostEur, timestamp];
+              const mergedRow = [projectId, productName || '', brand || '', asin || '', marketplace || '', formatTime(mergedSeconds), mHours, mCostUsd, mCostEur, timestamp, briefingUrl || '', outputUrl || '', amazonLink];
               // Update the best row
-              const mergeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${bestIdx + 1}:J${bestIdx + 1}?valueInputOption=RAW`;
+              const mergeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${bestIdx + 1}:M${bestIdx + 1}?valueInputOption=RAW`;
               await fetch(mergeUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [mergedRow] }) });
               // Clear duplicate rows (set to empty)
               for (const di of dupeIndices) {
                 if (di === bestIdx) continue;
-                const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${di + 1}:J${di + 1}?valueInputOption=RAW`;
-                await fetch(clearUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [['', '', '', '', '', '', '', '', '', '']] }) });
+                const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${di + 1}:M${di + 1}?valueInputOption=RAW`;
+                await fetch(clearUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [['', '', '', '', '', '', '', '', '', '', '', '', '']] }) });
               }
             }
           }
