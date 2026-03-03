@@ -197,7 +197,7 @@ const buildPrompt = (asin, mp, pi, ft, productData, density, keywordData, review
   // Bestseller benchmark data
   if (keywordData?.bestseller) {
     const bs = keywordData.bestseller;
-    kwData += `\n\nKATEGORIE-BESTSELLER (#1 Benchmark):`;
+    kwData += `\n\nKEYWORD-BESTSELLER (relevantester Wettbewerber als Benchmark):`;
     kwData += `\n  ${bs.brand || "?"}: ${bs.title?.substring(0, 100) || "?"}`;
     kwData += `\n  Preis: ${bs.price || "?"} | Bewertung: ${bs.rating || "?"}★ (${bs.reviewCount || "?"} Reviews)`;
     if (bs.bsr) kwData += ` | BSR: #${bs.bsr}`;
@@ -438,7 +438,13 @@ const Err = ({ msg, onX }) => msg ? <div style={{ ...gS, padding: "12px 18px", b
 
 // ═══════ TIME TRACKER (persistent per ASIN, restores on reload, time only increases) ═══════
 function TimeTracker({ productName, brand, asin, marketplace }) {
-  const [secs, setSecs] = useState(0);
+  const lsKey = asin ? `tt_${asin.toUpperCase()}` : null;
+  // Restore from localStorage immediately (fast), then upgrade from server
+  const initSecs = () => {
+    if (!lsKey) return 0;
+    try { const v = parseInt(localStorage.getItem(lsKey) || "0"); return isNaN(v) ? 0 : v; } catch { return 0; }
+  };
+  const [secs, setSecs] = useState(initSecs);
   const [running, setRunning] = useState(false);
   const [synced, setSynced] = useState(false);
   const [syncErr, setSyncErr] = useState(false);
@@ -447,12 +453,23 @@ function TimeTracker({ productName, brand, asin, marketplace }) {
   const syncRef = useRef(null);
   const secsRef = useRef(secs);
   secsRef.current = secs;
-  // Restore saved time from server on mount (per ASIN)
+  // Save to localStorage on every change (time can only increase)
+  useEffect(() => {
+    if (!lsKey || secs <= 0) return;
+    try {
+      const prev = parseInt(localStorage.getItem(lsKey) || "0");
+      if (secs > prev) localStorage.setItem(lsKey, String(secs));
+    } catch {}
+  }, [secs, lsKey]);
+  // Restore from server on mount (may be higher than localStorage if tracked from another device/tab)
   useEffect(() => {
     if (!asin) { setRestored(true); return; }
     fetch("/api/timesheet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "get", asin }) })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.seconds > 0) setSecs(d.seconds); setRestored(true); })
+      .then(d => {
+        if (d?.seconds > 0 && d.seconds > secsRef.current) setSecs(d.seconds);
+        setRestored(true);
+      })
       .catch(() => setRestored(true));
   }, [asin]);
   useEffect(() => { if (iRef.current) clearInterval(iRef.current); if (running) { iRef.current = setInterval(() => setSecs(p => p + 1), 1000); } return () => clearInterval(iRef.current); }, [running]);
@@ -687,11 +704,11 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
                   {h10Raw && !hasH10 && <div style={{ ...gS, padding: 10, background: `${V.rose}08`, border: `1px solid ${V.rose}20` }}><span style={{ fontSize: 11, color: V.rose }}>CSV konnte nicht verarbeitet werden. Stelle sicher, dass die Datei eine "Keyword Phrase" und "Search Volume" Spalte enthält.</span></div>}
                 </div>}
               </div>
-              {/* ── BESTSELLER-ASIN (optional) ── */}
+              {/* ── KEYWORD-BESTSELLER-ASIN (optional) ── */}
               <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6, display: "block" }}>Bestseller-ASIN (optional)</label>
-                <input type="text" autoComplete="off" value={bsAsin} onChange={e => setBsAsin(e.target.value)} placeholder="ASIN des Kategorie-Bestsellers" style={inpS} />
-                <div style={{ fontSize: 10, color: V.textDim, marginTop: 4 }}>Der #1 Bestseller der Produktkategorie wird als Benchmark analysiert.</div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6, display: "block" }}>Keyword-Bestseller ASIN (optional)</label>
+                <input type="text" autoComplete="off" value={bsAsin} onChange={e => setBsAsin(e.target.value)} placeholder="ASIN des relevantesten Bestsellers" style={inpS} />
+                <div style={{ fontSize: 10, color: V.textDim, marginTop: 4 }}>Der Bestseller für das relevanteste Keyword deines Produkts (nicht Kategorie-Bestseller). Wird als Benchmark analysiert.</div>
               </div>
               <button onClick={() => ok && !loading && onStart(asin, mp, pi, ft, refPayload, imageCount, h10Filtered, bsAsin.trim() || null)} disabled={!ok || loading} style={{ padding: "14px 24px", borderRadius: 14, border: "none", background: loading ? `${V.violet}80` : ok ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : "rgba(0,0,0,0.08)", color: ok || loading ? "#fff" : V.textDim, fontSize: 14, fontWeight: 800, cursor: ok && !loading ? "pointer" : "default", fontFamily: FN, boxShadow: ok ? `0 4px 20px ${V.violet}35` : "none" }}>{loading ? "Analyse läuft..." : `${imageCount}-Bild Analyse starten${hasRef ? " (mit Referenz)" : ""}${hasH10 ? " (mit Keywords)" : ""}`}</button>
               {loading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 10, height: 10, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: 99, animation: "spin 0.7s linear infinite" }} /><span style={{ fontSize: 12, color: V.violet, fontWeight: 600 }}>{status}</span></div>}
@@ -709,25 +726,34 @@ function OverwriteWarn({ name, onOk, onNo }) {
 }
 
 // ═══════ BILD-BRIEFING ═══════
-function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, setBdgSel }) {
+function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, setBdgSel, onEditText }) {
   const [sel, setSel] = useState(0);
+  const [editField, setEditField] = useState(null); // { type: 'hl'|'sub'|'bul', idx: number }
+  const [editVal, setEditVal] = useState("");
   if (!D.images?.length) return null;
   const img = D.images[sel], te = img?.texts;
   const hls = te?.headlines || (te?.headline ? [te.headline] : []);
   const ci = hlC[img.id] ?? 0, curHl = hls[ci] || hls[0] || "";
-  // Subheadlines: support both old (single string) and new (array) format
   const subs = te ? (Array.isArray(te.subheadlines) ? te.subheadlines : (te.subheadline ? [te.subheadline] : [])) : [];
-  const si = shC[img.id] ?? 0; // -1 = keine subheadline
+  const si = shC[img.id] ?? 0;
   const curSh = si === -1 ? "" : (subs[si] || subs[0] || te?.subheadline || "");
-  // Bullet selection state
   const bKey = img.id;
   const bullets = te?.bullets || [];
   const bSel = bulSel[bKey] || bullets.map(() => true);
   const selectedBullets = bullets.filter((_, i) => bSel[i]);
-  // Badge selection state (include/exclude)
   const allBadges = [...(te?.badges || []), ...(te?.callouts || [])];
-  const badgeOn = bdgSel[img.id] !== false; // default: included
+  const badgeOn = bdgSel[img.id] !== false;
   const allTxt = te ? [curHl, curSh, ...selectedBullets, ...(badgeOn ? allBadges : [])].filter(Boolean).join("\n") : "";
+  // Inline editing helpers
+  const startEdit = (type, idx, val) => { setEditField({ type, idx }); setEditVal(val); };
+  const commitEdit = () => {
+    if (!editField || !onEditText) { setEditField(null); return; }
+    const { type, idx } = editField;
+    onEditText(sel, type, idx, editVal);
+    setEditField(null);
+  };
+  const cancelEdit = () => setEditField(null);
+  const isEditing = (type, idx) => editField?.type === type && editField?.idx === idx;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>{D.images.map((im, i) => {
@@ -752,18 +778,18 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             {/* HEADLINES */}
             <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.orange}>HEADLINE-VARIANTEN</Pill><CopyBtn text={curHl} /></div>
-              {hls.map((h, i) => { const ov = h.length > MAX_HL, act = ci === i; const labels = ["USP", "Kundenvorteil", "Kreativ"]; const labelColors = [V.orange, V.emerald, V.violet]; return <div key={i} onClick={() => setHlC(p => ({ ...p, [img.id]: i }))} style={{ padding: "10px 14px", borderRadius: 10, border: act ? `2px solid ${V.violet}` : `1px solid ${ov ? V.rose + "40" : "rgba(0,0,0,0.06)"}`, background: act ? `${V.violet}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.violet}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.violet }} />}</div><span style={{ fontSize: 15, fontWeight: 800, color: V.ink }}>{h}</span></div><div style={{ display: "flex", gap: 6, alignItems: "center" }}><span style={{ fontSize: 9, color: labelColors[i] || V.textDim, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: `${labelColors[i] || V.textDim}12` }}>{labels[i] || ""}</span><span style={{ fontSize: 10, fontWeight: 700, color: ov ? V.rose : V.textDim }}>{h.length}/{MAX_HL}</span></div></div>; })}
+              {hls.map((h, i) => { const ov = h.length > MAX_HL, act = ci === i; const labels = ["USP", "Kundenvorteil", "Kreativ"]; const labelColors = [V.orange, V.emerald, V.violet]; return <div key={i} onClick={() => setHlC(p => ({ ...p, [img.id]: i }))} style={{ padding: "10px 14px", borderRadius: 10, border: act ? `2px solid ${V.violet}` : `1px solid ${ov ? V.rose + "40" : "rgba(0,0,0,0.06)"}`, background: act ? `${V.violet}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.violet}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.violet }} />}</div>{isEditing("hl", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 15, fontWeight: 800, padding: "4px 8px", flex: 1 }} /> : <span onDoubleClick={e => { e.stopPropagation(); startEdit("hl", i, h); }} style={{ fontSize: 15, fontWeight: 800, color: V.ink }} title="Doppelklick zum Bearbeiten">{h}</span>}</div><div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}><span style={{ fontSize: 9, color: labelColors[i] || V.textDim, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: `${labelColors[i] || V.textDim}12` }}>{labels[i] || ""}</span><span style={{ fontSize: 10, fontWeight: 700, color: ov ? V.rose : V.textDim }}>{h.length}/{MAX_HL}</span></div></div>; })}
             </div>
             {/* SUBHEADLINES */}
             {subs.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.blue}>SUBHEADLINE-VARIANTEN</Pill><CopyBtn text={curSh} /></div>
-              {subs.map((s, i) => { const act = si === i || (si === undefined && i === 0); return <div key={i} onClick={() => setShC(p => ({ ...p, [img.id]: i }))} style={{ padding: "10px 14px", borderRadius: 10, border: act ? `2px solid ${V.blue}` : "1px solid rgba(0,0,0,0.06)", background: act ? `${V.blue}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.blue}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.blue }} />}</div><span style={{ fontSize: 13, fontWeight: 600, color: V.ink }}>{s}</span></div></div>; })}
+              {subs.map((s, i) => { const act = si === i || (si === undefined && i === 0); return <div key={i} onClick={() => setShC(p => ({ ...p, [img.id]: i }))} style={{ padding: "10px 14px", borderRadius: 10, border: act ? `2px solid ${V.blue}` : "1px solid rgba(0,0,0,0.06)", background: act ? `${V.blue}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.blue}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.blue }} />}</div>{isEditing("sub", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 13, fontWeight: 600, padding: "4px 8px", flex: 1 }} /> : <span onDoubleClick={e => { e.stopPropagation(); startEdit("sub", i, s); }} style={{ fontSize: 13, fontWeight: 600, color: V.ink }} title="Doppelklick zum Bearbeiten">{s}</span>}</div></div>; })}
               <div onClick={() => setShC(p => ({ ...p, [img.id]: -1 }))} style={{ padding: "10px 14px", borderRadius: 10, border: si === -1 ? `2px solid ${V.blue}` : "1px solid rgba(0,0,0,0.06)", background: si === -1 ? `${V.blue}08` : "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: si === -1 ? `2px solid ${V.blue}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{si === -1 && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.blue }} />}</div><span style={{ fontSize: 13, fontWeight: 600, color: V.textDim, fontStyle: "italic" }}>Keine Subheadline</span></div>
             </div>}
             {/* Legacy single subheadline fallback */}
             {subs.length === 0 && te.subheadline && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><Pill c={V.blue}>SUBHEADLINE</Pill><CopyBtn text={te.subheadline} /></div><div style={{ fontSize: 13, color: V.textMed, lineHeight: 1.6 }}>{te.subheadline}</div></div>}
             {/* BULLETS */}
-            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; return <div key={i} onClick={() => { const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ display: "flex", gap: 10, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: on ? `${V.teal}06` : "transparent", cursor: "pointer", opacity: on ? 1 : 0.45, transition: "all 0.15s" }}><div style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${V.teal}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>{on && <span style={{ color: V.teal, fontSize: 12, fontWeight: 800 }}>✓</span>}</div><span style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A">$1</b>') }} /></div>; })}</div>}
+            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; return <div key={i} onClick={() => { const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ display: "flex", gap: 10, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: on ? `${V.teal}06` : "transparent", cursor: "pointer", opacity: on ? 1 : 0.45, transition: "all 0.15s" }}><div style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${V.teal}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>{on && <span style={{ color: V.teal, fontSize: 12, fontWeight: 800 }}>✓</span>}</div>{isEditing("bul", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", flex: 1 }} /> : <span onDoubleClick={e => { e.stopPropagation(); startEdit("bul", i, b.replace(/\*\*(.+?)\*\*/g, "$1")); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A">$1</b>') }} title="Doppelklick zum Bearbeiten" />}</div>; })}</div>}
             {/* BADGE (max 1, selectable) */}
             {allBadges.length > 0 && <div onClick={() => setBdgSel(p => ({ ...p, [img.id]: !badgeOn }))} style={{ ...gS, padding: 14, marginBottom: 10, cursor: "pointer", border: badgeOn ? `1.5px solid ${V.amber}40` : "1.5px solid rgba(0,0,0,0.04)", opacity: badgeOn ? 1 : 0.45, transition: "all 0.15s" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.amber}>BADGE</Pill><div style={{ width: 18, height: 18, borderRadius: 4, border: badgeOn ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{badgeOn && <span style={{ color: V.amber, fontSize: 12, fontWeight: 800 }}>✓</span>}</div></div><div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>{allBadges.map((b, i) => <span key={i} style={{ padding: "5px 12px", borderRadius: 8, background: `${V.amber}12`, border: `1px solid ${V.amber}20`, fontSize: 12, fontWeight: 800, color: V.amber }}>{b}</span>)}</div></div>}
             {/* FOOTNOTES */}
@@ -801,16 +827,15 @@ function ReviewsTab({ D }) {
 // ═══════ LISTING QUALITY SCORE ═══════
 function calcLQS(pd) {
   if (!pd || (!pd.title && !pd.bullets)) return null;
+  const titleLen = pd.title?.length || 0;
+  const avgBulletLen = pd.bullets?.length > 0 ? pd.bullets.reduce((a, b) => a + b.length, 0) / pd.bullets.length : 0;
   const checks = [
     { label: "Titel vorhanden", ok: !!pd.title, weight: 1 },
-    { label: "Titel > 80 Zeichen", ok: (pd.title?.length || 0) >= 80, weight: 1 },
-    { label: "Titel < 200 Zeichen", ok: (pd.title?.length || 0) <= 200, weight: 0.5 },
+    { label: "Titel 150–200 Zeichen", ok: titleLen >= 150 && titleLen <= 200, weight: 1.5 },
     { label: "5 Bullet Points", ok: (pd.bullets?.length || 0) >= 5, weight: 1.5 },
-    { label: "Bullets > 100 Zeichen avg.", ok: pd.bullets?.length > 0 && pd.bullets.reduce((a, b) => a + b.length, 0) / pd.bullets.length > 100, weight: 1 },
+    { label: "Bullets 150–200 Zeichen avg.", ok: avgBulletLen >= 150 && avgBulletLen <= 200, weight: 1.5 },
     { label: "Beschreibung vorhanden", ok: !!pd.description && pd.description.length > 50, weight: 1 },
-    { label: "Preis angegeben", ok: !!pd.price, weight: 0.5 },
     { label: "Marke angegeben", ok: !!pd.brand, weight: 0.5 },
-    { label: "Bewertungen vorhanden", ok: (pd.reviewCount || 0) > 0, weight: 1 },
     { label: "Rating >= 4.0", ok: parseFloat(pd.rating || 0) >= 4.0, weight: 1 },
     { label: "7+ Bilder", ok: (pd.imageCount || 0) >= 7, weight: 1.5 },
     { label: "Inkl. Video", ok: !!pd.hasVideo, weight: 0.5 },
@@ -945,7 +970,8 @@ function DesignerView({ D, selections, briefingId, serverVersion }) {
         }
       } catch {}
     };
-    const iv = setInterval(check, 30000);
+    check(); // Check immediately on mount
+    const iv = setInterval(check, 15000);
     return () => clearInterval(iv);
   }, [briefingId, D]);
   // Detect changes from previous version (on initial load)
@@ -1287,6 +1313,19 @@ export default function App() {
     }
     setShareLoading(false);
   }, [data, hlC, shC, bulSel, bdgSel, inputUrl, outputUrl, sharedBriefingId]);
+  // Auto-sync changes to designer link whenever data/selections change (debounced 3s)
+  const autoSyncRef = useRef(null);
+  useEffect(() => {
+    if (!sharedBriefingId || !data) return;
+    if (autoSyncRef.current) clearTimeout(autoSyncRef.current);
+    autoSyncRef.current = setTimeout(async () => {
+      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } }, _updateId: sharedBriefingId };
+      try {
+        await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      } catch {}
+    }, 3000);
+    return () => clearTimeout(autoSyncRef.current);
+  }, [data, hlC, shC, bulSel, bdgSel, inputUrl, outputUrl, sharedBriefingId]);
   const go = useCallback(async (a, m, p, f, refData, imgCount, h10Keywords, bestsellerAsin) => {
     setL(true); setE(null); setSt("Starte...");
     try {
@@ -1385,7 +1424,23 @@ export default function App() {
             <div style={{ fontSize: 10, color: V.textDim }}>Diese Links werden im Designer-Export sichtbar. Klicke "Designer-Link" um den Link mit den aktuellen Einstellungen neu zu generieren.</div>
           </div>
         </GC>}
-        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} />}
+        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} onEditText={(imgIdx, type, textIdx, newVal) => {
+          setData(prev => {
+            const next = JSON.parse(JSON.stringify(prev));
+            const te = next.images[imgIdx]?.texts;
+            if (!te) return prev;
+            if (type === "hl") {
+              if (te.headlines) te.headlines[textIdx] = newVal;
+              else te.headline = newVal;
+            } else if (type === "sub") {
+              if (te.subheadlines) te.subheadlines[textIdx] = newVal;
+              else te.subheadline = newVal;
+            } else if (type === "bul") {
+              if (te.bullets) te.bullets[textIdx] = newVal;
+            }
+            return next;
+          });
+        }} />}
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
       </div>
