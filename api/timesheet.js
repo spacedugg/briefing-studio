@@ -127,6 +127,44 @@ export default async function handler(req, res) {
           const err = await appendRes.json().catch(() => ({}));
           return res.status(500).json({ error: `Failed to append row: ${err.error?.message || appendRes.status}` });
         }
+
+        // Post-append dedup: if another tab simultaneously created a row for the same ASIN,
+        // merge them (keep the one with the highest hours, delete the other)
+        try {
+          const reReadRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${token}` } });
+          if (reReadRes.ok) {
+            const reData = await reReadRes.json();
+            const allRows = reData.values || [];
+            const targetAsin = asin.trim().toUpperCase();
+            const dupeIndices = [];
+            for (let i = 1; i < allRows.length; i++) {
+              if ((allRows[i][3] || '').trim().toUpperCase() === targetAsin) dupeIndices.push(i);
+            }
+            if (dupeIndices.length > 1) {
+              // Find the row with the highest hours
+              let bestIdx = dupeIndices[0], bestHours = 0;
+              for (const di of dupeIndices) {
+                const h = parseFloat(allRows[di][6] || '0');
+                if (h > bestHours) { bestHours = h; bestIdx = di; }
+              }
+              // Update the best row with the merged (max) hours, delete the rest
+              const mergedSeconds = Math.max(effectiveSeconds, Math.round(bestHours * 3600));
+              const mHours = (mergedSeconds / 3600).toFixed(2);
+              const mCostUsd = (parseFloat(mHours) * 14).toFixed(2);
+              const mCostEur = (parseFloat(mCostUsd) * eurRate).toFixed(2);
+              const mergedRow = [projectId, productName || '', brand || '', asin || '', marketplace || '', formatTime(mergedSeconds), mHours, mCostUsd, mCostEur, timestamp];
+              // Update the best row
+              const mergeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${bestIdx + 1}:J${bestIdx + 1}?valueInputOption=RAW`;
+              await fetch(mergeUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [mergedRow] }) });
+              // Clear duplicate rows (set to empty)
+              for (const di of dupeIndices) {
+                if (di === bestIdx) continue;
+                const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${di + 1}:J${di + 1}?valueInputOption=RAW`;
+                await fetch(clearUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [['', '', '', '', '', '', '', '', '', '']] }) });
+              }
+            }
+          }
+        } catch { /* dedup is best-effort, don't fail the request */ }
       }
 
       return res.status(200).json({ success: true, hours, costUsd, costEur, eurRate, seconds: effectiveSeconds });
