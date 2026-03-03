@@ -1010,13 +1010,13 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
               const ptIdx = newBriefing.images.slice(0, idx + 1).filter(im => !(im.id || "").toLowerCase().startsWith("main")).length;
               return `PT.${String(ptIdx).padStart(2, "0")}`;
             });
-            parts.push(`Bilder geändert: ${changedNames.join(", ")}`);
+            parts.push(`Images changed: ${changedNames.join(", ")}`);
           }
-          if (selChanges.includes("hlC") || selChanges.includes("shC")) parts.push("Textauswahl angepasst");
-          if (selChanges.includes("bulSel")) parts.push("Bullet-Auswahl geändert");
-          if (selChanges.includes("bdgSel")) parts.push("Badge-Auswahl geändert");
-          if (selChanges.includes("links")) parts.push("Links aktualisiert");
-          const timeStr = new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+          if (selChanges.includes("hlC") || selChanges.includes("shC")) parts.push("Text selections updated");
+          if (selChanges.includes("bulSel")) parts.push("Bullet selection changed");
+          if (selChanges.includes("bdgSel")) parts.push("Badge selection changed");
+          if (selChanges.includes("links")) parts.push("Links updated");
+          const timeStr = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
           // Auto-apply new data
           if (newBriefing) setLiveD(newBriefing);
           if (newSelections) setLiveSelections(newSelections);
@@ -1051,7 +1051,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
         return `PT.${String(ptIdx).padStart(2, "0")}`;
       });
       setChangedFields(changes);
-      setUpdateBanner({ text: `Bilder geändert seit letzter Version: ${changedNames.join(", ")}`, time: new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) });
+      setUpdateBanner({ text: `Images changed since last version: ${changedNames.join(", ")}`, time: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) });
     }
   }, []);
   if (!D?.images?.length) return null;
@@ -1113,12 +1113,12 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
         {updateBanner && <div style={{ ...glass, padding: "16px 22px", marginBottom: 18, background: `${V.orange}10`, border: `2px solid ${V.orange}40`, borderRadius: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: V.orange, marginBottom: 6 }}>Achtung — Briefing wurde gerade aktualisiert</div>
-              <div style={{ fontSize: 13, color: V.text, lineHeight: 1.6, marginBottom: 4 }}>Es wurden soeben Anpassungen am Briefing vorgenommen. Die Änderungen sind bereits automatisch übernommen und unten farblich hervorgehoben.</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: V.orange, marginBottom: 6 }}>Heads up — Briefing has just been updated</div>
+              <div style={{ fontSize: 13, color: V.text, lineHeight: 1.6, marginBottom: 4 }}>Changes have been made to this briefing. The updates are already applied automatically and highlighted below.</div>
               <div style={{ fontSize: 12, color: V.textMed, marginTop: 6 }}>{updateBanner.text}</div>
-              <div style={{ fontSize: 11, color: V.textDim, marginTop: 4 }}>Aktualisiert um {updateBanner.time} Uhr</div>
+              <div style={{ fontSize: 11, color: V.textDim, marginTop: 4 }}>Updated at {updateBanner.time}</div>
             </div>
-            <button onClick={() => { setUpdateBanner(null); setChangedFields(new Set()); }} style={{ ...gS, padding: "8px 14px", fontSize: 11, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8, flexShrink: 0 }}>Verstanden</button>
+            <button onClick={() => { setUpdateBanner(null); setChangedFields(new Set()); }} style={{ ...gS, padding: "8px 14px", fontSize: 11, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8, flexShrink: 0 }}>Got it</button>
           </div>
         </div>}
         {/* Header */}
@@ -1144,7 +1144,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
           const isMain = (img.id || "").toLowerCase().startsWith("main");
           const isChanged = changedFields.has(idx);
           return <GC key={idx} style={{ marginBottom: 18, border: isChanged ? `2px solid ${V.orange}50` : undefined }}>
-            {isChanged && <div style={{ padding: "8px 22px", background: `${V.orange}10`, borderBottom: `1px solid ${V.orange}20`, fontSize: 12, fontWeight: 700, color: V.orange }}>Dieses Bild wurde in der letzten Aktualisierung geändert</div>}
+            {isChanged && <div style={{ padding: "8px 22px", background: `${V.orange}10`, borderBottom: `1px solid ${V.orange}20`, fontSize: 12, fontWeight: 700, color: V.orange }}>This image was changed in the latest update</div>}
             <div style={{ padding: "16px 24px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                 <span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{imgName(idx)}</span>
