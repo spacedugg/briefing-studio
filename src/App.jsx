@@ -10,6 +10,18 @@ const Orbs = () => <div style={{ position: "fixed", inset: 0, pointerEvents: "no
 const inpS = { width: "100%", padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.6)", fontFamily: FN, fontSize: 13, color: V.ink, outline: "none", boxSizing: "border-box" };
 
 const HK = "briefing_history", MH = 5;
+// ═══════ SHARED HELPERS ═══════
+const strip = s => (s || "").replace(/\*\*(.+?)\*\*/g, "$1");
+const md2html = s => (s || "").replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+const html2md = s => (s || "").replace(/<b>(.*?)<\/b>/gi, '**$1**').replace(/<strong>(.*?)<\/strong>/gi, '**$1**').replace(/<[^>]+>/g, '');
+const getAllBadges = te => [...(te?.badges || []), ...(te?.callouts || [])];
+const getSelectedBadge = (bdgSel, imgId, allBadges) => {
+  const v = bdgSel?.[imgId];
+  if (v === false) return { idx: -1, badge: null }; // backward compat: old boolean false = no badge
+  const idx = typeof v === "number" ? v : (allBadges.length > 0 ? 0 : -1);
+  return { idx, badge: idx >= 0 && idx < allBadges.length ? allBadges[idx] : null };
+};
+const fmtDate = (d) => { try { return new Date(d + "Z").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return d || ""; } };
 function loadH() { try { return JSON.parse(localStorage.getItem(HK) || "[]"); } catch { return []; } }
 function saveH(d, asin) { const id = Date.now().toString(36) + Math.random().toString(36).substr(2, 4); const h = loadH(); h.unshift({ id, name: d.product?.name || "?", brand: d.product?.brand || "", asin: asin || d.product?.sku || "", date: new Date().toLocaleDateString("de-DE"), data: d }); if (h.length > MH) h.pop(); try { localStorage.setItem(HK, JSON.stringify(h)); } catch {} return id; }
 function encodeBriefing(d) { try { const json = JSON.stringify(d); const bytes = new TextEncoder().encode(json); const cs = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip")); return new Response(cs).arrayBuffer().then(buf => { let b = ""; const u8 = new Uint8Array(buf); for (let i = 0; i < u8.length; i++) b += String.fromCharCode(u8[i]); return btoa(b).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }); } catch { return Promise.resolve(null); } }
@@ -747,7 +759,6 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
 
 // ═══════ SERVER HISTORY ═══════
 function ServerHistory({ items, loading, onLoad, onClose }) {
-  const fmtDate = (d) => { try { return new Date(d + "Z").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return d || ""; } };
   return <GC style={{ padding: 0, marginBottom: 14 }}>
     <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Alle Briefings</Lbl><button onClick={onClose} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div>
     <div style={{ padding: "6px 10px", maxHeight: 400, overflowY: "auto" }}>
@@ -787,10 +798,8 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
   const bullets = te?.bullets || [];
   const bSel = bulSel[bKey] || bullets.map(() => true);
   const selectedBullets = bullets.filter((_, i) => bSel[i]);
-  const allBadges = [...(te?.badges || []), ...(te?.callouts || [])];
-  // Badge: index-based selection (number = selected index, undefined = 0, -1 = none)
-  const bdgIdx = typeof bdgSel[img.id] === "number" ? bdgSel[img.id] : (allBadges.length > 0 ? 0 : -1);
-  const selectedBadge = bdgIdx >= 0 && bdgIdx < allBadges.length ? allBadges[bdgIdx] : null;
+  const allBadges = getAllBadges(te);
+  const { idx: bdgIdx, badge: selectedBadge } = getSelectedBadge(bdgSel, img.id, allBadges);
   const allTxt = te ? [curHl, curSh, ...selectedBullets, ...(selectedBadge ? [selectedBadge] : [])].filter(Boolean).join("\n") : "";
   const isOff = imgDisabled?.[img.id];
   // Inline editing helpers
@@ -803,9 +812,6 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
   };
   const cancelEdit = () => setEditField(null);
   const isEditing = (type, idx) => editField?.type === type && editField?.idx === idx;
-  // Rich text helper: convert markdown bold to HTML and back
-  const md2html = s => (s || "").replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-  const html2md = s => (s || "").replace(/<b>(.*?)<\/b>/gi, '**$1**').replace(/<strong>(.*?)<\/strong>/gi, '**$1**').replace(/<[^>]+>/g, '');
   // Reference image upload
   const handleRefUpload = (e) => {
     const files = Array.from(e.target.files || []);
@@ -860,7 +866,7 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             {/* Legacy single subheadline fallback */}
             {subs.length === 0 && te.subheadline && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><Pill c={V.blue}>SUBHEADLINE</Pill><CopyBtn text={te.subheadline} /></div><div style={{ fontSize: 13, color: V.textMed, lineHeight: 1.6 }}>{te.subheadline}</div></div>}
             {/* BULLETS — with drag-and-drop reordering + rich text editing */}
-            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} draggable onDragStart={() => setDragIdx(i)} onDragEnd={() => { if (dragIdx !== null && dragOver !== null && dragIdx !== dragOver) onEditText(sel, "reorder_bullets", dragIdx, dragOver); setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${V.teal}06` : "transparent", cursor: "grab", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
+            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} draggable onDragStart={() => setDragIdx(i)} onDragEnd={() => { if (dragIdx !== null && dragOver !== null && dragIdx !== dragOver) onEditText(sel, "reorder_bullets", dragIdx, dragOver); setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); if (dragOver !== i) setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${V.teal}06` : "transparent", cursor: "grab", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, cursor: "grab", padding: "4px 2px", color: V.textDim, fontSize: 10, userSelect: "none" }} title="Ziehen zum Verschieben">⋮⋮</div>
               <div onClick={e => { e.stopPropagation(); const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${V.teal}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, cursor: "pointer" }}>{on && <span style={{ color: V.teal, fontSize: 12, fontWeight: 800 }}>✓</span>}</div>
               <div style={{ flex: 1, minWidth: 0 }}>{isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div contentEditable suppressContentEditableWarning dangerouslySetInnerHTML={{ __html: editVal }} onInput={e => setEditVal(e.currentTarget.innerHTML)} onBlur={() => { onEditText(sel, "bul", i, html2md(editVal)); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); if (e.key === "b" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.execCommand("bold"); } }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", minHeight: 28, outline: "none", lineHeight: 1.6 }} /><div style={{ fontSize: 9, color: V.textDim }}>Strg+B = Fett · Esc = Abbrechen</div></div> : <span onClick={e => { e.stopPropagation(); startEdit("bul", i, md2html(b)); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6, cursor: "text", display: "block" }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A">$1</b>') }} title="Klick zum Bearbeiten" />}</div>
@@ -1008,10 +1014,8 @@ function genBrief(D, hlC, shC, bulSel, bdgSel, imgDisabled) {
       const bullets = im.texts.bullets || [];
       const bSel = bulSel?.[im.id] || bullets.map(() => true);
       const selBullets = bullets.filter((_, i) => bSel[i]);
-      const allBadges = [...(im.texts.badges || []), ...(im.texts.callouts || [])];
-      const bIdx = typeof bdgSel?.[im.id] === "number" ? bdgSel[im.id] : (allBadges.length > 0 ? 0 : -1);
-      const selBadge = bIdx >= 0 && bIdx < allBadges.length ? allBadges[bIdx] : null;
-      const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1");
+      const allBadges = getAllBadges(im.texts);
+      const { badge: selBadge } = getSelectedBadge(bdgSel, im.id, allBadges);
       t += "\nTEXTS (DE):\n";
       if (h.length) t += `  Headline: "${h[ci] || h[0]}"\n`;
       if (si !== -1 && subs.length > 0) { t += `  Subheadline: "${subs[si] || subs[0]}"\n`; }
@@ -1125,7 +1129,6 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
     }
   }, []);
   if (!D?.images?.length) return null;
-  const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1");
   const asin = D.product?.sku || "";
   const ICopy = ({ text, children, style: s = {} }) => {
     const [ok, set] = useState(false);
@@ -1141,9 +1144,8 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
     const si = shC[img.id] ?? 0;
     const bullets = te?.bullets || [];
     const bSel = bulSel[img.id] || bullets.map(() => true);
-    const allBadges = [...(te?.badges || []), ...(te?.callouts || [])];
-    const bIdx = typeof bdgSel[img.id] === "number" ? bdgSel[img.id] : (allBadges.length > 0 ? 0 : -1);
-    const selBadge = bIdx >= 0 && bIdx < allBadges.length ? allBadges[bIdx] : null;
+    const allBadges = getAllBadges(te);
+    const { badge: selBadge } = getSelectedBadge(bdgSel, img.id, allBadges);
     return {
       headline: hls[ci] || hls[0] || "",
       subheadline: si === -1 ? "" : (subs[si] || subs[0] || te?.subheadline || ""),
