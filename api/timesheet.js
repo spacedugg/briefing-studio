@@ -1,6 +1,15 @@
 // Google Sheets time tracking API
 // Stores designer time data in a shared Google Sheet
 // Required env vars: GOOGLE_SHEETS_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY
+//
+// Column layout (A-M):
+// A: Project ID | B: Product | C: Brand | D: ASIN | E: Amazon Link | F: Marketplace
+// G: Briefing Link | H: Output Folder | I: Time | J: Hours | K: Cost (USD)
+// L: Cost (EUR) | M: Last Updated
+
+const HEADERS = ['Project ID', 'Product', 'Brand', 'ASIN', 'Amazon Link', 'Marketplace', 'Briefing Link', 'Output Folder', 'Time', 'Hours', 'Cost (USD)', 'Cost (EUR)', 'Last Updated'];
+const COL_COUNT = HEADERS.length; // 13 = A-M
+const COL = { asin: 3, amazonLink: 4, marketplace: 5, briefingUrl: 6, outputUrl: 7, hours: 9 };
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -15,7 +24,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Google Sheets credentials not configured. Set GOOGLE_SHEETS_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY in env.' });
   }
 
-  const { action, productName, brand, asin, marketplace, seconds } = req.body;
+  const { action, productName, brand, asin, marketplace, seconds, briefingUrl, outputUrl } = req.body;
   if (!action) return res.status(400).json({ error: 'Missing action' });
 
   try {
@@ -23,7 +32,7 @@ export default async function handler(req, res) {
     const sheetName = await getFirstSheetName(GOOGLE_SHEETS_ID, token);
 
     // Read all rows once (used by both actions)
-    const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:J`;
+    const readUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:M`;
     const readRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${token}` } });
     if (!readRes.ok) {
       const err = await readRes.json().catch(() => ({}));
@@ -36,7 +45,7 @@ export default async function handler(req, res) {
     const findByAsin = (targetAsin) => {
       if (!targetAsin) return -1;
       for (let i = 1; i < rows.length; i++) {
-        if ((rows[i][3] || '').trim().toUpperCase() === targetAsin.trim().toUpperCase()) return i;
+        if ((rows[i][COL.asin] || '').trim().toUpperCase() === targetAsin.trim().toUpperCase()) return i;
       }
       return -1;
     };
@@ -47,8 +56,7 @@ export default async function handler(req, res) {
       const rowIndex = findByAsin(asin);
       if (rowIndex > 0) {
         const row = rows[rowIndex];
-        // Column G (index 6) = hours as decimal
-        const storedHours = parseFloat(row[6] || '0');
+        const storedHours = parseFloat(row[COL.hours] || '0');
         const storedSeconds = Math.round(storedHours * 3600);
         return res.status(200).json({ success: true, seconds: storedSeconds });
       }
@@ -64,7 +72,7 @@ export default async function handler(req, res) {
       // If row exists, enforce time can only increase
       let effectiveSeconds = seconds;
       if (rowIndex > 0) {
-        const storedHours = parseFloat(rows[rowIndex][6] || '0');
+        const storedHours = parseFloat(rows[rowIndex][COL.hours] || '0');
         const storedSeconds = Math.round(storedHours * 3600);
         effectiveSeconds = Math.max(seconds, storedSeconds);
       }
@@ -88,11 +96,20 @@ export default async function handler(req, res) {
 
       // Use ASIN as the project ID for stable identification
       const projectId = asin.trim().toUpperCase();
-      const rowData = [projectId, productName || '', brand || '', asin || '', marketplace || '', timeFormatted, hours, costUsd, costEur, timestamp];
+      // Build Amazon product link from marketplace + ASIN
+      const mpDomain = (marketplace || 'Amazon.de').replace(/^Amazon\.?/i, '').toLowerCase() || 'de';
+      const amazonLink = asin ? `https://www.amazon.${mpDomain === 'com' ? 'com' : mpDomain || 'de'}/dp/${asin.trim().toUpperCase()}` : '';
+      // Preserve existing link columns when updating (don't overwrite with empty)
+      const existingBriefingUrl = rowIndex > 0 ? (rows[rowIndex][COL.briefingUrl] || '') : '';
+      const existingOutputUrl = rowIndex > 0 ? (rows[rowIndex][COL.outputUrl] || '') : '';
+      const existingAmazonLink = rowIndex > 0 ? (rows[rowIndex][COL.amazonLink] || '') : '';
+
+      // Row order: Project ID, Product, Brand, ASIN, Amazon Link, Marketplace, Briefing Link, Output Folder, Time, Hours, Cost USD, Cost EUR, Last Updated
+      const rowData = [projectId, productName || '', brand || '', asin || '', amazonLink || existingAmazonLink, marketplace || '', briefingUrl || existingBriefingUrl, outputUrl || existingOutputUrl, timeFormatted, hours, costUsd, costEur, timestamp];
 
       if (rowIndex > 0) {
         // Update existing row (same ASIN)
-        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${rowIndex + 1}:J${rowIndex + 1}?valueInputOption=RAW`;
+        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${rowIndex + 1}:M${rowIndex + 1}?valueInputOption=RAW`;
         const updateRes = await fetch(updateUrl, {
           method: 'PUT',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -105,11 +122,11 @@ export default async function handler(req, res) {
       } else {
         // Ensure header row exists
         if (rows.length === 0) {
-          const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A1:J1?valueInputOption=RAW`;
+          const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A1:M1?valueInputOption=RAW`;
           const headerRes = await fetch(headerUrl, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ values: [['Project ID', 'Product', 'Brand', 'ASIN', 'Marketplace', 'Time', 'Hours', 'Cost (USD)', 'Cost (EUR)', 'Last Updated']] }),
+            body: JSON.stringify({ values: [HEADERS] }),
           });
           if (!headerRes.ok) {
             const err = await headerRes.json().catch(() => ({}));
@@ -117,7 +134,7 @@ export default async function handler(req, res) {
           }
         }
         // Append new row
-        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:J:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:M:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
         const appendRes = await fetch(appendUrl, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -138,13 +155,13 @@ export default async function handler(req, res) {
             const targetAsin = asin.trim().toUpperCase();
             const dupeIndices = [];
             for (let i = 1; i < allRows.length; i++) {
-              if ((allRows[i][3] || '').trim().toUpperCase() === targetAsin) dupeIndices.push(i);
+              if ((allRows[i][COL.asin] || '').trim().toUpperCase() === targetAsin) dupeIndices.push(i);
             }
             if (dupeIndices.length > 1) {
               // Find the row with the highest hours
               let bestIdx = dupeIndices[0], bestHours = 0;
               for (const di of dupeIndices) {
-                const h = parseFloat(allRows[di][6] || '0');
+                const h = parseFloat(allRows[di][COL.hours] || '0');
                 if (h > bestHours) { bestHours = h; bestIdx = di; }
               }
               // Update the best row with the merged (max) hours, delete the rest
@@ -152,15 +169,16 @@ export default async function handler(req, res) {
               const mHours = (mergedSeconds / 3600).toFixed(2);
               const mCostUsd = (parseFloat(mHours) * 14).toFixed(2);
               const mCostEur = (parseFloat(mCostUsd) * eurRate).toFixed(2);
-              const mergedRow = [projectId, productName || '', brand || '', asin || '', marketplace || '', formatTime(mergedSeconds), mHours, mCostUsd, mCostEur, timestamp];
+              const mergedRow = [projectId, productName || '', brand || '', asin || '', amazonLink, marketplace || '', briefingUrl || '', outputUrl || '', formatTime(mergedSeconds), mHours, mCostUsd, mCostEur, timestamp];
               // Update the best row
-              const mergeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${bestIdx + 1}:J${bestIdx + 1}?valueInputOption=RAW`;
+              const mergeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${bestIdx + 1}:M${bestIdx + 1}?valueInputOption=RAW`;
               await fetch(mergeUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [mergedRow] }) });
               // Clear duplicate rows (set to empty)
+              const emptyRow = new Array(COL_COUNT).fill('');
               for (const di of dupeIndices) {
                 if (di === bestIdx) continue;
-                const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${di + 1}:J${di + 1}?valueInputOption=RAW`;
-                await fetch(clearUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [['', '', '', '', '', '', '', '', '', '']] }) });
+                const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${di + 1}:M${di + 1}?valueInputOption=RAW`;
+                await fetch(clearUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [emptyRow] }) });
               }
             }
           }

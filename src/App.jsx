@@ -438,7 +438,7 @@ const Err = ({ msg, onX }) => msg ? <div style={{ ...gS, padding: "12px 18px", b
 const AsinNotFoundErr = ({ onReset }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }}><div style={{ ...glass, maxWidth: 440, width: "100%", padding: "36px 32px", background: "rgba(255,255,255,0.92)", textAlign: "center" }}><div style={{ width: 56, height: 56, borderRadius: 99, background: `${V.rose}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><span style={{ fontSize: 28, color: V.rose }}>!</span></div><div style={{ fontSize: 20, fontWeight: 800, color: V.rose, marginBottom: 8 }}>ASIN nicht gefunden</div><p style={{ fontSize: 14, color: V.text, lineHeight: 1.7, margin: "0 0 24px" }}>Das Produkt konnte auf Amazon nicht gefunden werden. Bitte überprüfe die ASIN und versuche es erneut.</p><button onClick={onReset} style={{ padding: "12px 28px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}35` }}>Neues Briefing starten</button></div></div>;
 
 // ═══════ TIME TRACKER (persistent per ASIN, restores on reload, time only increases) ═══════
-function TimeTracker({ productName, brand, asin, marketplace }) {
+function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outputUrl }) {
   const lsKey = asin ? `tt_${asin.toUpperCase()}` : null;
   // Restore from localStorage immediately (fast), then upgrade from server
   const initSecs = () => {
@@ -493,7 +493,7 @@ function TimeTracker({ productName, brand, asin, marketplace }) {
     try {
       const r = await fetch("/api/timesheet", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "update", productName, brand, asin, marketplace, seconds: s }),
+        body: JSON.stringify({ action: "update", productName, brand, asin, marketplace, seconds: s, briefingUrl: briefingUrl || undefined, outputUrl: outputUrl || undefined }),
       });
       if (r.ok) {
         const d = await r.json();
@@ -502,7 +502,7 @@ function TimeTracker({ productName, brand, asin, marketplace }) {
         setSynced(true); setSyncErr(false);
       } else { setSyncErr(true); }
     } catch { setSyncErr(true); }
-  }, [productName, brand, asin, marketplace]);
+  }, [productName, brand, asin, marketplace, briefingUrl, outputUrl]);
   useEffect(() => {
     if (syncRef.current) clearInterval(syncRef.current);
     if (running) { syncRef.current = setInterval(() => syncToSheet(secsRef.current), 10000); }
@@ -1106,7 +1106,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
       <Orbs /><style>{`*, *::before, *::after { box-sizing: border-box; } @media print { body { background: white !important; } } @keyframes spin{to{transform:rotate(360deg)}}`}</style>
       {/* Sticky Time Tracker */}
       <div style={{ position: "sticky", top: 0, zIndex: 100 }}>
-        <TimeTracker productName={D.product?.name} brand={D.product?.brand} asin={D.product?.sku} marketplace={D.product?.marketplace} />
+        <TimeTracker productName={D.product?.name} brand={D.product?.brand} asin={D.product?.sku} marketplace={D.product?.marketplace} briefingUrl={briefingId ? (window.location.origin + "/d/" + briefingId) : ""} outputUrl={links.outputUrl || ""} />
       </div>
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 20px 80px", position: "relative", zIndex: 1 }}>
         {/* Update banner — auto-applied, shows what changed */}
