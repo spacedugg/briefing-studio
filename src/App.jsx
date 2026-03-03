@@ -526,7 +526,11 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
 // ═══════ START ═══════
 function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDensity, setTD }) {
   const [asin, sa] = useState(""); const [mp, sm] = useState("Amazon.de"); const [pi, sp] = useState(""); const [ft, sf] = useState("");
-  const [hist] = useState(loadH);
+  const [hist, setHist] = useState([]);
+  const [histLoading, setHistLoading] = useState(true);
+  useEffect(() => {
+    fetch("/api/briefing?list=recent&limit=10").then(r => r.ok ? r.json() : { items: [] }).then(d => setHist(d.items || [])).catch(() => setHist(loadH())).finally(() => setHistLoading(false));
+  }, []);
   const [imageCount, setImageCount] = useState(7);
   // Reference listing state
   const [refAsin, setRefAsin] = useState("");
@@ -729,12 +733,36 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
               {loading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 10, height: 10, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: 99, animation: "spin 0.7s linear infinite" }} /><span style={{ fontSize: 12, color: V.violet, fontWeight: 600 }}>{status}</span></div>}
             </div>
           </GC>
-          {hist.length > 0 && <GC style={{ padding: 0 }}><div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl></div><div style={{ padding: "8px 12px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 10, cursor: "pointer" }} onClick={() => onLoad(h.data, h.asin)} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC>}
+          {histLoading ? <GC style={{ padding: 20, textAlign: "center" }}><div style={{ width: 20, height: 20, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto" }} /></GC> : hist.length > 0 && <GC style={{ padding: 0 }}><div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl></div><div style={{ padding: "8px 12px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 10, cursor: "pointer" }} onClick={() => {
+            fetch("/api/briefing?id=" + h.id).then(r => r.ok ? r.json() : null).then(d => {
+              if (d?.data?.briefing?.product) onLoad(d.data.briefing, h.asin);
+            }).catch(() => {});
+          }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""}{h.marketplace ? ` · ${h.marketplace}` : ""}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC>}
         </div>
       </div>
       {error === "ASIN_NOT_FOUND" && <AsinNotFoundErr onReset={onDismiss} />}
     </div>
   );
+}
+
+// ═══════ SERVER HISTORY ═══════
+function ServerHistory({ items, loading, onLoad, onClose }) {
+  const fmtDate = (d) => { try { return new Date(d + "Z").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }); } catch { return d || ""; } };
+  return <GC style={{ padding: 0, marginBottom: 14 }}>
+    <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Alle Briefings</Lbl><button onClick={onClose} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div>
+    <div style={{ padding: "6px 10px", maxHeight: 400, overflowY: "auto" }}>
+      {loading && <div style={{ textAlign: "center", padding: 20 }}><div style={{ width: 20, height: 20, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto" }} /></div>}
+      {!loading && items.length === 0 && <div style={{ textAlign: "center", padding: 20, fontSize: 12, color: V.textDim }}>Noch keine Briefings vorhanden.</div>}
+      {items.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px", borderRadius: 10, cursor: "pointer" }} onClick={() => onLoad(h.id)} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: V.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.name}</div>
+          <div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""}{h.marketplace ? ` · ${h.marketplace}` : ""} · {h.imageCount} Bilder · v{h.version}</div>
+          <div style={{ fontSize: 9, color: V.textDim }}>{fmtDate(h.updatedAt)}</div>
+        </div>
+        <span style={{ fontSize: 11, color: V.violet, fontWeight: 700, flexShrink: 0, marginLeft: 8 }}>Laden →</span>
+      </div>)}
+    </div>
+  </GC>;
 }
 
 function OverwriteWarn({ name, onOk, onNo }) {
@@ -1395,6 +1423,9 @@ export default function App() {
   const [imgDisabled, setImgDisabled] = useState({});
   // Reference images per briefing image (keyed by image id → array of data URLs)
   const [refImages, setRefImages] = useState({});
+  // Server-side briefing history
+  const [serverHist, setServerHist] = useState([]);
+  const [histLoading, setHistLoading] = useState(false);
   // Input/Output links for designer collaboration
   const [inputUrl, setInputUrl] = useState("");
   const [outputUrl, setOutputUrl] = useState("");
@@ -1420,6 +1451,12 @@ export default function App() {
       }).catch(() => {}).finally(() => setDesignerLoading(false));
     }
   }, []);
+  // Fetch server-side history when panel opens
+  useEffect(() => {
+    if (!showHist) return;
+    setHistLoading(true);
+    fetch("/api/briefing?list=recent&limit=20").then(r => r.ok ? r.json() : { items: [] }).then(d => setServerHist(d.items || [])).catch(() => setServerHist([])).finally(() => setHistLoading(false));
+  }, [showHist]);
   const shareDesignerLink = useCallback(async () => {
     if (!data) return;
     setShareLoading(true);
@@ -1534,7 +1571,20 @@ export default function App() {
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
       </div></div>
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 80px", position: "relative", zIndex: 1 }}>
-        {showHist && (() => { const hist = loadH(); return hist.length > 0 ? <GC style={{ padding: 0, marginBottom: 14 }}><div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl><button onClick={() => setShowHist(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div><div style={{ padding: "6px 10px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px", borderRadius: 10, cursor: "pointer" }} onClick={() => { setData(h.data); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(h.asin || ""); setShowHist(false); }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""} · {h.date}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC> : <GC style={{ padding: 16, marginBottom: 14, textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Noch keine gespeicherten Briefings.</span></GC>; })()}
+        {showHist && <ServerHistory items={serverHist} loading={histLoading} onLoad={(briefingId) => {
+          fetch("/api/briefing?id=" + briefingId).then(r => r.ok ? r.json() : null).then(d => {
+            if (d?.data?.briefing?.product) {
+              setData(d.data.briefing); setTab("b");
+              const sel = d.data.selections || {};
+              setHlC(sel.hlC || {}); setShC(sel.shC || {}); setBulSel(sel.bulSel || {}); setBdgSel(sel.bdgSel || {}); setImgDisabled(sel.imgDisabled || {}); setRefImages(sel.refImages || {});
+              setCurAsin(d.data.briefing.product?.sku || "");
+              setSharedBriefingId(briefingId);
+              setShowHist(false);
+              if (sel.links?.inputUrl) setInputUrl(sel.links.inputUrl);
+              if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
+            }
+          }).catch(() => {});
+        }} onClose={() => setShowHist(false)} />}
         {showLinks && <GC style={{ padding: 0, marginBottom: 14 }}>
           <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.blue}>Designer Links</Lbl><button onClick={() => setShowLinks(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div>
           <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>

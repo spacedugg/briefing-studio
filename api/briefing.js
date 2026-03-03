@@ -45,8 +45,37 @@ export default async function handler(req, res) {
     await init();
 
     // GET /api/briefing?id=xxx — load briefing (includes version for change detection)
+    // GET /api/briefing?list=recent — list recent briefings (metadata only)
     if (req.method === "GET") {
-      const { id } = req.query;
+      const { id, list } = req.query;
+
+      // List recent briefings (server-side history)
+      if (list === "recent") {
+        const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+        const result = await db.execute({
+          sql: "SELECT id, data, version, created_at, updated_at FROM briefings ORDER BY updated_at DESC LIMIT ?",
+          args: [limit],
+        });
+        const items = result.rows.map(row => {
+          try {
+            const d = JSON.parse(row.data);
+            const briefing = d.briefing || {};
+            return {
+              id: row.id,
+              name: briefing.product?.name || "?",
+              brand: briefing.product?.brand || "",
+              asin: briefing.product?.sku || "",
+              marketplace: briefing.product?.marketplace || "",
+              imageCount: briefing.images?.length || 0,
+              version: row.version || 1,
+              createdAt: row.created_at,
+              updatedAt: row.updated_at,
+            };
+          } catch { return null; }
+        }).filter(Boolean);
+        return res.status(200).json({ items });
+      }
+
       if (!id) return res.status(400).json({ error: "Missing id" });
 
       const result = await db.execute({ sql: "SELECT data, version, updated_at FROM briefings WHERE id = ?", args: [id] });
