@@ -999,18 +999,31 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
               if (JSON.stringify(newSelections[k] || {}) !== JSON.stringify((liveSelections || {})[k] || {})) selChanges.push(k);
             });
           }
-          // Build change description
+          // Build change description — tell the designer exactly what changed
           const parts = [];
-          if (changes.size > 0) parts.push(`${changes.size} Bild${changes.size > 1 ? "er" : ""} aktualisiert`);
-          if (selChanges.length > 0) parts.push("Textauswahl geändert");
+          if (changes.size > 0) {
+            // List which images changed by name
+            const changedNames = [...changes].map(idx => {
+              const img = newBriefing.images[idx];
+              const id = (img?.id || "").toLowerCase();
+              if (id.startsWith("main")) return "Main Image";
+              const ptIdx = newBriefing.images.slice(0, idx + 1).filter(im => !(im.id || "").toLowerCase().startsWith("main")).length;
+              return `PT.${String(ptIdx).padStart(2, "0")}`;
+            });
+            parts.push(`Bilder geändert: ${changedNames.join(", ")}`);
+          }
+          if (selChanges.includes("hlC") || selChanges.includes("shC")) parts.push("Textauswahl angepasst");
+          if (selChanges.includes("bulSel")) parts.push("Bullet-Auswahl geändert");
+          if (selChanges.includes("bdgSel")) parts.push("Badge-Auswahl geändert");
+          if (selChanges.includes("links")) parts.push("Links aktualisiert");
+          const timeStr = new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
           // Auto-apply new data
           if (newBriefing) setLiveD(newBriefing);
           if (newSelections) setLiveSelections(newSelections);
           versionRef.current = d.version;
           setChangedFields(changes);
           if (parts.length > 0) {
-            setUpdateBanner(parts.join(", "));
-            setTimeout(() => setUpdateBanner(null), 8000);
+            setUpdateBanner({ text: parts.join(" · "), time: timeStr });
           }
         }
       } catch {}
@@ -1029,7 +1042,17 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
       const oi = prev.images?.[idx];
       if (!oi || JSON.stringify(ni) !== JSON.stringify(oi)) changes.add(idx);
     });
-    if (changes.size > 0) { setChangedFields(changes); setUpdateBanner(`${changes.size} Bild${changes.size > 1 ? "er" : ""} seit letzter Version geändert`); }
+    if (changes.size > 0) {
+      const changedNames = [...changes].map(idx => {
+        const img = D.images[idx];
+        const id = (img?.id || "").toLowerCase();
+        if (id.startsWith("main")) return "Main Image";
+        const ptIdx = D.images.slice(0, idx + 1).filter(im => !(im.id || "").toLowerCase().startsWith("main")).length;
+        return `PT.${String(ptIdx).padStart(2, "0")}`;
+      });
+      setChangedFields(changes);
+      setUpdateBanner({ text: `Bilder geändert seit letzter Version: ${changedNames.join(", ")}`, time: new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) });
+    }
   }, []);
   if (!D?.images?.length) return null;
   const strip = s => s.replace(/\*\*(.+?)\*\*/g, "$1");
@@ -1087,12 +1110,16 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
       </div>
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 20px 80px", position: "relative", zIndex: 1 }}>
         {/* Update banner — auto-applied, shows what changed */}
-        {updateBanner && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, background: `${V.emerald}12`, border: `2px solid ${V.emerald}40`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: V.emerald, marginBottom: 2 }}>Briefing aktualisiert</div>
-            <div style={{ fontSize: 12, color: V.text }}>{updateBanner}. Änderungen sind unten hervorgehoben.</div>
+        {updateBanner && <div style={{ ...glass, padding: "16px 22px", marginBottom: 18, background: `${V.orange}10`, border: `2px solid ${V.orange}40`, borderRadius: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: V.orange, marginBottom: 6 }}>Achtung — Briefing wurde gerade aktualisiert</div>
+              <div style={{ fontSize: 13, color: V.text, lineHeight: 1.6, marginBottom: 4 }}>Es wurden soeben Anpassungen am Briefing vorgenommen. Die Änderungen sind bereits automatisch übernommen und unten farblich hervorgehoben.</div>
+              <div style={{ fontSize: 12, color: V.textMed, marginTop: 6 }}>{updateBanner.text}</div>
+              <div style={{ fontSize: 11, color: V.textDim, marginTop: 4 }}>Aktualisiert um {updateBanner.time} Uhr</div>
+            </div>
+            <button onClick={() => { setUpdateBanner(null); setChangedFields(new Set()); }} style={{ ...gS, padding: "8px 14px", fontSize: 11, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8, flexShrink: 0 }}>Verstanden</button>
           </div>
-          <button onClick={() => { setUpdateBanner(null); setChangedFields(new Set()); }} style={{ ...gS, padding: "8px 12px", fontSize: 11, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 8, flexShrink: 0 }}>OK</button>
         </div>}
         {/* Header */}
         <div style={{ ...glass, padding: "18px 24px", marginBottom: 18 }}>
@@ -1116,8 +1143,8 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
           const d = getImageData(img);
           const isMain = (img.id || "").toLowerCase().startsWith("main");
           const isChanged = changedFields.has(idx);
-          return <GC key={idx} style={{ marginBottom: 18, border: isChanged ? `2px solid ${V.blue}50` : undefined }}>
-            {isChanged && <div style={{ padding: "6px 22px", background: `${V.blue}10`, borderBottom: `1px solid ${V.blue}20`, fontSize: 11, fontWeight: 700, color: V.blue }}>Updated in latest revision</div>}
+          return <GC key={idx} style={{ marginBottom: 18, border: isChanged ? `2px solid ${V.orange}50` : undefined }}>
+            {isChanged && <div style={{ padding: "8px 22px", background: `${V.orange}10`, borderBottom: `1px solid ${V.orange}20`, fontSize: 12, fontWeight: 700, color: V.orange }}>Dieses Bild wurde in der letzten Aktualisierung geändert</div>}
             <div style={{ padding: "16px 24px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                 <span style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>{imgName(idx)}</span>
