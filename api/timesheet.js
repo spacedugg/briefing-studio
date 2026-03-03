@@ -4,12 +4,12 @@
 //
 // Column layout (A-M):
 // A: Project ID | B: Product | C: Brand | D: ASIN | E: Amazon Link | F: Marketplace
-// G: Time | H: Hours | I: Cost (USD) | J: Cost (EUR) | K: Last Updated
-// L: Briefing Link | M: Output Folder
+// G: Briefing Link | H: Output Folder | I: Time | J: Hours | K: Cost (USD)
+// L: Cost (EUR) | M: Last Updated
 
-const HEADERS = ['Project ID', 'Product', 'Brand', 'ASIN', 'Amazon Link', 'Marketplace', 'Time', 'Hours', 'Cost (USD)', 'Cost (EUR)', 'Last Updated', 'Briefing Link', 'Output Folder'];
+const HEADERS = ['Project ID', 'Product', 'Brand', 'ASIN', 'Amazon Link', 'Marketplace', 'Briefing Link', 'Output Folder', 'Time', 'Hours', 'Cost (USD)', 'Cost (EUR)', 'Last Updated'];
 const COL_COUNT = HEADERS.length; // 13 = A-M
-const COL = { asin: 3, amazonLink: 4, marketplace: 5, hours: 7, briefingUrl: 11, outputUrl: 12 };
+const COL = { asin: 3, amazonLink: 4, marketplace: 5, briefingUrl: 6, outputUrl: 7, hours: 9 };
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -104,8 +104,8 @@ export default async function handler(req, res) {
       const existingOutputUrl = rowIndex > 0 ? (rows[rowIndex][COL.outputUrl] || '') : '';
       const existingAmazonLink = rowIndex > 0 ? (rows[rowIndex][COL.amazonLink] || '') : '';
 
-      // Row order: Project ID, Product, Brand, ASIN, Amazon Link, Marketplace, Time, Hours, Cost USD, Cost EUR, Last Updated, Briefing Link, Output Folder
-      const rowData = [projectId, productName || '', brand || '', asin || '', amazonLink || existingAmazonLink, marketplace || '', timeFormatted, hours, costUsd, costEur, timestamp, briefingUrl || existingBriefingUrl, outputUrl || existingOutputUrl];
+      // Row order: Project ID, Product, Brand, ASIN, Amazon Link, Marketplace, Briefing Link, Output Folder, Time, Hours, Cost USD, Cost EUR, Last Updated
+      const rowData = [projectId, productName || '', brand || '', asin || '', amazonLink || existingAmazonLink, marketplace || '', briefingUrl || existingBriefingUrl, outputUrl || existingOutputUrl, timeFormatted, hours, costUsd, costEur, timestamp];
 
       if (rowIndex > 0) {
         // Update existing row (same ASIN)
@@ -169,7 +169,7 @@ export default async function handler(req, res) {
               const mHours = (mergedSeconds / 3600).toFixed(2);
               const mCostUsd = (parseFloat(mHours) * 14).toFixed(2);
               const mCostEur = (parseFloat(mCostUsd) * eurRate).toFixed(2);
-              const mergedRow = [projectId, productName || '', brand || '', asin || '', amazonLink, marketplace || '', formatTime(mergedSeconds), mHours, mCostUsd, mCostEur, timestamp, briefingUrl || '', outputUrl || ''];
+              const mergedRow = [projectId, productName || '', brand || '', asin || '', amazonLink, marketplace || '', briefingUrl || '', outputUrl || '', formatTime(mergedSeconds), mHours, mCostUsd, mCostEur, timestamp];
               // Update the best row
               const mergeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${bestIdx + 1}:M${bestIdx + 1}?valueInputOption=RAW`;
               await fetch(mergeUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [mergedRow] }) });
