@@ -35,11 +35,11 @@ async function pollSnapshot(snapshotId, apiKey) {
 async function scrapeBrightData(asin, domain, apiKey) {
   const url = `https://www.${domain}/dp/${asin}`;
   const bdRes = await fetch(
-    'https://api.brightdata.com/datasets/v3/scrape?dataset_id=gd_l7q7dkf244hwjntr0&include_errors=true&format=json',
+    'https://api.brightdata.com/datasets/v3/scrape?dataset_id=gd_l7q7dkf244hwjntr0&notify=false&include_errors=true&format=json',
     {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify([{ url }]),
+      body: JSON.stringify({ input: [{ url }] }),
     }
   );
 
