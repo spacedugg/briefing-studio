@@ -154,25 +154,16 @@ export default async function handler(req, res) {
   const bdKey = process.env.BRIGHT_DATA_API_KEY;
 
   try {
-    let result;
-
-    // Try Bright Data first (if API key configured), fallback to direct
-    if (bdKey) {
-      try {
-        result = await scrapeBrightData(asin, domain, bdKey);
-      } catch (bdErr) {
-        console.error('Bright Data failed, falling back to direct:', bdErr.message);
-        result = await scrapeDirect(asin, domain);
-      }
-    } else {
-      result = await scrapeDirect(asin, domain);
+    if (!bdKey) {
+      return res.status(500).json({ error: 'BRIGHT_DATA_API_KEY nicht konfiguriert', code: 'NO_API_KEY', images: [], productData: {} });
     }
 
+    const result = await scrapeBrightData(asin, domain, bdKey);
     const { productData, imageUrls } = result;
     const images = await fetchImagesBase64(imageUrls, domain);
 
     return res.status(200).json({ images, productData, asin, marketplace: domain });
   } catch (error) {
-    return res.status(500).json({ error: error.message, images: [], productData: {} });
+    return res.status(500).json({ error: error.message, code: 'SCRAPE_FAILED', images: [], productData: {} });
   }
 }
