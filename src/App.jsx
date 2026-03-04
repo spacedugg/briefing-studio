@@ -1633,14 +1633,14 @@ export default function App() {
       console.log("[share] Response status:", res.status);
       if (res.ok) {
         const { id } = await res.json();
-        if (!sharedBriefingId) setSharedBriefingId(id);
-        const url = window.location.origin + "/d/" + (sharedBriefingId || id);
+        setSharedBriefingId(id);
+        const url = window.location.origin + "/d/" + id;
         setShareUrl(url);
         try { await navigator.clipboard.writeText(url); } catch {}
       } else {
         const errText = await res.text().catch(() => "");
         console.error("[share] DB save failed:", res.status, errText);
-        setShareUrl("error");
+        setShareUrl("error:" + (errText || res.status));
       }
     } catch (err) {
       console.error("[share] Network error:", err);
@@ -1728,7 +1728,8 @@ export default function App() {
         const payload = { briefing: result, selections: { hlC: {}, shC: {}, bulSel: {}, bdgSel: {}, imgDisabled: {}, refImages: {}, links: {}, userAsin: a || "" } };
         const sr = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         if (sr.ok) { const { id } = await sr.json(); setSharedBriefingId(id); }
-      } catch (e) { console.warn("[auto-save] DB save failed:", e.message); }
+        else { const errText = await sr.text().catch(() => ""); console.error("[auto-save] DB save failed:", sr.status, errText); }
+      } catch (e) { console.error("[auto-save] DB save failed:", e.message); }
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, [txtDensity]);
@@ -1756,7 +1757,7 @@ export default function App() {
             <button onClick={() => setShowHist(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, position: "relative" }}>Verlauf</button>
             <button onClick={() => setShowLinks(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: showLinks ? V.blue : V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, border: showLinks ? `1.5px solid ${V.blue}40` : "1px solid rgba(0,0,0,0.08)" }}>Links</button>
             {sharedBriefingId && <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: `1.5px solid ${V.emerald}40`, background: `${V.emerald}10`, color: V.emerald, fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Speichern..." : "Speichern"}</button>}
-            <button onClick={() => { if (sharedBriefingId) { const url = window.location.origin + "/d/" + sharedBriefingId; setShareUrl(url); try { navigator.clipboard.writeText(url); } catch {} } else { shareDesignerLink(); } }} disabled={shareLoading && !sharedBriefingId} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: shareLoading && !sharedBriefingId ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30`, opacity: shareLoading && !sharedBriefingId ? 0.7 : 1 }}>{shareLoading && !sharedBriefingId ? "Erstellen..." : "Designer-Link"}</button>
+            <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30`, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Erstellen..." : "Designer-Link"}</button>
           </div>
         </div>
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
@@ -1827,7 +1828,7 @@ export default function App() {
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
       </div>
-      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl === "error" ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht gespeichert werden. Bitte versuche es erneut.</p></> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
+      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl?.startsWith("error") ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht in der Datenbank gespeichert werden.</p>{shareUrl.length > 6 && <p style={{ fontSize: 10, color: V.textDim, margin: "0 0 14px", wordBreak: "break-all" }}>Detail: {shareUrl.slice(6)}</p>}</> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
       {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic, p.h10, p.bs); }} onNo={() => setP(null)} />}
     </div>
   );
