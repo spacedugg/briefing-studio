@@ -5,15 +5,23 @@ export const config = {
 
 import { createClient } from "@libsql/client";
 
-const db = createClient({
-  url: process.env.TURSO_DATABASE_URL,
-  authToken: process.env.TURSO_AUTH_TOKEN,
-});
+// Lazy DB client — created on first use (ensures env vars are available at runtime, not just module load)
+let _db = null;
+function getDb() {
+  if (!_db) {
+    _db = createClient({
+      url: process.env.TURSO_DATABASE_URL,
+      authToken: process.env.TURSO_AUTH_TOKEN,
+    });
+  }
+  return _db;
+}
 
 // Ensure table exists (runs once per cold start)
 let initialized = false;
 async function init() {
   if (initialized) return;
+  const db = getDb();
   await db.execute(`
     CREATE TABLE IF NOT EXISTS briefings (
       id TEXT PRIMARY KEY,
@@ -52,9 +60,29 @@ export default async function handler(req, res) {
 
   try {
     await init();
+    const db = getDb();
 
-    // GET /api/briefing?id=xxx — load briefing (includes version for change detection)
-    // GET /api/briefing?list=recent — list recent briefings (metadata only)
+    // ── TEST: GET /api/briefing?test=1 — full round-trip DB test ──
+    if (req.method === "GET" && req.query.test) {
+      const testId = "test_" + Date.now();
+      const testData = JSON.stringify({ briefing: { product: { name: "DB Test" } }, test: true });
+      await db.execute({ sql: "INSERT INTO briefings (id, data) VALUES (?, ?)", args: [testId, testData] });
+      const verify = await db.execute({ sql: "SELECT id, data, version FROM briefings WHERE id = ?", args: [testId] });
+      await db.execute({ sql: "DELETE FROM briefings WHERE id = ?", args: [testId] });
+      const count = await db.execute({ sql: "SELECT COUNT(*) as cnt FROM briefings", args: [] });
+      return res.status(200).json({
+        success: verify.rows.length === 1,
+        testId,
+        found: verify.rows.length,
+        dataLength: verify.rows[0]?.data?.length || 0,
+        dataParseable: (() => { try { JSON.parse(verify.rows[0]?.data); return true; } catch { return false; } })(),
+        totalBriefings: count.rows[0]?.cnt || 0,
+        dbUrl: process.env.TURSO_DATABASE_URL?.substring(0, 30) + "...",
+      });
+    }
+
+    // ── GET /api/briefing?id=xxx — load briefing ──
+    // ── GET /api/briefing?list=recent — list recent briefings ──
     if (req.method === "GET") {
       const { id, list } = req.query;
 
@@ -88,14 +116,24 @@ export default async function handler(req, res) {
 
       if (!id) return res.status(400).json({ error: "Missing id" });
 
+      console.log("[briefing-api] GET id:", id);
       const result = await db.execute({ sql: "SELECT data, version, updated_at FROM briefings WHERE id = ?", args: [id] });
-      if (!result.rows.length) return res.status(404).json({ error: "Briefing not found" });
+      console.log("[briefing-api] GET result rows:", result.rows.length);
+
+      if (!result.rows.length) {
+        // Extra debug: check if ANY records exist
+        const countResult = await db.execute({ sql: "SELECT COUNT(*) as cnt FROM briefings", args: [] });
+        console.log("[briefing-api] Total records in DB:", countResult.rows[0]?.cnt);
+        return res.status(404).json({ error: "Briefing not found", id, totalRecords: countResult.rows[0]?.cnt || 0 });
+      }
 
       const row = result.rows[0];
-      return res.status(200).json({ id, data: JSON.parse(row.data), version: row.version || 1, updatedAt: row.updated_at || null });
+      console.log("[briefing-api] GET data length:", typeof row.data, row.data?.length || 0);
+      const parsed = JSON.parse(row.data);
+      return res.status(200).json({ id, data: parsed, version: row.version || 1, updatedAt: row.updated_at || null });
     }
 
-    // POST /api/briefing — save or update briefing
+    // ── POST /api/briefing — save or update briefing ──
     if (req.method === "POST") {
       const body = req.body;
       if (!body?.briefing) return res.status(400).json({ error: "Missing briefing data" });
@@ -122,17 +160,29 @@ export default async function handler(req, res) {
           });
           return res.status(200).json({ id: existingId, version: oldVersion + 1 });
         }
+        // _updateId record not found — fall through to create new
+        console.warn("[briefing-api] _updateId", existingId, "not found, creating new record");
       }
 
       // Create new briefing
       const id = generateId();
+      console.log("[briefing-api] INSERT id:", id, "data length:", json.length);
       await db.execute({ sql: "INSERT INTO briefings (id, data) VALUES (?, ?)", args: [id, json] });
+
+      // Verify the insert worked (catch silent failures)
+      const verify = await db.execute({ sql: "SELECT id FROM briefings WHERE id = ?", args: [id] });
+      if (!verify.rows.length) {
+        console.error("[briefing-api] INSERT VERIFICATION FAILED! ID:", id);
+        return res.status(500).json({ error: "Insert verification failed — record not found after insert" });
+      }
+      console.log("[briefing-api] INSERT verified OK, id:", id);
+
       return res.status(201).json({ id });
     }
 
     return res.status(405).json({ error: "Method not allowed" });
   } catch (err) {
     console.error("[briefing-api]", err);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ error: err.message || "Internal server error" });
   }
 }
