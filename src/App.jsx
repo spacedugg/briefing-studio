@@ -349,18 +349,16 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
   return p;
 }
 
-// Scrape Amazon product data + images
+// Scrape Amazon product data + images (via Bright Data only)
 async function scrapeProduct(asin, marketplace) {
   if (!asin || !asin.trim()) return { images: [], productData: {} };
-  try {
-    const r = await fetch("/api/fetch-images", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ asin: asin.trim(), marketplace }),
-    });
-    if (!r.ok) return { images: [], productData: {} };
-    const d = await r.json();
-    return { images: d.images || [], productData: d.productData || {} };
-  } catch { return { images: [], productData: {} }; }
+  const r = await fetch("/api/fetch-images", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ asin: asin.trim(), marketplace }),
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || `Scraping fehlgeschlagen (${r.status})`);
+  return { images: d.images || [], productData: d.productData || {} };
 }
 
 // Bright Data API helper — retries are now handled server-side
@@ -447,7 +445,8 @@ const GC = ({ children, style: s = {}, onClick: oc }) => <div style={{ ...glass,
 const Lbl = ({ children, c = V.violet }) => <div style={{ fontSize: 10, fontWeight: 800, color: c, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 10 }}>{children}</div>;
 const Check = ({ on }) => <span style={{ color: on ? V.emerald : V.textDim, fontSize: 11, fontWeight: 800 }}>{on ? "✓" : "○"}</span>;
 const Err = ({ msg, onX }) => msg ? <div style={{ ...gS, padding: "12px 18px", background: `${V.rose}10`, border: `1px solid ${V.rose}25`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><span style={{ fontSize: 12, color: V.rose, fontWeight: 600, lineHeight: 1.5 }}>{msg}</span>{onX && <button onClick={onX} style={{ background: "none", border: "none", color: V.rose, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 16 }}>×</button>}</div> : null;
-const AsinNotFoundErr = ({ onReset }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }}><div style={{ ...glass, maxWidth: 440, width: "100%", padding: "36px 32px", background: "rgba(255,255,255,0.92)", textAlign: "center" }}><div style={{ width: 56, height: 56, borderRadius: 99, background: `${V.rose}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><span style={{ fontSize: 28, color: V.rose }}>!</span></div><div style={{ fontSize: 20, fontWeight: 800, color: V.rose, marginBottom: 8 }}>ASIN nicht gefunden</div><p style={{ fontSize: 14, color: V.text, lineHeight: 1.7, margin: "0 0 24px" }}>Das Produkt konnte auf Amazon nicht gefunden werden. Bitte überprüfe die ASIN und versuche es erneut.</p><button onClick={onReset} style={{ padding: "12px 28px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}35` }}>Neues Briefing starten</button></div></div>;
+const AsinNotFoundErr = ({ onReset }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }}><div style={{ ...glass, maxWidth: 440, width: "100%", padding: "36px 32px", background: "rgba(255,255,255,0.92)", textAlign: "center" }}><div style={{ width: 56, height: 56, borderRadius: 99, background: `${V.rose}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><span style={{ fontSize: 28, color: V.rose }}>!</span></div><div style={{ fontSize: 20, fontWeight: 800, color: V.rose, marginBottom: 8 }}>ASIN nicht gefunden</div><p style={{ fontSize: 14, color: V.text, lineHeight: 1.7, margin: "0 0 24px" }}>Bright Data hat keine Produktdaten für diese ASIN zurückgegeben. Bitte überprüfe die ASIN und den Marketplace.</p><button onClick={onReset} style={{ padding: "12px 28px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}35` }}>Neues Briefing starten</button></div></div>;
+const ScrapeErr = ({ error, onReset }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }}><div style={{ ...glass, maxWidth: 480, width: "100%", padding: "36px 32px", background: "rgba(255,255,255,0.92)", textAlign: "center" }}><div style={{ width: 56, height: 56, borderRadius: 99, background: `${V.orange}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><span style={{ fontSize: 28, color: V.orange }}>⚠</span></div><div style={{ fontSize: 20, fontWeight: 800, color: V.orange, marginBottom: 8 }}>Scraping fehlgeschlagen</div><p style={{ fontSize: 14, color: V.text, lineHeight: 1.7, margin: "0 0 12px" }}>Die Produktdaten konnten nicht von Amazon abgerufen werden. Das kann an der Bright Data API liegen.</p><div style={{ ...gS, padding: "10px 14px", fontSize: 12, color: V.rose, fontFamily: "monospace", textAlign: "left", wordBreak: "break-all", marginBottom: 20 }}>{error}</div><button onClick={onReset} style={{ padding: "12px 28px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}35` }}>Erneut versuchen</button></div></div>;
 
 // ═══════ TIME TRACKER (persistent per ASIN, restores on reload, time only increases) ═══════
 function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outputUrl }) {
@@ -631,7 +630,7 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
               <p style={{ fontSize: 13, color: V.textMed, margin: 0, lineHeight: 1.6 }}>ASIN eingeben oder Produktinfos beschreiben.</p>
             </div>
             <div style={{ padding: "20px 32px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
-              {error && error !== "ASIN_NOT_FOUND" && <Err msg={error} onX={onDismiss} />}
+              {error && error !== "ASIN_NOT_FOUND" && !error.startsWith("SCRAPE_ERROR:") && <Err msg={error} onX={onDismiss} />}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div style={{ minWidth: 0 }}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6, display: "block" }}>ASIN (optional)</label>
@@ -762,6 +761,7 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
         </div>
       </div>
       {error === "ASIN_NOT_FOUND" && <AsinNotFoundErr onReset={onDismiss} />}
+      {error?.startsWith("SCRAPE_ERROR:") && <ScrapeErr error={error.replace("SCRAPE_ERROR:", "")} onReset={onDismiss} />}
     </div>
   );
 }
@@ -1507,9 +1507,14 @@ export default function App() {
     try {
       // Step 1: Scrape Amazon product data first (needed for keyword search term)
       setSt("Lade Amazon-Produktdaten...");
-      const scrapeResult = a && a.trim() ? await scrapeProduct(a, m) : { images: [], productData: {} };
+      let scrapeResult;
+      try {
+        scrapeResult = a && a.trim() ? await scrapeProduct(a, m) : { images: [], productData: {} };
+      } catch (scrapeErr) {
+        throw new Error("SCRAPE_ERROR:" + (scrapeErr.message || "Unbekannter Fehler"));
+      }
       const pd = scrapeResult.productData || {};
-      // If an ASIN was entered but nothing was found, show error and abort
+      // If an ASIN was entered but Bright Data returned empty product data
       if (a && a.trim() && !pd.title && !pd.brand && !pd.bullets?.length) {
         throw new Error("ASIN_NOT_FOUND");
       }
