@@ -1,3 +1,8 @@
+// Allow larger request bodies (briefings with reference images)
+export const config = {
+  api: { bodyParser: { sizeLimit: '10mb' } },
+};
+
 import { createClient } from "@libsql/client";
 
 const db = createClient({

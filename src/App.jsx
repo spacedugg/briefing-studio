@@ -14,6 +14,25 @@ const HK = "briefing_history", MH = 5;
 const strip = s => (s || "").replace(/\*\*(.+?)\*\*/g, "$1");
 const md2html = s => (s || "").replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 const html2md = s => (s || "").replace(/<b>(.*?)<\/b>/gi, '**$1**').replace(/<strong>(.*?)<\/strong>/gi, '**$1**').replace(/<[^>]+>/g, '');
+// Compress/resize images to stay under Vercel's 4.5MB body limit
+function compressImage(dataUrl, maxDim = 800, quality = 0.7) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+        else { w = Math.round(w * maxDim / h); h = maxDim; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
 const getAllBadges = te => [...(te?.badges || []), ...(te?.callouts || [])];
 const getSelectedBadge = (bdgSel, imgId, allBadges) => {
   const v = bdgSel?.[imgId];
@@ -592,7 +611,11 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
     setRefLoading(true); setRefImages([]); setRefData(null); setRefIsManual(false);
     try {
       const res = await scrapeProduct(refAsin.trim(), mp);
-      setRefImages(res.images || []);
+      // Compress scraped images for Claude vision (1568px = Claude max)
+      const compressed = await Promise.all((res.images || []).map(async img => ({
+        ...img, base64: await compressImage(img.base64, 1568, 0.8)
+      })));
+      setRefImages(compressed);
       setRefData(res.productData || null);
     } catch { setRefImages([]); setRefData(null); }
     setRefLoading(false);
@@ -600,12 +623,15 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
   const handleManualUpload = (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+    const total = Math.min(files.length, 7);
     const results = [];
     files.slice(0, 7).forEach(f => {
       const r = new FileReader();
-      r.onload = ev => {
-        results.push({ base64: ev.target.result });
-        if (results.length === Math.min(files.length, 7)) {
+      r.onload = async ev => {
+        // Compress uploaded images for Claude vision (1568px = Claude max)
+        const compressed = await compressImage(ev.target.result, 1568, 0.8);
+        results.push({ base64: compressed });
+        if (results.length === total) {
           setRefImages(results);
           setRefData(null);
           setRefAsin("");
@@ -827,8 +853,10 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
     if (!files.length) return;
     files.forEach(file => {
       const reader = new FileReader();
-      reader.onload = () => {
-        setRefImages(prev => ({ ...prev, [img.id]: [...(prev[img.id] || []), reader.result] }));
+      reader.onload = async () => {
+        // Compress to 400px for briefing save (these are just for designer reference)
+        const compressed = await compressImage(reader.result, 400, 0.6);
+        setRefImages(prev => ({ ...prev, [img.id]: [...(prev[img.id] || []), compressed] }));
       };
       reader.readAsDataURL(file);
     });
@@ -878,8 +906,9 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} draggable onDragStart={() => setDragIdx(i)} onDragEnd={() => { if (dragIdx !== null && dragOver !== null && dragIdx !== dragOver) onEditText(sel, "reorder_bullets", dragIdx, dragOver); setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); if (dragOver !== i) setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${V.teal}06` : "transparent", cursor: "grab", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, cursor: "grab", padding: "4px 2px", color: V.textDim, fontSize: 10, userSelect: "none" }} title="Ziehen zum Verschieben">⋮⋮</div>
               <div onClick={e => { e.stopPropagation(); const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${V.teal}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, cursor: "pointer" }}>{on && <span style={{ color: V.teal, fontSize: 12, fontWeight: 800 }}>✓</span>}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>{isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div contentEditable suppressContentEditableWarning dangerouslySetInnerHTML={{ __html: editVal }} onInput={e => setEditVal(e.currentTarget.innerHTML)} onBlur={() => { onEditText(sel, "bul", i, html2md(editVal)); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); if (e.key === "b" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.execCommand("bold"); } }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", minHeight: 28, outline: "none", lineHeight: 1.6 }} /><div style={{ fontSize: 9, color: V.textDim }}>Strg+B = Fett · Esc = Abbrechen</div></div> : <span onClick={e => { e.stopPropagation(); startEdit("bul", i, md2html(b)); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6, cursor: "text", display: "block" }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A">$1</b>') }} title="Klick zum Bearbeiten" />}</div>
-            </div>; })}</div>}
+              <div style={{ flex: 1, minWidth: 0 }}>{isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={{ display: "flex", gap: 4, marginBottom: 2 }}><button onMouseDown={e => { e.preventDefault(); document.execCommand("bold"); }} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: FN, color: V.ink }}>B</button><span style={{ fontSize: 9, color: V.textDim, alignSelf: "center" }}>oder Strg+B</span></div><div contentEditable suppressContentEditableWarning dangerouslySetInnerHTML={{ __html: editVal }} onInput={e => setEditVal(e.currentTarget.innerHTML)} onBlur={() => { onEditText(sel, "bul", i, html2md(editVal)); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); if (e.key === "b" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.execCommand("bold"); } }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", minHeight: 28, outline: "none", lineHeight: 1.6 }} /></div> : <span onClick={e => { e.stopPropagation(); startEdit("bul", i, md2html(b)); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6, cursor: "text", display: "block" }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A;font-weight:700">$1</b>') }} title="Klick zum Bearbeiten" />}</div>
+              <button onClick={e => { e.stopPropagation(); onEditText(sel, "delete_bullet", i, null); }} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0, opacity: 0.5 }} title="Bullet löschen">×</button>
+            </div>; })}<button onClick={() => onEditText(sel, "add_bullet", bullets.length, "")} style={{ marginTop: 8, padding: "6px 12px", borderRadius: 8, border: `1px dashed ${V.teal}40`, background: "transparent", color: V.teal, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, width: "100%" }}>+ Bullet hinzufügen</button></div>}
             {/* BADGE — select one from multiple options + inline editing */}
             {allBadges.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.amber}>BADGE-VARIANTEN</Pill></div>
@@ -1280,7 +1309,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
                   <div style={{ fontSize: 10, fontWeight: 800, color: V.teal, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>Bullet Points (+ Icons)</div>
                   {d.bullets.map((b, i) => <ICopy key={i} text={strip(b)} style={{ marginBottom: 3 }}>
                     <span style={{ color: V.teal, fontWeight: 800, flexShrink: 0 }}>-</span>
-                    <span style={{ fontSize: 14, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />
+                    <span style={{ fontSize: 14, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="font-weight:700;color:#0F172A">$1</b>') }} />
                   </ICopy>)}
                 </div>}
                 {/* BADGES */}
@@ -1458,8 +1487,10 @@ export default function App() {
           setDesignerMode(d.data);
           setDesignerBriefingId(bId);
           setDesignerVersion(d.version || 1);
+        } else {
+          setE("Briefing nicht gefunden. Der Link ist möglicherweise ungültig oder abgelaufen.");
         }
-      }).catch(() => {}).finally(() => setDesignerLoading(false));
+      }).catch(() => { setE("Briefing konnte nicht geladen werden. Bitte prüfe deine Verbindung."); }).finally(() => setDesignerLoading(false));
     }
   }, []);
   // Fetch server-side history when panel opens
@@ -1475,17 +1506,28 @@ export default function App() {
     // If we already shared this briefing, update it (same URL, new version)
     if (sharedBriefingId) payload._updateId = sharedBriefingId;
     try {
-      const res = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const bodyStr = JSON.stringify(payload);
+      console.log("[share] Payload size:", (bodyStr.length / 1024).toFixed(1) + "KB");
+      const res = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: bodyStr });
+      console.log("[share] Response status:", res.status);
       if (res.ok) {
         const { id } = await res.json();
         if (!sharedBriefingId) setSharedBriefingId(id);
         const url = window.location.origin + "/d/" + (sharedBriefingId || id);
         setShareUrl(url);
         try { await navigator.clipboard.writeText(url); } catch {}
-      } else { throw new Error("API error"); }
-    } catch {
+      } else {
+        const errText = await res.text().catch(() => "");
+        console.error("[share] DB save failed:", res.status, errText);
+        // Fallback: compressed hash URL
+        const enc = await encodeBriefing(payload);
+        if (enc) { const url = window.location.origin + "/#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
+      }
+    } catch (err) {
+      console.error("[share] Network error:", err);
+      // Fallback: compressed hash URL
       const enc = await encodeBriefing(payload);
-      if (enc) { const url = window.location.origin + window.location.pathname + "#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
+      if (enc) { const url = window.location.origin + "/#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
     }
     setShareLoading(false);
   }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId]);
@@ -1497,8 +1539,9 @@ export default function App() {
     autoSyncRef.current = setTimeout(async () => {
       const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } }, _updateId: sharedBriefingId };
       try {
-        await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      } catch {}
+        const r = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        if (!r.ok) console.warn("[auto-sync] Failed:", r.status, await r.text().catch(() => ""));
+      } catch (e) { console.warn("[auto-sync] Error:", e.message); }
     }, 3000);
     return () => clearTimeout(autoSyncRef.current);
   }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId]);
@@ -1633,6 +1676,8 @@ export default function App() {
             if (type === "eyecatcher") { if (next.images[imgIdx].eyecatchers?.[textIdx]) next.images[imgIdx].eyecatchers[textIdx].idea = newVal; return next; }
             if (type === "badge") { const te = next.images[imgIdx]?.texts; if (te?.badges?.[textIdx] !== undefined) te.badges[textIdx] = newVal; else if (te?.callouts?.[textIdx - (te.badges?.length || 0)] !== undefined) te.callouts[textIdx - (te.badges?.length || 0)] = newVal; return next; }
             if (type === "reorder_bullets") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { const [from, to] = [textIdx, newVal]; const b = [...te.bullets]; const [moved] = b.splice(from, 1); b.splice(to, 0, moved); te.bullets = b; } return next; }
+            if (type === "add_bullet") { const te = next.images[imgIdx]?.texts; if (te) { if (!te.bullets) te.bullets = []; te.bullets.push("Neuer Bullet Point"); } return next; }
+            if (type === "delete_bullet") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { te.bullets.splice(textIdx, 1); } return next; }
             const te = next.images[imgIdx]?.texts;
             if (!te) return prev;
             if (type === "hl") {
