@@ -1,5 +1,5 @@
 // Bright Data Amazon keyword & review research endpoints
-export const config = { maxDuration: 120 };
+export const config = { maxDuration: 300 };
 
 const BD_BASE = 'https://api.brightdata.com/datasets/v3/scrape';
 const BD_TIMEOUT = 55000; // 55s timeout per request (Vercel has 120s max)
