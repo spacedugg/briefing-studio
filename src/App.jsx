@@ -598,14 +598,21 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
   // Restore from server on mount (may be higher than localStorage if tracked from another device/tab)
   useEffect(() => {
     if (!effectiveKey) { setRestored(true); return; }
-    fetch("/api/timesheet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "get", projectId: effectiveKey }) })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        if (d?.seconds > 0 && d.seconds > secsRef.current) setSecs(d.seconds);
-        setRestored(true);
-      })
-      .catch(() => setRestored(true));
-  }, [effectiveKey]);
+    const doRestore = (attempt = 1) => {
+      fetch("/api/timesheet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "get", asin: asin || undefined, projectId: effectiveKey }) })
+        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+        .then(d => {
+          if (d?.seconds > 0 && d.seconds > secsRef.current) setSecs(d.seconds);
+          setRestored(true); setSyncErr(false);
+        })
+        .catch(e => {
+          console.error("[time-restore] Failed (attempt " + attempt + "):", e.message);
+          if (attempt < 3) { setTimeout(() => doRestore(attempt + 1), 2000 * attempt); }
+          else { setRestored(true); setSyncErr(true); }
+        });
+    };
+    doRestore();
+  }, [effectiveKey, asin]);
   // Timer uses wall-clock time so it stays accurate even when the tab is in the background
   const startTimeRef = useRef(null);
   const startSecsRef = useRef(0);
@@ -621,20 +628,30 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
     }
     return () => clearInterval(iRef.current);
   }, [running]);
-  const syncToSheet = useCallback(async (s) => {
+  const syncToSheet = useCallback(async (s, retries = 2) => {
     if (!effectiveKey) return;
-    try {
-      const r = await fetch("/api/timesheet", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "update", productName, brand: brand || "", asin: asin || "", marketplace, seconds: s, projectId: effectiveKey, briefingUrl: briefingUrl || undefined, outputUrl: outputUrl || undefined }),
-      });
-      if (r.ok) {
-        const d = await r.json();
-        // Server may return higher seconds (time only increases)
-        if (d.seconds > secsRef.current) setSecs(d.seconds);
-        setSynced(true); setSyncErr(false);
-      } else { setSyncErr(true); }
-    } catch { setSyncErr(true); }
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const r = await fetch("/api/timesheet", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "update", productName, brand: brand || "", asin: asin || "", marketplace, seconds: s, projectId: effectiveKey, briefingUrl: briefingUrl || undefined, outputUrl: outputUrl || undefined }),
+        });
+        if (r.ok) {
+          const d = await r.json();
+          if (d.seconds > secsRef.current) setSecs(d.seconds);
+          setSynced(true); setSyncErr(false);
+          return;
+        }
+        const errText = await r.text().catch(() => "");
+        console.error("[time-sync] HTTP", r.status, errText);
+        if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
+        setSyncErr(true);
+      } catch (e) {
+        console.error("[time-sync] Error:", e.message);
+        if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
+        setSyncErr(true);
+      }
+    }
   }, [productName, brand, asin, marketplace, briefingUrl, outputUrl, effectiveKey]);
   useEffect(() => {
     if (syncRef.current) clearInterval(syncRef.current);
@@ -656,7 +673,7 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
   };
   const fmt = s => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60; return h > 0 ? `${h}:${m.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}` : `${m}:${ss.toString().padStart(2, "0")}`; };
   return <div style={{ ...glass, padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 0, borderLeft: "none", borderRight: "none", borderTop: "none" }}>
-    <div><div style={{ fontSize: 10, fontWeight: 800, color: V.teal, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 2 }}>Time Tracking</div><div style={{ fontSize: 11, color: V.textDim }}>{productName || "Briefing"}{synced && !syncErr ? <span style={{ fontSize: 9, color: V.emerald, marginLeft: 8 }}>synced</span> : ""}{syncErr ? <span style={{ fontSize: 9, color: V.rose, marginLeft: 8 }}>sync failed</span> : ""}{restored && secs > 0 && !running && !synced ? <span style={{ fontSize: 9, color: V.blue, marginLeft: 8 }}>restored</span> : ""}</div></div>
+    <div><div style={{ fontSize: 10, fontWeight: 800, color: V.teal, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 2 }}>Time Tracking</div><div style={{ fontSize: 11, color: V.textDim }}>{productName || "Briefing"}{synced && !syncErr ? <span style={{ fontSize: 9, color: V.emerald, marginLeft: 8 }}>synced</span> : ""}{syncErr ? <span style={{ fontSize: 10, fontWeight: 700, color: V.rose, marginLeft: 8, padding: "2px 6px", borderRadius: 4, background: `${V.rose}15` }}>Sync fehlgeschlagen — Zeit wird nur lokal gespeichert</span> : ""}{restored && secs > 0 && !running && !synced ? <span style={{ fontSize: 9, color: V.blue, marginLeft: 8 }}>restored</span> : ""}</div></div>
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
       <span style={{ fontSize: 28, fontWeight: 800, color: running ? V.teal : V.ink, fontVariantNumeric: "tabular-nums", fontFamily: FN }}>{fmt(secs)}</span>
       <button onClick={handleToggle} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: running ? V.rose : `linear-gradient(135deg, ${V.teal}, ${V.emerald})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN, minWidth: 80 }}>{running ? "Pause" : secs > 0 ? "Resume" : "Start"}</button>
@@ -1604,15 +1621,25 @@ export default function App() {
     if (m) {
       setDesignerLoading(true);
       const bId = m[1];
-      fetch("/api/briefing?id=" + bId).then(r => r.ok ? r.json() : null).then(d => {
+      fetch("/api/briefing?id=" + bId).then(async r => {
+        console.log("[load-briefing] GET /api/briefing?id=" + bId, "status:", r.status);
+        if (!r.ok) {
+          const errText = await r.text().catch(() => "");
+          console.error("[load-briefing] Error response:", r.status, errText);
+          throw new Error(`API ${r.status}: ${errText}`);
+        }
+        return r.json();
+      }).then(d => {
+        console.log("[load-briefing] Response:", d ? "has data" : "null", "briefing:", !!d?.data?.briefing, "product:", !!d?.data?.briefing?.product);
         if (d?.data?.briefing?.product) {
           setDesignerMode(d.data);
           setDesignerBriefingId(bId);
           setDesignerVersion(d.version || 1);
         } else {
-          setE("Briefing nicht gefunden. Der Link ist möglicherweise ungültig oder abgelaufen.");
+          const detail = !d ? "Keine Antwort" : !d.data ? "Keine Daten" : !d.data.briefing ? "Kein Briefing in Daten" : "Kein Produkt in Briefing";
+          setE(`Briefing nicht gefunden (${detail}). Der Link ist möglicherweise ungültig oder abgelaufen.`);
         }
-      }).catch(() => { setE("Briefing konnte nicht geladen werden. Bitte prüfe deine Verbindung."); }).finally(() => setDesignerLoading(false));
+      }).catch(e => { console.error("[load-briefing]", e); setE("Briefing konnte nicht geladen werden: " + e.message); }).finally(() => setDesignerLoading(false));
     }
   }, []);
   // Fetch server-side history when panel opens
@@ -1633,14 +1660,29 @@ export default function App() {
       console.log("[share] Response status:", res.status);
       if (res.ok) {
         const { id } = await res.json();
-        if (!sharedBriefingId) setSharedBriefingId(id);
-        const url = window.location.origin + "/d/" + (sharedBriefingId || id);
+        console.log("[share] Saved with ID:", id);
+        // Verify the save actually worked by reading it back
+        try {
+          const verifyRes = await fetch("/api/briefing?id=" + id);
+          const verifyData = verifyRes.ok ? await verifyRes.json() : null;
+          console.log("[share] Verify response:", verifyRes.status, verifyData ? "has data" : "no data", verifyData?.data?.briefing?.product ? "valid" : "INVALID");
+          if (!verifyRes.ok || !verifyData?.data?.briefing?.product) {
+            console.error("[share] Verification failed! Save returned ID but GET cannot find it.", { status: verifyRes.status, hasData: !!verifyData?.data, hasBriefing: !!verifyData?.data?.briefing });
+            setShareUrl("error:Briefing wurde gespeichert (ID: " + id + ") aber kann nicht geladen werden. Mögliches Datenbank-Problem. Prüfe TURSO_DATABASE_URL und TURSO_AUTH_TOKEN in Vercel.");
+            setShareLoading(false);
+            return;
+          }
+        } catch (verifyErr) {
+          console.error("[share] Verification fetch failed:", verifyErr.message);
+        }
+        setSharedBriefingId(id);
+        const url = window.location.origin + "/d/" + id;
         setShareUrl(url);
         try { await navigator.clipboard.writeText(url); } catch {}
       } else {
         const errText = await res.text().catch(() => "");
         console.error("[share] DB save failed:", res.status, errText);
-        setShareUrl("error");
+        setShareUrl("error:" + (errText || res.status));
       }
     } catch (err) {
       console.error("[share] Network error:", err);
@@ -1722,13 +1764,14 @@ export default function App() {
       // Step 3: Run AI analysis with all scraped + researched data
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
       const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7, h10Keywords || null);
-      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
+      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); setSharedBriefingId(null); saveH(result, a);
       // Auto-save to DB so Designer-Link works immediately
       try {
         const payload = { briefing: result, selections: { hlC: {}, shC: {}, bulSel: {}, bdgSel: {}, imgDisabled: {}, refImages: {}, links: {}, userAsin: a || "" } };
         const sr = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         if (sr.ok) { const { id } = await sr.json(); setSharedBriefingId(id); }
-      } catch (e) { console.warn("[auto-save] DB save failed:", e.message); }
+        else { const errText = await sr.text().catch(() => ""); console.error("[auto-save] DB save failed:", sr.status, errText); }
+      } catch (e) { console.error("[auto-save] DB save failed:", e.message); }
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, [txtDensity]);
@@ -1756,7 +1799,7 @@ export default function App() {
             <button onClick={() => setShowHist(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, position: "relative" }}>Verlauf</button>
             <button onClick={() => setShowLinks(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: showLinks ? V.blue : V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, border: showLinks ? `1.5px solid ${V.blue}40` : "1px solid rgba(0,0,0,0.08)" }}>Links</button>
             {sharedBriefingId && <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: `1.5px solid ${V.emerald}40`, background: `${V.emerald}10`, color: V.emerald, fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Speichern..." : "Speichern"}</button>}
-            <button onClick={() => { if (sharedBriefingId) { const url = window.location.origin + "/d/" + sharedBriefingId; setShareUrl(url); try { navigator.clipboard.writeText(url); } catch {} } else { shareDesignerLink(); } }} disabled={shareLoading && !sharedBriefingId} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: shareLoading && !sharedBriefingId ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30`, opacity: shareLoading && !sharedBriefingId ? 0.7 : 1 }}>{shareLoading && !sharedBriefingId ? "Erstellen..." : "Designer-Link"}</button>
+            <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30`, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Erstellen..." : "Designer-Link"}</button>
           </div>
         </div>
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
@@ -1827,7 +1870,7 @@ export default function App() {
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
       </div>
-      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl === "error" ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht gespeichert werden. Bitte versuche es erneut.</p></> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
+      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl?.startsWith("error") ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht in der Datenbank gespeichert werden.</p>{shareUrl.length > 6 && <p style={{ fontSize: 10, color: V.textDim, margin: "0 0 14px", wordBreak: "break-all" }}>Detail: {shareUrl.slice(6)}</p>}</> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
       {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic, p.h10, p.bs); }} onNo={() => setP(null)} />}
     </div>
   );

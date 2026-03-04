@@ -62,7 +62,7 @@ export default async function handler(req, res) {
 
     // ── GET: retrieve stored seconds (used on page load to restore timer) ──
     if (action === 'get') {
-      const key = projectId || asin;
+      const key = asin || projectId;
       if (!key) return res.status(400).json({ error: 'Missing projectId or asin' });
       const rowIndex = findRow(asin, projectId);
       if (rowIndex > 0) {
