@@ -107,6 +107,21 @@ export default async function handler(req, res) {
       // Row order: Project ID, Product, Brand, ASIN, Amazon Link, Marketplace, Briefing Link, Output Folder, Time, Hours, Cost USD, Cost EUR, Last Updated
       const rowData = [projectId, productName || '', brand || '', asin || '', amazonLink || existingAmazonLink, marketplace || '', briefingUrl || existingBriefingUrl, outputUrl || existingOutputUrl, timeFormatted, hours, costUsd, costEur, timestamp];
 
+      // Ensure header row exists and matches current layout (auto-fix old sheets missing columns)
+      const needsHeaderUpdate = rows.length === 0 || rows[0].length !== HEADERS.length || HEADERS.some((h, i) => rows[0][i] !== h);
+      if (needsHeaderUpdate) {
+        const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A1:M1?valueInputOption=RAW`;
+        const headerRes = await fetch(headerUrl, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: [HEADERS] }),
+        });
+        if (!headerRes.ok) {
+          const err = await headerRes.json().catch(() => ({}));
+          return res.status(500).json({ error: `Failed to update header: ${err.error?.message || headerRes.status}` });
+        }
+      }
+
       if (rowIndex > 0) {
         // Update existing row (same ASIN)
         const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${rowIndex + 1}:M${rowIndex + 1}?valueInputOption=RAW`;
@@ -120,19 +135,6 @@ export default async function handler(req, res) {
           return res.status(500).json({ error: `Failed to update row: ${err.error?.message || updateRes.status}` });
         }
       } else {
-        // Ensure header row exists
-        if (rows.length === 0) {
-          const headerUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A1:M1?valueInputOption=RAW`;
-          const headerRes = await fetch(headerUrl, {
-            method: 'PUT',
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ values: [HEADERS] }),
-          });
-          if (!headerRes.ok) {
-            const err = await headerRes.json().catch(() => ({}));
-            return res.status(500).json({ error: `Failed to create header: ${err.error?.message || headerRes.status}` });
-          }
-        }
         // Append new row
         const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A:M:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
         const appendRes = await fetch(appendUrl, {

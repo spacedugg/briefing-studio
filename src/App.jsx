@@ -520,6 +520,15 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
     if (running) { syncRef.current = setInterval(() => syncToSheet(secsRef.current), 10000); }
     return () => clearInterval(syncRef.current);
   }, [running, syncToSheet]);
+  // Re-sync when briefingUrl or outputUrl become available (they may arrive after first sync)
+  const prevUrlsRef = useRef({ briefingUrl: "", outputUrl: "" });
+  useEffect(() => {
+    const prev = prevUrlsRef.current;
+    if (secsRef.current > 0 && ((!prev.briefingUrl && briefingUrl) || (!prev.outputUrl && outputUrl))) {
+      syncToSheet(secsRef.current);
+    }
+    prevUrlsRef.current = { briefingUrl, outputUrl };
+  }, [briefingUrl, outputUrl, syncToSheet]);
   const handleToggle = () => {
     if (running && secs > 0) syncToSheet(secs);
     setRunning(r => !r);
