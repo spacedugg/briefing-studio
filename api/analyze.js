@@ -1,3 +1,9 @@
+// Allow larger request bodies (reference images can be several MB)
+export const config = {
+  maxDuration: 60,
+  api: { bodyParser: { sizeLimit: '10mb' } },
+};
+
 export default async function handler(req, res) {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
