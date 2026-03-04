@@ -331,6 +331,7 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 16000,
+        stream: true,
         system: "Amazon Listing Analyst. Antworte NUR mit validem JSON. Kein Markdown/Codeblocks/Text. Antwort beginnt mit { und endet mit }.",
         messages: [{ role: "user", content: userContent }],
         tools: [{ type: "web_search_20250305", name: "web_search" }],
@@ -357,6 +358,30 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
   }
   // ── Read SSE stream from server ──
   onS("KI analysiert...");
+  // Fallback: if server returned JSON instead of SSE (e.g. cached old version), parse directly
+  const ct = r.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    const d = await r.json();
+    if (d.stop_reason === "max_tokens") throw new Error("Antwort wurde abgeschnitten (Token-Limit). Bitte versuche es erneut.");
+    const textBlocks = (d.content || []).filter(i => i.type === "text").map(i => i.text).filter(Boolean);
+    if (!textBlocks.length) throw new Error("Keine Antwort erhalten.");
+    onS("Erstelle Briefing...");
+    let p = null;
+    for (const block of textBlocks) {
+      const cl = block.replace(/```json\s*|```\s*/g, "").trim();
+      try { p = JSON.parse(cl); break; } catch {}
+      const ex = extractJSON(cl); if (ex) { try { p = JSON.parse(ex); break; } catch {} }
+    }
+    if (!p) {
+      const full = textBlocks.join("\n").replace(/```json\s*|```\s*/g, "").trim();
+      try { p = JSON.parse(full); } catch {}
+      if (!p) { const ex = extractJSON(full); if (ex) { try { p = JSON.parse(ex); } catch {} } }
+      if (!p) { const m = full.match(/\{[\s\S]*\}/); if (m) { try { p = JSON.parse(m[0]); } catch {} } }
+    }
+    if (!p) throw new Error("JSON konnte nicht geparst werden. Bitte versuche es erneut.");
+    if (!p.product || !p.images) throw new Error("Unvollstaendige Antwort: 'product' oder 'images' fehlt. Bitte erneut versuchen.");
+    return p;
+  }
   const reader = r.body.getReader();
   const decoder = new TextDecoder();
   let sseBuffer = "";
