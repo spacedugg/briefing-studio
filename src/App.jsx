@@ -355,10 +355,73 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
     const desc = statusMessages[r.status] || "Unbekannter Fehler";
     throw new Error(`API-Fehler ${r.status}: ${desc}${detail ? ` (${detail})` : ""}`);
   }
-  onS("Analysiere Ergebnisse...");
-  const d = await r.json();
-  if (d.stop_reason === "max_tokens") throw new Error("Antwort wurde abgeschnitten (Token-Limit). Bitte versuche es erneut.");
-  const textBlocks = (d.content || []).filter(i => i.type === "text").map(i => i.text).filter(Boolean);
+  // ── Read SSE stream from server ──
+  onS("KI analysiert...");
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let sseBuffer = "";
+  const contentBlocks = []; // {type, text, ...}
+  let stopReason = null;
+  let lastDataTime = Date.now();
+  const STALL_TIMEOUT = 90000; // 90s without data = stalled
+  // Stall detection: check every 5s if data stopped flowing
+  const stallChecker = setInterval(() => {
+    const elapsed = Date.now() - lastDataTime;
+    if (elapsed > STALL_TIMEOUT) {
+      reader.cancel();
+      clearInterval(stallChecker);
+    } else if (elapsed > 30000) {
+      onS("KI arbeitet noch... (lange Analyse)");
+    }
+  }, 5000);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lastDataTime = Date.now();
+      sseBuffer += decoder.decode(value, { stream: true });
+      // Parse SSE events from buffer
+      const lines = sseBuffer.split("\n");
+      sseBuffer = lines.pop() || ""; // keep incomplete line
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const raw = line.slice(6).trim();
+        if (raw === "[DONE]") continue;
+        let evt;
+        try { evt = JSON.parse(raw); } catch { continue; }
+        const t = evt.type;
+        if (t === "message_start") {
+          // noop — message metadata
+        } else if (t === "content_block_start") {
+          contentBlocks.push({ type: evt.content_block?.type || "text", text: "" });
+        } else if (t === "content_block_delta") {
+          const delta = evt.delta;
+          if (delta?.type === "text_delta" && delta.text) {
+            const idx = contentBlocks.length - 1;
+            if (idx >= 0) contentBlocks[idx].text += delta.text;
+          }
+          // Live status based on what Claude is doing
+          if (delta?.type === "text_delta") onS("Schreibt Briefing...");
+          if (delta?.type === "input_json_delta") onS("Web-Recherche...");
+        } else if (t === "content_block_stop") {
+          // block finished
+        } else if (t === "message_delta") {
+          if (evt.delta?.stop_reason) stopReason = evt.delta.stop_reason;
+        } else if (t === "message_stop") {
+          // done
+        } else if (t === "error") {
+          throw new Error(evt.error?.message || "Stream-Fehler");
+        }
+      }
+    }
+  } finally {
+    clearInterval(stallChecker);
+  }
+  if (Date.now() - lastDataTime > STALL_TIMEOUT) {
+    throw new Error("Verbindung abgebrochen — keine Daten mehr vom KI-Service. Bitte erneut versuchen.");
+  }
+  if (stopReason === "max_tokens") throw new Error("Antwort wurde abgeschnitten (Token-Limit). Bitte versuche es erneut.");
+  const textBlocks = contentBlocks.filter(b => b.type === "text" && b.text).map(b => b.text);
   if (!textBlocks.length) throw new Error("Keine Antwort erhalten.");
   onS("Erstelle Briefing...");
   let p = null;

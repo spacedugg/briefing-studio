@@ -1,5 +1,5 @@
 // Allow longer execution for Bright Data API calls (polling may take time)
-export const config = { maxDuration: 120 };
+export const config = { maxDuration: 300 };
 
 const DOMAINS = {
   'Amazon.de': 'amazon.de', 'Amazon.com': 'amazon.com', 'Amazon.co.uk': 'amazon.co.uk',
