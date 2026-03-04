@@ -1522,7 +1522,6 @@ export default function App() {
     if (!data) return;
     setShareLoading(true);
     const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } } };
-    // If we already shared this briefing, update it (same URL, new version)
     if (sharedBriefingId) payload._updateId = sharedBriefingId;
     try {
       const bodyStr = JSON.stringify(payload);
@@ -1538,15 +1537,11 @@ export default function App() {
       } else {
         const errText = await res.text().catch(() => "");
         console.error("[share] DB save failed:", res.status, errText);
-        // Fallback: compressed hash URL
-        const enc = await encodeBriefing(payload);
-        if (enc) { const url = window.location.origin + "/#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
+        setShareUrl("error");
       }
     } catch (err) {
       console.error("[share] Network error:", err);
-      // Fallback: compressed hash URL
-      const enc = await encodeBriefing(payload);
-      if (enc) { const url = window.location.origin + "/#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
+      setShareUrl("error");
     }
     setShareLoading(false);
   }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId]);
@@ -1625,6 +1620,12 @@ export default function App() {
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
       const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7, h10Keywords || null);
       setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
+      // Auto-save to DB so Designer-Link works immediately
+      try {
+        const payload = { briefing: result, selections: { hlC: {}, shC: {}, bulSel: {}, bdgSel: {}, imgDisabled: {}, refImages: {}, links: {} } };
+        const sr = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        if (sr.ok) { const { id } = await sr.json(); setSharedBriefingId(id); }
+      } catch (e) { console.warn("[auto-save] DB save failed:", e.message); }
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, [txtDensity]);
@@ -1723,7 +1724,7 @@ export default function App() {
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
       </div>
-      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /><button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
+      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl === "error" ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht gespeichert werden. Bitte versuche es erneut.</p></> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
       {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic, p.h10, p.bs); }} onNo={() => setP(null)} />}
     </div>
   );
