@@ -1621,7 +1621,7 @@ export default function App() {
     if (m) {
       setDesignerLoading(true);
       const bId = m[1];
-      fetch("/api/briefing?id=" + bId).then(async r => {
+      fetch("/api/briefing?id=" + bId + "&_=" + Date.now()).then(async r => {
         console.log("[load-briefing] GET /api/briefing?id=" + bId, "status:", r.status);
         if (!r.ok) {
           const errText = await r.text().catch(() => "");
@@ -1663,7 +1663,7 @@ export default function App() {
         console.log("[share] Saved with ID:", id);
         // Verify the save actually worked by reading it back
         try {
-          const verifyRes = await fetch("/api/briefing?id=" + id);
+          const verifyRes = await fetch("/api/briefing?id=" + id + "&_=" + Date.now());
           const verifyData = verifyRes.ok ? await verifyRes.json() : null;
           console.log("[share] Verify response:", verifyRes.status, verifyData ? "has data" : "no data", verifyData?.data?.briefing?.product ? "valid" : "INVALID");
           if (!verifyRes.ok || !verifyData?.data?.briefing?.product) {
