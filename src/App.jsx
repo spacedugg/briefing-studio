@@ -347,6 +347,7 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
       429: "Rate-Limit erreicht — zu viele Anfragen. Bitte 30 Sekunden warten und erneut versuchen",
       500: "Interner Serverfehler — bitte erneut versuchen",
       503: "KI-Service vorübergehend nicht verfügbar (Überlastung). Bitte 1-2 Minuten warten und erneut versuchen",
+      504: "Zeitüberschreitung — die Analyse hat zu lange gedauert. Bitte erneut versuchen (evtl. weniger Referenzbilder nutzen)",
       529: "KI-Service überlastet. Bitte einige Minuten warten und erneut versuchen",
     };
     let detail = "";

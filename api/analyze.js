@@ -1,6 +1,6 @@
 // Allow larger request bodies (reference images can be several MB)
 export const config = {
-  maxDuration: 60,
+  maxDuration: 120,
   api: { bodyParser: { sizeLimit: '10mb' } },
 };
 
