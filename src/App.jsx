@@ -315,7 +315,7 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
   let userContent;
   if (refData?.images?.length > 0) {
     // Vision mode: send reference images + text prompt
-    const imgBlocks = refData.images.slice(0, 7).map((img, i) => {
+    const imgBlocks = refData.images.slice(0, 7).filter(img => img?.base64).map((img, i) => {
       const raw = img.base64.replace(/^data:[^;]+;base64,/, "");
       const mt = img.base64.match(/^data:([^;]+);/)?.[1] || "image/jpeg";
       return { type: "image", source: { type: "base64", media_type: mt, data: raw } };
@@ -338,9 +338,21 @@ async function runAnalysis(asin, mp, pi, ft, onS, productData, density, keywordD
     });
   } catch { throw new Error("Netzwerkfehler: API nicht erreichbar."); }
   if (!r.ok) {
-    let m = "API-Fehler " + r.status;
-    try { const e = await r.json(); m = e.error?.message || m; } catch {}
-    throw new Error(m);
+    const statusMessages = {
+      400: "Ungültige Anfrage — bitte Eingaben prüfen",
+      401: "API-Key ungültig oder nicht konfiguriert",
+      403: "Zugriff verweigert — API-Key hat keine Berechtigung",
+      404: "API-Endpunkt nicht gefunden",
+      413: "Anfrage zu groß — zu viele Referenzbilder oder zu langer Text",
+      429: "Rate-Limit erreicht — zu viele Anfragen. Bitte 30 Sekunden warten und erneut versuchen",
+      500: "Interner Serverfehler — bitte erneut versuchen",
+      503: "KI-Service vorübergehend nicht verfügbar (Überlastung). Bitte 1-2 Minuten warten und erneut versuchen",
+      529: "KI-Service überlastet. Bitte einige Minuten warten und erneut versuchen",
+    };
+    let detail = "";
+    try { const e = await r.json(); detail = e.error?.message || ""; } catch {}
+    const desc = statusMessages[r.status] || "Unbekannter Fehler";
+    throw new Error(`API-Fehler ${r.status}: ${desc}${detail ? ` (${detail})` : ""}`);
   }
   onS("Analysiere Ergebnisse...");
   const d = await r.json();
@@ -468,8 +480,10 @@ const AsinNotFoundErr = ({ onReset }) => <div style={{ position: "fixed", inset:
 const ScrapeErr = ({ error, onReset }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }}><div style={{ ...glass, maxWidth: 480, width: "100%", padding: "36px 32px", background: "rgba(255,255,255,0.92)", textAlign: "center" }}><div style={{ width: 56, height: 56, borderRadius: 99, background: `${V.orange}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><span style={{ fontSize: 28, color: V.orange }}>⚠</span></div><div style={{ fontSize: 20, fontWeight: 800, color: V.orange, marginBottom: 8 }}>Scraping fehlgeschlagen</div><p style={{ fontSize: 14, color: V.text, lineHeight: 1.7, margin: "0 0 12px" }}>Die Produktdaten konnten nicht von Amazon abgerufen werden. Das kann an der Bright Data API liegen.</p><div style={{ ...gS, padding: "10px 14px", fontSize: 12, color: V.rose, fontFamily: "monospace", textAlign: "left", wordBreak: "break-all", marginBottom: 20 }}>{error}</div><button onClick={onReset} style={{ padding: "12px 28px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}35` }}>Erneut versuchen</button></div></div>;
 
 // ═══════ TIME TRACKER (persistent per ASIN, restores on reload, time only increases) ═══════
-function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outputUrl }) {
-  const lsKey = asin ? `tt_${asin.toUpperCase()}` : null;
+function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outputUrl, projectId }) {
+  // Use ASIN as key if available, otherwise briefingId (projectId)
+  const effectiveKey = asin || projectId || null;
+  const lsKey = effectiveKey ? `tt_${effectiveKey.toUpperCase()}` : null;
   // Restore from localStorage immediately (fast), then upgrade from server
   const initSecs = () => {
     if (!lsKey) return 0;
@@ -494,15 +508,15 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
   }, [secs, lsKey]);
   // Restore from server on mount (may be higher than localStorage if tracked from another device/tab)
   useEffect(() => {
-    if (!asin) { setRestored(true); return; }
-    fetch("/api/timesheet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "get", asin }) })
+    if (!effectiveKey) { setRestored(true); return; }
+    fetch("/api/timesheet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "get", projectId: effectiveKey }) })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.seconds > 0 && d.seconds > secsRef.current) setSecs(d.seconds);
         setRestored(true);
       })
       .catch(() => setRestored(true));
-  }, [asin]);
+  }, [effectiveKey]);
   // Timer uses wall-clock time so it stays accurate even when the tab is in the background
   const startTimeRef = useRef(null);
   const startSecsRef = useRef(0);
@@ -519,11 +533,11 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
     return () => clearInterval(iRef.current);
   }, [running]);
   const syncToSheet = useCallback(async (s) => {
-    if (!asin) return;
+    if (!effectiveKey) return;
     try {
       const r = await fetch("/api/timesheet", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "update", productName, brand, asin, marketplace, seconds: s, briefingUrl: briefingUrl || undefined, outputUrl: outputUrl || undefined }),
+        body: JSON.stringify({ action: "update", productName, brand: brand || "", asin: asin || "", marketplace, seconds: s, projectId: effectiveKey, briefingUrl: briefingUrl || undefined, outputUrl: outputUrl || undefined }),
       });
       if (r.ok) {
         const d = await r.json();
@@ -532,7 +546,7 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
         setSynced(true); setSyncErr(false);
       } else { setSyncErr(true); }
     } catch { setSyncErr(true); }
-  }, [productName, brand, asin, marketplace, briefingUrl, outputUrl]);
+  }, [productName, brand, asin, marketplace, briefingUrl, outputUrl, effectiveKey]);
   useEffect(() => {
     if (syncRef.current) clearInterval(syncRef.current);
     if (running) { syncRef.current = setInterval(() => syncToSheet(secsRef.current), 10000); }
@@ -1090,7 +1104,7 @@ function FileNameCopy({ name }) {
   return <span onClick={() => { navigator.clipboard.writeText(name); set(true); setTimeout(() => set(false), 1200); }} style={{ fontSize: 12, fontWeight: 700, color: ok ? V.emerald : V.violet, padding: "4px 10px", borderRadius: 6, background: ok ? `${V.emerald}15` : `${V.violet}10`, fontFamily: "monospace", cursor: "pointer", border: ok ? `1px solid ${V.emerald}30` : "1px solid transparent", transition: "all 0.15s", userSelect: "all" }}>{ok ? "Copied!" : name}</span>;
 }
 // ═══════ DESIGNER VIEW (standalone shareable page - final decisions only) ═══════
-function DesignerView({ D: initialD, selections: initialSelections, briefingId, serverVersion }) {
+function DesignerView({ D: initialD, selections: initialSelections, briefingId, serverVersion, userAsin: initialUserAsin }) {
   const [liveD, setLiveD] = useState(initialD);
   const [liveSelections, setLiveSelections] = useState(initialSelections);
   const D = liveD;
@@ -1239,7 +1253,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
       <Orbs /><style>{`*, *::before, *::after { box-sizing: border-box; } @media print { body { background: white !important; } } @keyframes spin{to{transform:rotate(360deg)}}`}</style>
       {/* Sticky Time Tracker */}
       <div style={{ position: "sticky", top: 0, zIndex: 100 }}>
-        <TimeTracker productName={D.product?.name} brand={D.product?.brand} asin={D.product?.sku} marketplace={D.product?.marketplace} briefingUrl={briefingId ? (window.location.origin + "/d/" + briefingId) : ""} outputUrl={links.outputUrl || ""} />
+        <TimeTracker productName={D.product?.name} brand={initialUserAsin ? (D.product?.brand || "") : ""} asin={initialUserAsin || ""} marketplace={D.product?.marketplace} briefingUrl={briefingId ? (window.location.origin + "/d/" + briefingId) : ""} outputUrl={links.outputUrl || ""} projectId={briefingId || ""} />
       </div>
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 20px 80px", position: "relative", zIndex: 1 }}>
         {/* Update banner — auto-applied, shows what changed */}
@@ -1521,8 +1535,7 @@ export default function App() {
   const shareDesignerLink = useCallback(async () => {
     if (!data) return;
     setShareLoading(true);
-    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } } };
-    // If we already shared this briefing, update it (same URL, new version)
+    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null }, userAsin: curAsin || "" } };
     if (sharedBriefingId) payload._updateId = sharedBriefingId;
     try {
       const bodyStr = JSON.stringify(payload);
@@ -1538,32 +1551,28 @@ export default function App() {
       } else {
         const errText = await res.text().catch(() => "");
         console.error("[share] DB save failed:", res.status, errText);
-        // Fallback: compressed hash URL
-        const enc = await encodeBriefing(payload);
-        if (enc) { const url = window.location.origin + "/#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
+        setShareUrl("error");
       }
     } catch (err) {
       console.error("[share] Network error:", err);
-      // Fallback: compressed hash URL
-      const enc = await encodeBriefing(payload);
-      if (enc) { const url = window.location.origin + "/#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
+      setShareUrl("error");
     }
     setShareLoading(false);
-  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId]);
+  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId, curAsin]);
   // Auto-sync changes to designer link whenever data/selections change (debounced 3s)
   const autoSyncRef = useRef(null);
   useEffect(() => {
     if (!sharedBriefingId || !data) return;
     if (autoSyncRef.current) clearTimeout(autoSyncRef.current);
     autoSyncRef.current = setTimeout(async () => {
-      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } }, _updateId: sharedBriefingId };
+      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null }, userAsin: curAsin || "" }, _updateId: sharedBriefingId };
       try {
         const r = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         if (!r.ok) console.warn("[auto-sync] Failed:", r.status, await r.text().catch(() => ""));
       } catch (e) { console.warn("[auto-sync] Error:", e.message); }
     }, 3000);
     return () => clearTimeout(autoSyncRef.current);
-  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId]);
+  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId, curAsin]);
   const go = useCallback(async (a, m, p, f, refData, imgCount, h10Keywords, bestsellerAsin) => {
     setL(true); setE(null); setSt("Starte...");
     try {
@@ -1625,12 +1634,18 @@ export default function App() {
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
       const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7, h10Keywords || null);
       setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); saveH(result, a);
+      // Auto-save to DB so Designer-Link works immediately
+      try {
+        const payload = { briefing: result, selections: { hlC: {}, shC: {}, bulSel: {}, bdgSel: {}, imgDisabled: {}, refImages: {}, links: {}, userAsin: a || "" } };
+        const sr = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        if (sr.ok) { const { id } = await sr.json(); setSharedBriefingId(id); }
+      } catch (e) { console.warn("[auto-save] DB save failed:", e.message); }
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, [txtDensity]);
   const goNew = useCallback((a, m, p, f, ref, ic, h10, bs) => { data ? setP({ a, m, p, f, ref, ic, h10, bs }) : go(a, m, p, f, ref, ic, h10, bs); }, [data, go]);
   // Standalone views (no app features visible)
-  if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} briefingId={designerBriefingId} serverVersion={designerVersion} />;
+  if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} briefingId={designerBriefingId} serverVersion={designerVersion} userAsin={designerMode.selections?.userAsin || ""} />;
   if (designerLoading) return <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, display: "flex", justifyContent: "center", alignItems: "center" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><div style={{ textAlign: "center" }}><div style={{ width: 32, height: 32, border: `3px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} /><div style={{ fontSize: 14, fontWeight: 700, color: V.textMed }}>Designer Briefing wird geladen...</div></div></div>;
   if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(briefingData, selections, briefingId) => {
     setData(briefingData); setTab("b"); setSN(false);
@@ -1723,7 +1738,7 @@ export default function App() {
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
       </div>
-      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /><button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
+      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl === "error" ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht gespeichert werden. Bitte versuche es erneut.</p></> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
       {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic, p.h10, p.bs); }} onNo={() => setP(null)} />}
     </div>
   );

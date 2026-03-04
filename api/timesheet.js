@@ -24,7 +24,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Google Sheets credentials not configured. Set GOOGLE_SHEETS_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY in env.' });
   }
 
-  const { action, productName, brand, asin, marketplace, seconds, briefingUrl, outputUrl } = req.body;
+  const { action, productName, brand, asin, marketplace, seconds, briefingUrl, outputUrl, projectId } = req.body;
   if (!action) return res.status(400).json({ error: 'Missing action' });
 
   try {
@@ -41,19 +41,30 @@ export default async function handler(req, res) {
     const readData = await readRes.json();
     const rows = readData.values || [];
 
-    // Find existing row by ASIN (column D, index 3) — deduplicate by ASIN
-    const findByAsin = (targetAsin) => {
-      if (!targetAsin) return -1;
-      for (let i = 1; i < rows.length; i++) {
-        if ((rows[i][COL.asin] || '').trim().toUpperCase() === targetAsin.trim().toUpperCase()) return i;
+    // Find existing row by ASIN (column D, index 3) or Project ID (column A, index 0)
+    const findRow = (targetAsin, targetProjectId) => {
+      // First try ASIN match (most specific)
+      if (targetAsin) {
+        for (let i = 1; i < rows.length; i++) {
+          if ((rows[i][COL.asin] || '').trim().toUpperCase() === targetAsin.trim().toUpperCase()) return i;
+        }
+      }
+      // Fallback: match by Project ID (briefingId)
+      if (targetProjectId) {
+        for (let i = 1; i < rows.length; i++) {
+          if ((rows[i][0] || '').trim().toUpperCase() === targetProjectId.trim().toUpperCase()) return i;
+        }
       }
       return -1;
     };
+    // Legacy alias
+    const findByAsin = (targetAsin) => findRow(targetAsin, null);
 
-    // ── GET: retrieve stored seconds for an ASIN (used on page load to restore timer) ──
+    // ── GET: retrieve stored seconds (used on page load to restore timer) ──
     if (action === 'get') {
-      if (!asin) return res.status(400).json({ error: 'Missing asin' });
-      const rowIndex = findByAsin(asin);
+      const key = projectId || asin;
+      if (!key) return res.status(400).json({ error: 'Missing projectId or asin' });
+      const rowIndex = findRow(asin, projectId);
       if (rowIndex > 0) {
         const row = rows[rowIndex];
         const storedHours = parseFloat(row[COL.hours] || '0');
@@ -63,11 +74,12 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, seconds: 0 });
     }
 
-    // ── UPDATE: upsert time for an ASIN (only increases, never decreases) ──
+    // ── UPDATE: upsert time (only increases, never decreases) ──
     if (action === 'update') {
-      if (!asin || seconds === undefined) return res.status(400).json({ error: 'Missing asin or seconds' });
+      const key = projectId || asin;
+      if (!key || seconds === undefined) return res.status(400).json({ error: 'Missing projectId/asin or seconds' });
 
-      const rowIndex = findByAsin(asin);
+      const rowIndex = findRow(asin, projectId);
 
       // If row exists, enforce time can only increase
       let effectiveSeconds = seconds;
@@ -94,9 +106,9 @@ export default async function handler(req, res) {
       const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
       const timeFormatted = formatTime(effectiveSeconds);
 
-      // Use ASIN as the project ID for stable identification
-      const projectId = asin.trim().toUpperCase();
-      // Build Amazon product link from marketplace + ASIN
+      // Use ASIN as project ID if available, otherwise use briefingId (projectId)
+      const effectiveProjectId = asin ? asin.trim().toUpperCase() : (projectId || '').trim().toUpperCase();
+      // Build Amazon product link from marketplace + ASIN (only if ASIN exists)
       const mpDomain = (marketplace || 'Amazon.de').replace(/^Amazon\.?/i, '').toLowerCase() || 'de';
       const amazonLink = asin ? `https://www.amazon.${mpDomain === 'com' ? 'com' : mpDomain || 'de'}/dp/${asin.trim().toUpperCase()}` : '';
       // Preserve existing link columns when updating (don't overwrite with empty)
@@ -105,7 +117,8 @@ export default async function handler(req, res) {
       const existingAmazonLink = rowIndex > 0 ? (rows[rowIndex][COL.amazonLink] || '') : '';
 
       // Row order: Project ID, Product, Brand, ASIN, Amazon Link, Marketplace, Briefing Link, Output Folder, Time, Hours, Cost USD, Cost EUR, Last Updated
-      const rowData = [projectId, productName || '', brand || '', asin || '', amazonLink || existingAmazonLink, marketplace || '', briefingUrl || existingBriefingUrl, outputUrl || existingOutputUrl, timeFormatted, hours, costUsd, costEur, timestamp];
+      // When no user ASIN was entered, leave Brand and ASIN empty (can be filled manually)
+      const rowData = [effectiveProjectId, productName || '', brand || '', asin || '', amazonLink || existingAmazonLink, marketplace || '', briefingUrl || existingBriefingUrl, outputUrl || existingOutputUrl, timeFormatted, hours, costUsd, costEur, timestamp];
 
       // Ensure header row exists and matches current layout (auto-fix old sheets missing columns)
       const needsHeaderUpdate = rows.length === 0 || rows[0].length !== HEADERS.length || HEADERS.some((h, i) => rows[0][i] !== h);
@@ -147,17 +160,21 @@ export default async function handler(req, res) {
           return res.status(500).json({ error: `Failed to append row: ${err.error?.message || appendRes.status}` });
         }
 
-        // Post-append dedup: if another tab simultaneously created a row for the same ASIN,
+        // Post-append dedup: if another tab simultaneously created a row for the same project,
         // merge them (keep the one with the highest hours, delete the other)
         try {
+          if (effectiveProjectId) {
           const reReadRes = await fetch(readUrl, { headers: { Authorization: `Bearer ${token}` } });
           if (reReadRes.ok) {
             const reData = await reReadRes.json();
             const allRows = reData.values || [];
-            const targetAsin = asin.trim().toUpperCase();
+            const target = effectiveProjectId;
             const dupeIndices = [];
             for (let i = 1; i < allRows.length; i++) {
-              if ((allRows[i][COL.asin] || '').trim().toUpperCase() === targetAsin) dupeIndices.push(i);
+              // Match by Project ID (col A) or ASIN (col D)
+              const rowPid = (allRows[i][0] || '').trim().toUpperCase();
+              const rowAsin = (allRows[i][COL.asin] || '').trim().toUpperCase();
+              if (rowPid === target || (asin && rowAsin === asin.trim().toUpperCase())) dupeIndices.push(i);
             }
             if (dupeIndices.length > 1) {
               // Find the row with the highest hours
@@ -171,7 +188,7 @@ export default async function handler(req, res) {
               const mHours = (mergedSeconds / 3600).toFixed(2);
               const mCostUsd = (parseFloat(mHours) * 14).toFixed(2);
               const mCostEur = (parseFloat(mCostUsd) * eurRate).toFixed(2);
-              const mergedRow = [projectId, productName || '', brand || '', asin || '', amazonLink, marketplace || '', briefingUrl || '', outputUrl || '', formatTime(mergedSeconds), mHours, mCostUsd, mCostEur, timestamp];
+              const mergedRow = [effectiveProjectId, productName || '', brand || '', asin || '', amazonLink, marketplace || '', briefingUrl || '', outputUrl || '', formatTime(mergedSeconds), mHours, mCostUsd, mCostEur, timestamp];
               // Update the best row
               const mergeUrl = `https://sheets.googleapis.com/v4/spreadsheets/${GOOGLE_SHEETS_ID}/values/${encodeURIComponent(sheetName)}!A${bestIdx + 1}:M${bestIdx + 1}?valueInputOption=RAW`;
               await fetch(mergeUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [mergedRow] }) });
@@ -183,6 +200,7 @@ export default async function handler(req, res) {
                 await fetch(clearUrl, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: [emptyRow] }) });
               }
             }
+          }
           }
         } catch { /* dedup is best-effort, don't fail the request */ }
       }
