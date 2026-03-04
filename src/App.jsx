@@ -598,14 +598,21 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
   // Restore from server on mount (may be higher than localStorage if tracked from another device/tab)
   useEffect(() => {
     if (!effectiveKey) { setRestored(true); return; }
-    fetch("/api/timesheet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "get", projectId: effectiveKey }) })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        if (d?.seconds > 0 && d.seconds > secsRef.current) setSecs(d.seconds);
-        setRestored(true);
-      })
-      .catch(() => setRestored(true));
-  }, [effectiveKey]);
+    const doRestore = (attempt = 1) => {
+      fetch("/api/timesheet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "get", asin: asin || undefined, projectId: effectiveKey }) })
+        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+        .then(d => {
+          if (d?.seconds > 0 && d.seconds > secsRef.current) setSecs(d.seconds);
+          setRestored(true); setSyncErr(false);
+        })
+        .catch(e => {
+          console.error("[time-restore] Failed (attempt " + attempt + "):", e.message);
+          if (attempt < 3) { setTimeout(() => doRestore(attempt + 1), 2000 * attempt); }
+          else { setRestored(true); setSyncErr(true); }
+        });
+    };
+    doRestore();
+  }, [effectiveKey, asin]);
   // Timer uses wall-clock time so it stays accurate even when the tab is in the background
   const startTimeRef = useRef(null);
   const startSecsRef = useRef(0);
@@ -621,20 +628,30 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
     }
     return () => clearInterval(iRef.current);
   }, [running]);
-  const syncToSheet = useCallback(async (s) => {
+  const syncToSheet = useCallback(async (s, retries = 2) => {
     if (!effectiveKey) return;
-    try {
-      const r = await fetch("/api/timesheet", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "update", productName, brand: brand || "", asin: asin || "", marketplace, seconds: s, projectId: effectiveKey, briefingUrl: briefingUrl || undefined, outputUrl: outputUrl || undefined }),
-      });
-      if (r.ok) {
-        const d = await r.json();
-        // Server may return higher seconds (time only increases)
-        if (d.seconds > secsRef.current) setSecs(d.seconds);
-        setSynced(true); setSyncErr(false);
-      } else { setSyncErr(true); }
-    } catch { setSyncErr(true); }
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const r = await fetch("/api/timesheet", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "update", productName, brand: brand || "", asin: asin || "", marketplace, seconds: s, projectId: effectiveKey, briefingUrl: briefingUrl || undefined, outputUrl: outputUrl || undefined }),
+        });
+        if (r.ok) {
+          const d = await r.json();
+          if (d.seconds > secsRef.current) setSecs(d.seconds);
+          setSynced(true); setSyncErr(false);
+          return;
+        }
+        const errText = await r.text().catch(() => "");
+        console.error("[time-sync] HTTP", r.status, errText);
+        if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
+        setSyncErr(true);
+      } catch (e) {
+        console.error("[time-sync] Error:", e.message);
+        if (attempt < retries) { await new Promise(ok => setTimeout(ok, 2000)); continue; }
+        setSyncErr(true);
+      }
+    }
   }, [productName, brand, asin, marketplace, briefingUrl, outputUrl, effectiveKey]);
   useEffect(() => {
     if (syncRef.current) clearInterval(syncRef.current);
@@ -656,7 +673,7 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
   };
   const fmt = s => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60; return h > 0 ? `${h}:${m.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}` : `${m}:${ss.toString().padStart(2, "0")}`; };
   return <div style={{ ...glass, padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, borderRadius: 0, borderLeft: "none", borderRight: "none", borderTop: "none" }}>
-    <div><div style={{ fontSize: 10, fontWeight: 800, color: V.teal, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 2 }}>Time Tracking</div><div style={{ fontSize: 11, color: V.textDim }}>{productName || "Briefing"}{synced && !syncErr ? <span style={{ fontSize: 9, color: V.emerald, marginLeft: 8 }}>synced</span> : ""}{syncErr ? <span style={{ fontSize: 9, color: V.rose, marginLeft: 8 }}>sync failed</span> : ""}{restored && secs > 0 && !running && !synced ? <span style={{ fontSize: 9, color: V.blue, marginLeft: 8 }}>restored</span> : ""}</div></div>
+    <div><div style={{ fontSize: 10, fontWeight: 800, color: V.teal, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 2 }}>Time Tracking</div><div style={{ fontSize: 11, color: V.textDim }}>{productName || "Briefing"}{synced && !syncErr ? <span style={{ fontSize: 9, color: V.emerald, marginLeft: 8 }}>synced</span> : ""}{syncErr ? <span style={{ fontSize: 10, fontWeight: 700, color: V.rose, marginLeft: 8, padding: "2px 6px", borderRadius: 4, background: `${V.rose}15` }}>Sync fehlgeschlagen — Zeit wird nur lokal gespeichert</span> : ""}{restored && secs > 0 && !running && !synced ? <span style={{ fontSize: 9, color: V.blue, marginLeft: 8 }}>restored</span> : ""}</div></div>
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
       <span style={{ fontSize: 28, fontWeight: 800, color: running ? V.teal : V.ink, fontVariantNumeric: "tabular-nums", fontFamily: FN }}>{fmt(secs)}</span>
       <button onClick={handleToggle} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: running ? V.rose : `linear-gradient(135deg, ${V.teal}, ${V.emerald})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN, minWidth: 80 }}>{running ? "Pause" : secs > 0 ? "Resume" : "Start"}</button>
