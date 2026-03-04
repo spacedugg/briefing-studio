@@ -1,5 +1,5 @@
-// Allow longer execution for Bright Data API calls
-export const config = { maxDuration: 60 };
+// Allow longer execution for Bright Data API calls (polling may take time)
+export const config = { maxDuration: 120 };
 
 const DOMAINS = {
   'Amazon.de': 'amazon.de', 'Amazon.com': 'amazon.com', 'Amazon.co.uk': 'amazon.co.uk',
@@ -7,21 +7,74 @@ const DOMAINS = {
 };
 
 // ═══ Bright Data Scraper ═══
+const BD_POLL_INTERVAL = 5000; // 5s between polls
+const BD_MAX_POLLS = 18;       // max 90s polling
+
+async function pollSnapshot(snapshotId, apiKey) {
+  for (let i = 0; i < BD_MAX_POLLS; i++) {
+    await new Promise(r => setTimeout(r, BD_POLL_INTERVAL));
+    const pollRes = await fetch(
+      `https://api.brightdata.com/datasets/v3/snapshot/${snapshotId}?format=json`,
+      { headers: { 'Authorization': `Bearer ${apiKey}` } }
+    );
+    console.log(`[BD] Poll #${i + 1} snapshot ${snapshotId}: status=${pollRes.status}`);
+    if (pollRes.status === 200) {
+      const data = await pollRes.json();
+      if (Array.isArray(data) && data.length > 0) return data;
+      throw new Error(`Snapshot leer (${JSON.stringify(data).substring(0, 200)})`);
+    }
+    // 202 = still processing, keep polling
+    if (pollRes.status !== 202) {
+      const errText = await pollRes.text().catch(() => '');
+      throw new Error(`Snapshot-Poll fehlgeschlagen: ${pollRes.status} ${errText.substring(0, 200)}`);
+    }
+  }
+  throw new Error(`Bright Data Timeout nach ${BD_MAX_POLLS * BD_POLL_INTERVAL / 1000}s — Snapshot ${snapshotId} nicht fertig`);
+}
+
 async function scrapeBrightData(asin, domain, apiKey) {
   const url = `https://www.${domain}/dp/${asin}`;
   const bdRes = await fetch(
-    'https://api.brightdata.com/datasets/v3/scrape?dataset_id=gd_l7q7dkf244hwjntr0&notify=false&include_errors=true',
+    'https://api.brightdata.com/datasets/v3/scrape?dataset_id=gd_l7q7dkf244hwjntr0&notify=false&include_errors=true&format=json',
     {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ input: [{ url, zipcode: '', language: '' }] }),
+      body: JSON.stringify({ input: [{ url }] }),
     }
   );
-  if (!bdRes.ok) throw new Error(`Bright Data ${bdRes.status}`);
-  const results = await bdRes.json();
-  if (!results || !results.length) throw new Error('No results');
-  const p = results[0];
-  if (p.error) throw new Error(p.error);
+
+  const rawText = await bdRes.text();
+  console.log(`[BD] Response status=${bdRes.status}, body=${rawText.substring(0, 500)}`);
+
+  if (!bdRes.ok && bdRes.status !== 202) {
+    throw new Error(`Bright Data HTTP ${bdRes.status}: ${rawText.substring(0, 300)}`);
+  }
+
+  let parsed;
+  try { parsed = JSON.parse(rawText); } catch { throw new Error(`Bright Data JSON-Fehler: ${rawText.substring(0, 300)}`); }
+
+  // Case 1: Synchronous — direct array of results
+  if (Array.isArray(parsed) && parsed.length > 0) {
+    console.log(`[BD] Synchrone Antwort mit ${parsed.length} Ergebnis(sen)`);
+    const p = parsed[0];
+    if (p.error) throw new Error(`BD Scrape-Error: ${p.error}`);
+    return mapBrightDataResult(p);
+  }
+
+  // Case 2: Asynchronous — snapshot_id returned, need to poll
+  const snapshotId = parsed?.snapshot_id;
+  if (snapshotId) {
+    console.log(`[BD] Async-Modus, polling snapshot ${snapshotId}...`);
+    const results = await pollSnapshot(snapshotId, apiKey);
+    const p = results[0];
+    if (p.error) throw new Error(`BD Scrape-Error: ${p.error}`);
+    return mapBrightDataResult(p);
+  }
+
+  throw new Error(`Unerwartete Bright Data Antwort: ${rawText.substring(0, 300)}`);
+}
+
+function mapBrightDataResult(p) {
 
   // Map Bright Data response to our format
   const productData = {};
@@ -49,72 +102,6 @@ async function scrapeBrightData(asin, domain, apiKey) {
   }
 
   return { productData, imageUrls: imageUrls.slice(0, 7) };
-}
-
-// ═══ Direct Scraper (fallback) ═══
-async function scrapeDirect(asin, domain) {
-  const url = `https://www.${domain}/dp/${asin}`;
-  const userAgents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
-  ];
-  const ua = userAgents[Math.floor(Math.random() * userAgents.length)];
-  const isDE = domain === 'amazon.de';
-
-  const pageRes = await fetch(url, {
-    headers: {
-      'User-Agent': ua,
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': isDE ? 'de-DE,de;q=0.9,en;q=0.8' : 'en-US,en;q=0.9',
-      'Accept-Encoding': 'identity',
-      'Sec-Fetch-Dest': 'document', 'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'none', 'Sec-Fetch-User': '?1',
-    },
-  });
-  if (!pageRes.ok) throw new Error(`Amazon ${pageRes.status}`);
-  const html = await pageRes.text();
-
-  // Extract product data
-  const productData = {};
-  const titleMatch = html.match(/<span[^>]*id="productTitle"[^>]*>\s*([\s\S]*?)\s*<\/span>/);
-  if (titleMatch) productData.title = titleMatch[1].replace(/<[^>]+>/g, '').trim();
-  const brandMatch = html.match(/<a[^>]*id="bylineInfo"[^>]*>[^<]*?(?:Visit the |Besuche den |Brand:\s*|Marke:\s*)(.*?)(?:\s*Store|\s*Shop|<)/i)
-    || html.match(/"brand"\s*:\s*"([^"]+)"/);
-  if (brandMatch) productData.brand = brandMatch[1].replace(/<[^>]+>/g, '').trim();
-  const priceMatch = html.match(/<span[^>]*class="a-price-whole"[^>]*>(\d[\d.,]*)/);
-  if (priceMatch) productData.price = priceMatch[1] + (isDE ? '€' : '$');
-  const ratingMatch = html.match(/<span[^>]*class="a-icon-alt"[^>]*>\s*(\d[.,]\d)\s/);
-  if (ratingMatch) productData.rating = ratingMatch[1];
-  const reviewCountMatch = html.match(/<span[^>]*id="acrCustomerReviewText"[^>]*>\s*([\d.,]+)/);
-  if (reviewCountMatch) productData.reviewCount = reviewCountMatch[1];
-  const bulletsSection = html.match(/<div[^>]*id="feature-bullets"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/);
-  if (bulletsSection) {
-    productData.bullets = [...bulletsSection[1].matchAll(/<span[^>]*class="a-list-item"[^>]*>([\s\S]*?)<\/span>/g)]
-      .map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
-      .filter(b => b.length > 5 && b.length < 500);
-  }
-
-  // Extract images
-  let imageUrls = [];
-  const colorImagesMatch = html.match(/'colorImages'\s*:\s*\{[^}]*'initial'\s*:\s*(\[[^\]]+\])/);
-  if (colorImagesMatch) {
-    try { imageUrls = JSON.parse(colorImagesMatch[1].replace(/'/g, '"')).map(img => img.hiRes || img.large).filter(Boolean); } catch {}
-  }
-  if (!imageUrls.length) {
-    const hiRes = [...html.matchAll(/"hiRes"\s*:\s*"(https:\/\/m\.media-amazon\.com\/images\/I\/[^"]+)"/g)];
-    imageUrls = hiRes.map(m => m[1]);
-  }
-  if (!imageUrls.length) {
-    const dyn = [...html.matchAll(/data-a-dynamic-image="([^"]+)"/g)];
-    for (const m of dyn) { try { imageUrls.push(...Object.keys(JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))).filter(u => u.includes('images/I/'))); } catch {} }
-  }
-  if (!imageUrls.length) {
-    imageUrls = [...new Set([...html.matchAll(/https:\/\/m\.media-amazon\.com\/images\/I\/[A-Za-z0-9._%-]+\._(?:SL1500|SL1200|SL1000|SL800)_\.(?:jpg|png|webp)/g)].map(m => m[0]))];
-  }
-  imageUrls = [...new Set(imageUrls)].slice(0, 7).map(u => u.replace(/\._[A-Z]{2}\d+_\./, '._SL1500_.'));
-
-  return { productData, imageUrls };
 }
 
 // ═══ Fetch images as base64 ═══
