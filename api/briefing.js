@@ -17,11 +17,21 @@ function getDb() {
   return _db;
 }
 
-// Ensure table exists (runs once per cold start)
+// Ensure table exists and has all required columns
 let initialized = false;
 async function init() {
   if (initialized) return;
   const db = getDb();
+  // Check if table has the right schema by querying it
+  try {
+    await db.execute("SELECT id, data, created_at, updated_at, version FROM briefings LIMIT 0");
+    // All columns exist — table is good
+    initialized = true;
+    return;
+  } catch {
+    // Table missing or columns missing — rebuild
+  }
+  // Try creating the table (no-op if it exists)
   await db.execute(`
     CREATE TABLE IF NOT EXISTS briefings (
       id TEXT PRIMARY KEY,
@@ -31,10 +41,19 @@ async function init() {
       version INTEGER DEFAULT 1
     )
   `);
-  // Add columns if they don't exist (for existing tables)
-  try { await db.execute(`ALTER TABLE briefings ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))`); } catch {}
+  // Add columns for tables created by older code versions
+  // SQLite ALTER TABLE requires constant defaults (not expressions like datetime('now'))
+  try { await db.execute(`ALTER TABLE briefings ADD COLUMN updated_at TEXT`); } catch {}
   try { await db.execute(`ALTER TABLE briefings ADD COLUMN version INTEGER DEFAULT 1`); } catch {}
-  initialized = true;
+  try { await db.execute(`ALTER TABLE briefings ADD COLUMN created_at TEXT`); } catch {}
+  // Verify all columns now exist
+  try {
+    await db.execute("SELECT id, data, created_at, updated_at, version FROM briefings LIMIT 0");
+    initialized = true;
+  } catch (e) {
+    console.error("[briefing-api] Schema verification failed after init:", e.message);
+    throw new Error("Database schema incomplete: " + e.message);
+  }
 }
 
 // Short ID: 8 chars, base62 (URL-safe, no ambiguous chars)
