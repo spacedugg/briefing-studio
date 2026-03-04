@@ -1506,7 +1506,10 @@ export default function App() {
     // If we already shared this briefing, update it (same URL, new version)
     if (sharedBriefingId) payload._updateId = sharedBriefingId;
     try {
-      const res = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const bodyStr = JSON.stringify(payload);
+      console.log("[share] Payload size:", (bodyStr.length / 1024).toFixed(1) + "KB");
+      const res = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: bodyStr });
+      console.log("[share] Response status:", res.status);
       if (res.ok) {
         const { id } = await res.json();
         if (!sharedBriefingId) setSharedBriefingId(id);
@@ -1515,12 +1518,16 @@ export default function App() {
         try { await navigator.clipboard.writeText(url); } catch {}
       } else {
         const errText = await res.text().catch(() => "");
-        console.error("[share] Save failed:", res.status, errText);
-        alert("Briefing konnte nicht gespeichert werden (Fehler " + res.status + "). Bitte versuche es erneut.");
+        console.error("[share] DB save failed:", res.status, errText);
+        // Fallback: compressed hash URL
+        const enc = await encodeBriefing(payload);
+        if (enc) { const url = window.location.origin + "/#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
       }
     } catch (err) {
       console.error("[share] Network error:", err);
-      alert("Netzwerkfehler beim Speichern. Bitte prüfe deine Verbindung.");
+      // Fallback: compressed hash URL
+      const enc = await encodeBriefing(payload);
+      if (enc) { const url = window.location.origin + "/#d=" + enc; setShareUrl(url); try { await navigator.clipboard.writeText(url); } catch {} }
     }
     setShareLoading(false);
   }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId]);
@@ -1532,8 +1539,9 @@ export default function App() {
     autoSyncRef.current = setTimeout(async () => {
       const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null } }, _updateId: sharedBriefingId };
       try {
-        await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      } catch {}
+        const r = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        if (!r.ok) console.warn("[auto-sync] Failed:", r.status, await r.text().catch(() => ""));
+      } catch (e) { console.warn("[auto-sync] Error:", e.message); }
     }, 3000);
     return () => clearTimeout(autoSyncRef.current);
   }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId]);
