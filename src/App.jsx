@@ -1621,15 +1621,25 @@ export default function App() {
     if (m) {
       setDesignerLoading(true);
       const bId = m[1];
-      fetch("/api/briefing?id=" + bId).then(r => r.ok ? r.json() : null).then(d => {
+      fetch("/api/briefing?id=" + bId).then(async r => {
+        console.log("[load-briefing] GET /api/briefing?id=" + bId, "status:", r.status);
+        if (!r.ok) {
+          const errText = await r.text().catch(() => "");
+          console.error("[load-briefing] Error response:", r.status, errText);
+          throw new Error(`API ${r.status}: ${errText}`);
+        }
+        return r.json();
+      }).then(d => {
+        console.log("[load-briefing] Response:", d ? "has data" : "null", "briefing:", !!d?.data?.briefing, "product:", !!d?.data?.briefing?.product);
         if (d?.data?.briefing?.product) {
           setDesignerMode(d.data);
           setDesignerBriefingId(bId);
           setDesignerVersion(d.version || 1);
         } else {
-          setE("Briefing nicht gefunden. Der Link ist möglicherweise ungültig oder abgelaufen.");
+          const detail = !d ? "Keine Antwort" : !d.data ? "Keine Daten" : !d.data.briefing ? "Kein Briefing in Daten" : "Kein Produkt in Briefing";
+          setE(`Briefing nicht gefunden (${detail}). Der Link ist möglicherweise ungültig oder abgelaufen.`);
         }
-      }).catch(() => { setE("Briefing konnte nicht geladen werden. Bitte prüfe deine Verbindung."); }).finally(() => setDesignerLoading(false));
+      }).catch(e => { console.error("[load-briefing]", e); setE("Briefing konnte nicht geladen werden: " + e.message); }).finally(() => setDesignerLoading(false));
     }
   }, []);
   // Fetch server-side history when panel opens
@@ -1650,6 +1660,21 @@ export default function App() {
       console.log("[share] Response status:", res.status);
       if (res.ok) {
         const { id } = await res.json();
+        console.log("[share] Saved with ID:", id);
+        // Verify the save actually worked by reading it back
+        try {
+          const verifyRes = await fetch("/api/briefing?id=" + id);
+          const verifyData = verifyRes.ok ? await verifyRes.json() : null;
+          console.log("[share] Verify response:", verifyRes.status, verifyData ? "has data" : "no data", verifyData?.data?.briefing?.product ? "valid" : "INVALID");
+          if (!verifyRes.ok || !verifyData?.data?.briefing?.product) {
+            console.error("[share] Verification failed! Save returned ID but GET cannot find it.", { status: verifyRes.status, hasData: !!verifyData?.data, hasBriefing: !!verifyData?.data?.briefing });
+            setShareUrl("error:Briefing wurde gespeichert (ID: " + id + ") aber kann nicht geladen werden. Mögliches Datenbank-Problem. Prüfe TURSO_DATABASE_URL und TURSO_AUTH_TOKEN in Vercel.");
+            setShareLoading(false);
+            return;
+          }
+        } catch (verifyErr) {
+          console.error("[share] Verification fetch failed:", verifyErr.message);
+        }
         setSharedBriefingId(id);
         const url = window.location.origin + "/d/" + id;
         setShareUrl(url);
