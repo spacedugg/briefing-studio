@@ -568,7 +568,20 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
   const [hist, setHist] = useState([]);
   const [histLoading, setHistLoading] = useState(true);
   useEffect(() => {
-    fetch("/api/briefing?list=recent&limit=10").then(r => r.ok ? r.json() : { items: [] }).then(d => setHist(d.items || [])).catch(() => setHist(loadH())).finally(() => setHistLoading(false));
+    // Load from DB, fallback to localStorage if DB is empty or fails
+    fetch("/api/briefing?list=recent&limit=10")
+      .then(r => r.ok ? r.json() : { items: [] })
+      .then(d => {
+        const dbItems = (d.items || []).map(h => ({ ...h, source: "db" }));
+        if (dbItems.length > 0) { setHist(dbItems); }
+        else {
+          // DB empty → show localStorage history
+          const local = loadH().map(h => ({ ...h, source: "local" }));
+          setHist(local);
+        }
+      })
+      .catch(() => { setHist(loadH().map(h => ({ ...h, source: "local" }))); })
+      .finally(() => setHistLoading(false));
   }, []);
   const [imageCount, setImageCount] = useState(7);
   // Reference listing state
@@ -780,10 +793,16 @@ function StartScreen({ onStart, loading, status, error, onDismiss, onLoad, txtDe
             </div>
           </GC>
           {histLoading ? <GC style={{ padding: 20, textAlign: "center" }}><div style={{ width: 20, height: 20, border: `2px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto" }} /></GC> : hist.length > 0 && <GC style={{ padding: 0 }}><div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}><Lbl c={V.textMed}>Letzte Briefings</Lbl></div><div style={{ padding: "8px 12px" }}>{hist.map(h => <div key={h.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 10, cursor: "pointer" }} onClick={() => {
-            fetch("/api/briefing?id=" + h.id).then(r => r.ok ? r.json() : null).then(d => {
-              if (d?.data?.briefing?.product) onLoad(d.data.briefing, h.asin);
-            }).catch(() => {});
-          }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand}{h.asin ? ` · ${h.asin}` : ""}{h.marketplace ? ` · ${h.marketplace}` : ""}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC>}
+            if (h.source === "local" && h.data) {
+              // localStorage entry — data is inline
+              onLoad(h.data, null, null);
+            } else {
+              // DB entry — fetch full data with selections
+              fetch("/api/briefing?id=" + h.id).then(r => r.ok ? r.json() : null).then(d => {
+                if (d?.data?.briefing?.product) onLoad(d.data.briefing, d.data.selections || null, h.id);
+              }).catch(() => {});
+            }
+          }} onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.03)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><div><div style={{ fontSize: 13, fontWeight: 700, color: V.ink }}>{h.name || h.data?.product?.name || "?"}</div><div style={{ fontSize: 10, color: V.textDim }}>{h.brand || h.data?.product?.brand || ""}{h.asin ? ` · ${h.asin}` : ""}{h.marketplace ? ` · ${h.marketplace}` : ""}{h.source === "local" ? " · lokal" : ""}</div></div><span style={{ fontSize: 11, color: V.violet, fontWeight: 700 }}>Laden →</span></div>)}</div></GC>}
         </div>
       </div>
       {error === "ASIN_NOT_FOUND" && <AsinNotFoundErr onReset={onDismiss} />}
@@ -1613,7 +1632,16 @@ export default function App() {
   // Standalone views (no app features visible)
   if (designerMode) return <DesignerView D={designerMode.briefing} selections={designerMode.selections} briefingId={designerBriefingId} serverVersion={designerVersion} />;
   if (designerLoading) return <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, display: "flex", justifyContent: "center", alignItems: "center" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><div style={{ textAlign: "center" }}><div style={{ width: 32, height: 32, border: `3px solid ${V.violet}30`, borderTopColor: V.violet, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} /><div style={{ fontSize: 14, fontWeight: 700, color: V.textMed }}>Designer Briefing wird geladen...</div></div></div>;
-  if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(d, asin) => { setData(d); setTab("b"); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(asin || ""); setSN(false); }} txtDensity={txtDensity} setTD={setTD} />;
+  if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(briefingData, selections, briefingId) => {
+    setData(briefingData); setTab("b"); setSN(false);
+    const sel = selections || {};
+    setHlC(sel.hlC || {}); setShC(sel.shC || {}); setBulSel(sel.bulSel || {}); setBdgSel(sel.bdgSel || {});
+    setImgDisabled(sel.imgDisabled || {}); setRefImages(sel.refImages || {});
+    setCurAsin(briefingData.product?.sku || "");
+    if (briefingId) setSharedBriefingId(briefingId);
+    if (sel.links?.inputUrl) setInputUrl(sel.links.inputUrl);
+    if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
+  }} txtDensity={txtDensity} setTD={setTD} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
       <div style={{ ...glass, position: "sticky", top: 0, zIndex: 100, borderRadius: 0, borderLeft: "none", borderRight: "none", borderTop: "none" }}><div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px" }}>
