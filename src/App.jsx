@@ -570,7 +570,7 @@ const ScrapeErr = ({ error, onReset }) => <div style={{ position: "fixed", inset
 
 // ═══════ TIME TRACKER (persistent per ASIN, restores on reload, time only increases) ═══════
 function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outputUrl, projectId }) {
-  // Use ASIN as key if available, otherwise briefingId (projectId)
+  // Use ASIN as primary key — one timesheet row per ASIN; briefingId as fallback
   const effectiveKey = asin || projectId || null;
   const lsKey = effectiveKey ? `tt_${effectiveKey.toUpperCase()}` : null;
   // Restore from localStorage immediately (fast), then upgrade from server
@@ -1796,13 +1796,16 @@ export default function App() {
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
       const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7, h10Keywords || null);
       setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); setSharedBriefingId(null); saveH(result, a);
-      // Auto-save to DB so Designer-Link works immediately
-      try {
-        const payload = { briefing: result, selections: { hlC: {}, shC: {}, bulSel: {}, bdgSel: {}, imgDisabled: {}, refImages: {}, links: {}, userAsin: a || "" } };
-        const sr = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-        if (sr.ok) { const { id } = await sr.json(); setSharedBriefingId(id); }
-        else { const errText = await sr.text().catch(() => ""); console.error("[auto-save] DB save failed:", sr.status, errText); }
-      } catch (e) { console.error("[auto-save] DB save failed:", e.message); }
+      // Auto-save to DB with retry — every briefing must get a permanent ID
+      const autoSavePayload = { briefing: result, selections: { hlC: {}, shC: {}, bulSel: {}, bdgSel: {}, imgDisabled: {}, refImages: {}, links: {}, userAsin: a || "" } };
+      for (let att = 0; att < 3; att++) {
+        try {
+          const sr = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(autoSavePayload) });
+          if (sr.ok) { const { id } = await sr.json(); setSharedBriefingId(id); break; }
+          console.error("[auto-save] Attempt", att + 1, "failed:", sr.status);
+        } catch (e) { console.error("[auto-save] Attempt", att + 1, "error:", e.message); }
+        if (att < 2) await new Promise(ok => setTimeout(ok, 2000 * (att + 1)));
+      }
     } catch (e) { setE(e.message); }
     setL(false); setSt("");
   }, [txtDensity]);
