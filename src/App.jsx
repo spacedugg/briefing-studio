@@ -1383,7 +1383,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
       <Orbs /><style>{`*, *::before, *::after { box-sizing: border-box; } @media print { body { background: white !important; } } @keyframes spin{to{transform:rotate(360deg)}}`}</style>
       {/* Sticky Time Tracker */}
       <div style={{ position: "sticky", top: 0, zIndex: 100 }}>
-        <TimeTracker productName={D.product?.name} brand={initialUserAsin ? (D.product?.brand || "") : ""} asin={initialUserAsin || ""} marketplace={D.product?.marketplace} briefingUrl={briefingId ? (window.location.origin + "/d/" + briefingId) : ""} outputUrl={links.outputUrl || ""} projectId={briefingId || ""} />
+        <TimeTracker productName={D.product?.name} brand={initialUserAsin ? (D.product?.brand || "") : ""} asin={initialUserAsin || ""} marketplace={D.product?.marketplace} briefingUrl={briefingId ? (window.location.origin + "/d/" + briefingId) : window.location.href} outputUrl={links.outputUrl || ""} projectId={briefingId || ""} />
       </div>
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 20px 80px", position: "relative", zIndex: 1 }}>
         {/* Update banner — auto-applied, shows what changed */}
@@ -1639,7 +1639,14 @@ export default function App() {
   useEffect(() => {
     const hash = window.location.hash.slice(1);
     // Legacy: #d=<compressed> links still work
-    if (hash && hash.startsWith("d=")) { setDesignerLoading(true); decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }).finally(() => setDesignerLoading(false)); return; }
+    if (hash && hash.startsWith("d=")) {
+      setDesignerLoading(true);
+      // Generate stable project ID from hash data for time tracking
+      let hv = 0; for (let i = 0; i < hash.length; i++) { hv = ((hv << 5) - hv) + hash.charCodeAt(i); hv |= 0; }
+      setDesignerBriefingId("H" + Math.abs(hv).toString(36));
+      decodeBriefing(hash.slice(2)).then(d => { if (d?.briefing?.product) setDesignerMode(d); }).finally(() => setDesignerLoading(false));
+      return;
+    }
     // New: /d/<id> short URL
     const m = window.location.pathname.match(/^\/d\/([A-Za-z0-9]{6,12})$/);
     if (m) {
