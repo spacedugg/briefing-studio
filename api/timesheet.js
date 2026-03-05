@@ -41,18 +41,18 @@ export default async function handler(req, res) {
     const readData = await readRes.json();
     const rows = readData.values || [];
 
-    // Find existing row by Project ID (column A, index 0) first, then ASIN (column D, index 3) as fallback
+    // Find existing row by ASIN (column D, index 3) first — one row per ASIN; Project ID (column A) as fallback
     const findRow = (targetAsin, targetProjectId) => {
-      // Primary: match by Project ID (briefingId) — each briefing gets its own row
-      if (targetProjectId) {
-        for (let i = 1; i < rows.length; i++) {
-          if ((rows[i][0] || '').trim().toUpperCase() === targetProjectId.trim().toUpperCase()) return i;
-        }
-      }
-      // Fallback: match by ASIN (for legacy links without briefingId)
+      // Primary: match by ASIN — one timesheet row per ASIN
       if (targetAsin) {
         for (let i = 1; i < rows.length; i++) {
           if ((rows[i][COL.asin] || '').trim().toUpperCase() === targetAsin.trim().toUpperCase()) return i;
+        }
+      }
+      // Fallback: match by Project ID (for links without ASIN)
+      if (targetProjectId) {
+        for (let i = 1; i < rows.length; i++) {
+          if ((rows[i][0] || '').trim().toUpperCase() === targetProjectId.trim().toUpperCase()) return i;
         }
       }
       return -1;

@@ -570,8 +570,8 @@ const ScrapeErr = ({ error, onReset }) => <div style={{ position: "fixed", inset
 
 // ═══════ TIME TRACKER (persistent per ASIN, restores on reload, time only increases) ═══════
 function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outputUrl, projectId }) {
-  // Use briefingId (projectId) as primary key — each briefing gets its own timesheet row
-  const effectiveKey = projectId || asin || null;
+  // Use ASIN as primary key — one timesheet row per ASIN; briefingId as fallback
+  const effectiveKey = asin || projectId || null;
   const lsKey = effectiveKey ? `tt_${effectiveKey.toUpperCase()}` : null;
   // Restore from localStorage immediately (fast), then upgrade from server
   const initSecs = () => {
