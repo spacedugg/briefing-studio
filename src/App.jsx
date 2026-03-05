@@ -655,7 +655,7 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
   }, [productName, brand, asin, marketplace, briefingUrl, outputUrl, effectiveKey]);
   useEffect(() => {
     if (syncRef.current) clearInterval(syncRef.current);
-    if (running) { syncRef.current = setInterval(() => syncToSheet(secsRef.current), 10000); }
+    if (running) { syncRef.current = setInterval(() => syncToSheet(secsRef.current), 30000); }
     return () => clearInterval(syncRef.current);
   }, [running, syncToSheet]);
   // Re-sync when briefingUrl or outputUrl become available (they may arrive after first sync)
@@ -667,8 +667,31 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
     }
     prevUrlsRef.current = { briefingUrl, outputUrl };
   }, [briefingUrl, outputUrl, syncToSheet]);
+  // Sync before page unload (sendBeacon for reliability)
+  useEffect(() => {
+    const onUnload = () => {
+      if (secsRef.current > 0 && effectiveKey) {
+        try {
+          navigator.sendBeacon("/api/timesheet", new Blob([JSON.stringify({ action: "update", productName, brand: brand || "", asin: asin || "", marketplace, seconds: secsRef.current, projectId: effectiveKey, briefingUrl: briefingUrl || undefined, outputUrl: outputUrl || undefined })], { type: "application/json" }));
+        } catch {}
+      }
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, [productName, brand, asin, marketplace, briefingUrl, outputUrl, effectiveKey]);
+  // Re-sync when tab becomes visible again (handles tab-switch + cross-device scenarios)
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible" && secsRef.current > 0 && effectiveKey) {
+        syncToSheet(secsRef.current);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [effectiveKey, syncToSheet]);
   const handleToggle = () => {
-    if (running && secs > 0) syncToSheet(secs);
+    if (running && secs > 0) syncToSheet(secs); // sync on pause
+    if (!running && secs > 0) syncToSheet(secs); // sync on resume — recreates row if deleted
     setRunning(r => !r);
   };
   const fmt = s => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60; return h > 0 ? `${h}:${m.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}` : `${m}:${ss.toString().padStart(2, "0")}`; };
@@ -961,6 +984,7 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
   const [editVal, setEditVal] = useState("");
   const [dragIdx, setDragIdx] = useState(null); // bullet drag-and-drop
   const [dragOver, setDragOver] = useState(null);
+  useEffect(() => { setEditField(null); setEditVal(""); }, [sel]);
   if (!D.images?.length) return null;
   const img = D.images[sel], te = img?.texts;
   const hls = te?.headlines || (te?.headline ? [te.headline] : []);
@@ -1042,10 +1066,10 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             {/* Legacy single subheadline fallback */}
             {subs.length === 0 && te.subheadline && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><Pill c={V.blue}>SUBHEADLINE</Pill><CopyBtn text={te.subheadline} /></div><div style={{ fontSize: 13, color: V.textMed, lineHeight: 1.6 }}>{te.subheadline}</div></div>}
             {/* BULLETS — with drag-and-drop reordering + rich text editing */}
-            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} draggable onDragStart={() => setDragIdx(i)} onDragEnd={() => { if (dragIdx !== null && dragOver !== null && dragIdx !== dragOver) onEditText(sel, "reorder_bullets", dragIdx, dragOver); setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); if (dragOver !== i) setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${V.teal}06` : "transparent", cursor: "grab", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
+            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} draggable onDragStart={() => setDragIdx(i)} onDragEnd={() => { if (dragIdx !== null && dragOver !== null && dragIdx !== dragOver) { onEditText(sel, "reorder_bullets", dragIdx, dragOver); setBulSel(p => { const old = p[bKey] || bullets.map(() => true); const ns = [...old]; const [moved] = ns.splice(dragIdx, 1); ns.splice(dragOver, 0, moved); return { ...p, [bKey]: ns }; }); } setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); if (dragOver !== i) setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${V.teal}06` : "transparent", cursor: "grab", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, cursor: "grab", padding: "4px 2px", color: V.textDim, fontSize: 10, userSelect: "none" }} title="Ziehen zum Verschieben">⋮⋮</div>
               <div onClick={e => { e.stopPropagation(); const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${V.teal}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, cursor: "pointer" }}>{on && <span style={{ color: V.teal, fontSize: 12, fontWeight: 800 }}>✓</span>}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>{isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={{ display: "flex", gap: 4, marginBottom: 2 }}><button onMouseDown={e => { e.preventDefault(); document.execCommand("bold"); }} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: FN, color: V.ink }}>B</button><span style={{ fontSize: 9, color: V.textDim, alignSelf: "center" }}>oder Strg+B</span></div><div contentEditable suppressContentEditableWarning dangerouslySetInnerHTML={{ __html: editVal }} onInput={e => setEditVal(e.currentTarget.innerHTML)} onBlur={() => { onEditText(sel, "bul", i, html2md(editVal)); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); if (e.key === "b" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.execCommand("bold"); } }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", minHeight: 28, outline: "none", lineHeight: 1.6 }} /></div> : <span onClick={e => { e.stopPropagation(); startEdit("bul", i, md2html(b)); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6, cursor: "text", display: "block" }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A;font-weight:700">$1</b>') }} title="Klick zum Bearbeiten" />}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>{isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={{ display: "flex", gap: 4, marginBottom: 2 }}><button onMouseDown={e => { e.preventDefault(); document.execCommand("bold"); }} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: FN, color: V.ink }}>B</button><span style={{ fontSize: 9, color: V.textDim, alignSelf: "center" }}>oder Strg+B</span></div><div contentEditable suppressContentEditableWarning ref={el => { if (el && !el.dataset.init) { el.innerHTML = editVal; el.dataset.init = "1"; } }} onBlur={e => { onEditText(sel, "bul", i, html2md(e.currentTarget.innerHTML)); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); if (e.key === "b" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.execCommand("bold"); } }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", minHeight: 28, outline: "none", lineHeight: 1.6 }} /></div> : <span onClick={e => { e.stopPropagation(); startEdit("bul", i, md2html(b)); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6, cursor: "text", display: "block" }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A;font-weight:700">$1</b>') }} title="Klick zum Bearbeiten" />}</div>
               <button onClick={e => { e.stopPropagation(); onEditText(sel, "delete_bullet", i, null); }} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0, opacity: 0.5 }} title="Bullet löschen">×</button>
             </div>; })}<button onClick={() => onEditText(sel, "add_bullet", bullets.length, "")} style={{ marginTop: 8, padding: "6px 12px", borderRadius: 8, border: `1px dashed ${V.teal}40`, background: "transparent", color: V.teal, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, width: "100%" }}>+ Bullet hinzufügen</button></div>}
             {/* BADGE — select one from multiple options + inline editing */}
