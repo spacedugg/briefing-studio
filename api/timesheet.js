@@ -41,18 +41,18 @@ export default async function handler(req, res) {
     const readData = await readRes.json();
     const rows = readData.values || [];
 
-    // Find existing row by ASIN (column D, index 3) or Project ID (column A, index 0)
+    // Find existing row by Project ID (column A, index 0) first, then ASIN (column D, index 3) as fallback
     const findRow = (targetAsin, targetProjectId) => {
-      // First try ASIN match (most specific)
-      if (targetAsin) {
-        for (let i = 1; i < rows.length; i++) {
-          if ((rows[i][COL.asin] || '').trim().toUpperCase() === targetAsin.trim().toUpperCase()) return i;
-        }
-      }
-      // Fallback: match by Project ID (briefingId)
+      // Primary: match by Project ID (briefingId) — each briefing gets its own row
       if (targetProjectId) {
         for (let i = 1; i < rows.length; i++) {
           if ((rows[i][0] || '').trim().toUpperCase() === targetProjectId.trim().toUpperCase()) return i;
+        }
+      }
+      // Fallback: match by ASIN (for legacy links without briefingId)
+      if (targetAsin) {
+        for (let i = 1; i < rows.length; i++) {
+          if ((rows[i][COL.asin] || '').trim().toUpperCase() === targetAsin.trim().toUpperCase()) return i;
         }
       }
       return -1;
