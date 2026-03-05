@@ -667,8 +667,31 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
     }
     prevUrlsRef.current = { briefingUrl, outputUrl };
   }, [briefingUrl, outputUrl, syncToSheet]);
+  // Sync before page unload (sendBeacon for reliability)
+  useEffect(() => {
+    const onUnload = () => {
+      if (secsRef.current > 0 && effectiveKey) {
+        try {
+          navigator.sendBeacon("/api/timesheet", new Blob([JSON.stringify({ action: "update", productName, brand: brand || "", asin: asin || "", marketplace, seconds: secsRef.current, projectId: effectiveKey, briefingUrl: briefingUrl || undefined, outputUrl: outputUrl || undefined })], { type: "application/json" }));
+        } catch {}
+      }
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, [productName, brand, asin, marketplace, briefingUrl, outputUrl, effectiveKey]);
+  // Re-sync when tab becomes visible again (handles tab-switch + cross-device scenarios)
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible" && secsRef.current > 0 && effectiveKey) {
+        syncToSheet(secsRef.current);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [effectiveKey, syncToSheet]);
   const handleToggle = () => {
-    if (running && secs > 0) syncToSheet(secs);
+    if (running && secs > 0) syncToSheet(secs); // sync on pause
+    if (!running && secs > 0) syncToSheet(secs); // sync on resume — recreates row if deleted
     setRunning(r => !r);
   };
   const fmt = s => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60; return h > 0 ? `${h}:${m.toString().padStart(2, "0")}:${ss.toString().padStart(2, "0")}` : `${m}:${ss.toString().padStart(2, "0")}`; };
