@@ -655,7 +655,7 @@ function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outpu
   }, [productName, brand, asin, marketplace, briefingUrl, outputUrl, effectiveKey]);
   useEffect(() => {
     if (syncRef.current) clearInterval(syncRef.current);
-    if (running) { syncRef.current = setInterval(() => syncToSheet(secsRef.current), 10000); }
+    if (running) { syncRef.current = setInterval(() => syncToSheet(secsRef.current), 30000); }
     return () => clearInterval(syncRef.current);
   }, [running, syncToSheet]);
   // Re-sync when briefingUrl or outputUrl become available (they may arrive after first sync)
