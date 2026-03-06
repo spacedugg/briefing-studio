@@ -103,9 +103,11 @@ function mapBrightDataResult(p) {
   // Climate Pledge Friendly
   if (p.climate_pledge_friendly != null) productData.climatePledge = !!p.climate_pledge_friendly;
   else if (p.badges?.some(b => typeof b === 'string' ? b.toLowerCase().includes('climate') : b?.name?.toLowerCase().includes('climate'))) productData.climatePledge = true;
-  // Buybox — inactive_buy_box means NO buybox; otherwise check seller vs brand match
-  const buyboxSeller = p.buybox_seller || p.buy_box_winner?.name || p.buy_box_winner || p.seller_name || null;
+  // Buybox — compare buybox seller against the product's own seller (seller_name)
+  const buyboxSeller = p.buybox_seller || p.buy_box_winner?.name || p.buy_box_winner || null;
+  const productSeller = p.seller_name || null;
   if (buyboxSeller) productData.buyboxSeller = typeof buyboxSeller === 'string' ? buyboxSeller : String(buyboxSeller);
+  if (productSeller) productData.seller = productSeller;
   if (p.inactive_buy_box != null) {
     productData.hasBuybox = false;
     // inactive_buy_box.delivery contains delivery info even when buybox is lost
@@ -116,16 +118,18 @@ function mapBrightDataResult(p) {
       const dayMatch = String(ibStr).match(/(\d+)\s*(?:Tag|day|jour|día|giorn)/i);
       if (dayMatch) productData.deliveryDays = parseInt(dayMatch[1]);
     }
-  } else if (buyboxSeller) {
-    // Buybox exists — check if seller matches brand (brand owner has the buybox)
+  } else if (buyboxSeller && productSeller) {
+    // Buybox exists — check if buybox seller matches the product's own seller
     const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9äöüß]/g, '');
-    const brandNorm = norm(p.brand);
-    const sellerNorm = norm(buyboxSeller);
-    // Match if seller contains brand or brand contains seller (e.g. "Nike" in "Nike Deutschland GmbH")
-    productData.hasBuybox = !!(brandNorm && sellerNorm && (sellerNorm.includes(brandNorm) || brandNorm.includes(sellerNorm)));
+    const bbNorm = norm(buyboxSeller);
+    const sellerNorm = norm(productSeller);
+    productData.hasBuybox = !!(bbNorm && sellerNorm && bbNorm === sellerNorm);
     if (!productData.hasBuybox) {
-      console.log(`[BD] Buybox mismatch: brand="${p.brand}" seller="${buyboxSeller}"`);
+      console.log(`[BD] Buybox mismatch: seller="${productSeller}" vs buybox="${buyboxSeller}"`);
     }
+  } else if (productSeller && !buyboxSeller) {
+    // No separate buybox field — seller is likely the buybox winner
+    productData.hasBuybox = true;
   }
   // Delivery / Shipping days (from main delivery field, if not already set via inactive_buy_box)
   if (productData.deliveryDays == null) {
