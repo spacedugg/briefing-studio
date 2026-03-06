@@ -1124,23 +1124,21 @@ function calcLQS(pd) {
   const bulletBytes = (pd.bullets || []).map(b => encoder ? encoder.encode(b).length : b.length);
   const minBulletBytes = bulletBytes.length > 0 ? Math.min(...bulletBytes) : 0;
   const checks = [
-    // ── Content-Qualität ──
+    // Sorted by weight descending — highest impact first
     { label: "Titel 150+ Zeichen", ok: titleLen >= 150, weight: 1.5 },
     { label: "5 Bullet Points", ok: (pd.bullets?.length || 0) >= 5, weight: 1.5 },
     { label: "Bullets 200+ Bytes je Bullet", ok: bulletBytes.length >= 5 && minBulletBytes >= 200, weight: 1.5 },
-    { label: "Beschreibung vorhanden", ok: !!pd.description && pd.description.length > 50, weight: 1 },
-    { label: "6+ Bilder", ok: (pd.imageCount || 0) >= 6, weight: 1.5 },
-    { label: "Inkl. Video", ok: !!pd.hasVideo, weight: 0.5 },
-    // ── Bewertungen ──
-    { label: "Rating 4.3+", ok: parseFloat(pd.rating || 0) >= 4.3, weight: 1 },
-    { label: "20+ Bewertungen", ok: parseInt(pd.reviewCount || 0) >= 20, weight: 1 },
-    // ── Listing-Features ──
+    { label: "7 Bilder", ok: (pd.imageCount || 0) >= 7, weight: 1.5 },
     { label: "A+ Content", ok: !!pd.hasAPlus, weight: 1, badge: "aplus", unknown: pd.hasAPlus == null },
-    { label: "Brand Story", ok: !!pd.hasBrandStory, weight: 0.5, badge: "brandstory", unknown: pd.hasBrandStory == null },
-    { label: "Brand Store", ok: !!pd.hasBrandStore, weight: 0.5, badge: "brandstore", unknown: pd.hasBrandStore == null },
     { label: "Buybox vorhanden", ok: !!pd.hasBuybox, weight: 1, unknown: pd.hasBuybox == null },
     { label: "Versand unter 4 Tagen", ok: pd.deliveryDays != null && pd.deliveryDays < 4, weight: 1, unknown: pd.deliveryDays == null },
     { label: "Prime", ok: !!pd.isPrime, weight: 1, badge: "prime", unknown: pd.isPrime == null },
+    { label: "Rating 4.3+", ok: parseFloat(pd.rating || 0) >= 4.3, weight: 1 },
+    { label: "20+ Bewertungen", ok: parseInt(pd.reviewCount || 0) >= 20, weight: 1 },
+    { label: "Beschreibung vorhanden", ok: !!pd.description && pd.description.length > 50, weight: 1 },
+    { label: "Inkl. Video", ok: !!pd.hasVideo, weight: 0.5 },
+    { label: "Brand Story", ok: !!pd.hasBrandStory, weight: 0.5, badge: "brandstory", unknown: pd.hasBrandStory == null },
+    { label: "Brand Store", ok: !!pd.hasBrandStore, weight: 0.5, badge: "brandstore", unknown: pd.hasBrandStore == null },
     { label: "Climate Pledge Friendly", ok: !!pd.climatePledge, weight: 0.5, badge: "climate", unknown: pd.climatePledge == null },
   ];
   // Only count checks where data is available (unknown = not scraped → exclude from max weight)

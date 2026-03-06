@@ -103,16 +103,28 @@ function mapBrightDataResult(p) {
   // Climate Pledge Friendly
   if (p.climate_pledge_friendly != null) productData.climatePledge = !!p.climate_pledge_friendly;
   else if (p.badges?.some(b => typeof b === 'string' ? b.toLowerCase().includes('climate') : b?.name?.toLowerCase().includes('climate'))) productData.climatePledge = true;
-  // Buybox — if we have seller info, buybox is present
-  if (p.buybox_seller != null || p.buy_box_winner != null) productData.hasBuybox = true;
-  else if (p.seller_name) productData.hasBuybox = true;
-  // Delivery / Shipping days
-  const deliveryStr = typeof p.delivery === 'string' ? p.delivery : Array.isArray(p.delivery) ? p.delivery[0] : p.delivery?.text || p.delivery_info || '';
-  if (deliveryStr) {
-    productData.deliveryRaw = String(deliveryStr).substring(0, 200);
-    // Try to extract number of days from delivery text
-    const dayMatch = String(deliveryStr).match(/(\d+)\s*(?:Tag|day|jour|día|giorn)/i);
-    if (dayMatch) productData.deliveryDays = parseInt(dayMatch[1]);
+  // Buybox — inactive_buy_box means NO buybox; its absence + seller_name means buybox is active
+  if (p.inactive_buy_box != null) {
+    productData.hasBuybox = false;
+    // inactive_buy_box.delivery contains delivery info even when buybox is lost
+    const ibDelivery = p.inactive_buy_box?.delivery;
+    if (ibDelivery) {
+      const ibStr = typeof ibDelivery === 'string' ? ibDelivery : ibDelivery?.text || JSON.stringify(ibDelivery);
+      productData.deliveryRaw = String(ibStr).substring(0, 200);
+      const dayMatch = String(ibStr).match(/(\d+)\s*(?:Tag|day|jour|día|giorn)/i);
+      if (dayMatch) productData.deliveryDays = parseInt(dayMatch[1]);
+    }
+  } else if (p.buybox_seller != null || p.buy_box_winner != null || p.seller_name) {
+    productData.hasBuybox = true;
+  }
+  // Delivery / Shipping days (from main delivery field, if not already set via inactive_buy_box)
+  if (productData.deliveryDays == null) {
+    const deliveryStr = typeof p.delivery === 'string' ? p.delivery : Array.isArray(p.delivery) ? p.delivery[0] : p.delivery?.text || p.delivery_info || '';
+    if (deliveryStr) {
+      productData.deliveryRaw = String(deliveryStr).substring(0, 200);
+      const dayMatch = String(deliveryStr).match(/(\d+)\s*(?:Tag|day|jour|día|giorn)/i);
+      if (dayMatch) productData.deliveryDays = parseInt(dayMatch[1]);
+    }
   }
   // A+ Content / Enhanced Brand Content
   if (p.a_plus_content != null) productData.hasAPlus = !!p.a_plus_content;
