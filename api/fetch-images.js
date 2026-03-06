@@ -76,6 +76,9 @@ async function scrapeBrightData(asin, domain, apiKey) {
 
 function mapBrightDataResult(p) {
 
+  // Log all available keys for debugging new fields
+  console.log('[BD] Available fields:', Object.keys(p).join(', '));
+
   // Map Bright Data response to our format
   const productData = {};
   if (p.title) productData.title = p.title;
@@ -92,6 +95,77 @@ function mapBrightDataResult(p) {
   if (bsr?.rank) { productData.bsr = String(bsr.rank); productData.category = bsr.category || ''; }
   // Seller info
   if (p.seller_name) productData.seller = p.seller_name;
+
+  // ── New fields for Listing Quality Score ──
+  // Prime badge
+  if (p.is_prime != null) productData.isPrime = !!p.is_prime;
+  else if (p.prime != null) productData.isPrime = !!p.prime;
+  // Climate Pledge Friendly
+  if (p.climate_pledge_friendly != null) productData.climatePledge = !!p.climate_pledge_friendly;
+  else if (p.badges?.some(b => typeof b === 'string' ? b.toLowerCase().includes('climate') : b?.name?.toLowerCase().includes('climate'))) productData.climatePledge = true;
+  // Buybox — compare buybox seller against the product's own seller (seller_name)
+  const buyboxSeller = p.buybox_seller || p.buy_box_winner?.name || p.buy_box_winner || null;
+  const productSeller = p.seller_name || null;
+  if (buyboxSeller) productData.buyboxSeller = typeof buyboxSeller === 'string' ? buyboxSeller : String(buyboxSeller);
+  if (productSeller) productData.seller = productSeller;
+  if (p.inactive_buy_box != null) {
+    productData.hasBuybox = false;
+    // inactive_buy_box.delivery contains delivery info even when buybox is lost
+    const ibDelivery = p.inactive_buy_box?.delivery;
+    if (ibDelivery) {
+      const ibStr = typeof ibDelivery === 'string' ? ibDelivery : ibDelivery?.text || JSON.stringify(ibDelivery);
+      productData.deliveryRaw = String(ibStr).substring(0, 200);
+      const dayMatch = String(ibStr).match(/(\d+)\s*(?:Tag|day|jour|día|giorn)/i);
+      if (dayMatch) productData.deliveryDays = parseInt(dayMatch[1]);
+    }
+  } else if (buyboxSeller && productSeller) {
+    // Buybox exists — check if buybox seller matches the product's own seller
+    const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9äöüß]/g, '');
+    const bbNorm = norm(buyboxSeller);
+    const sellerNorm = norm(productSeller);
+    productData.hasBuybox = !!(bbNorm && sellerNorm && bbNorm === sellerNorm);
+    if (!productData.hasBuybox) {
+      console.log(`[BD] Buybox mismatch: seller="${productSeller}" vs buybox="${buyboxSeller}"`);
+    }
+  } else if (productSeller && !buyboxSeller) {
+    // No separate buybox field — seller is likely the buybox winner
+    productData.hasBuybox = true;
+  }
+  // Delivery / Shipping days (from main delivery field, if not already set via inactive_buy_box)
+  if (productData.deliveryDays == null) {
+    const deliveryStr = typeof p.delivery === 'string' ? p.delivery : Array.isArray(p.delivery) ? p.delivery[0] : p.delivery?.text || p.delivery_info || '';
+    if (deliveryStr) {
+      productData.deliveryRaw = String(deliveryStr).substring(0, 200);
+      const dayMatch = String(deliveryStr).match(/(\d+)\s*(?:Tag|day|jour|día|giorn)/i);
+      if (dayMatch) productData.deliveryDays = parseInt(dayMatch[1]);
+    }
+  }
+  // A+ Content / Enhanced Brand Content — count modules
+  const aplusRaw = p.a_plus_content ?? p.aplus ?? p.enhanced_content ?? null;
+  if (aplusRaw != null) {
+    if (Array.isArray(aplusRaw)) {
+      // Structured: array of modules
+      productData.aplusModuleCount = aplusRaw.length;
+    } else if (typeof aplusRaw === 'string' && aplusRaw.length > 50) {
+      // HTML string — count module containers (apm- divs or aplus-module sections)
+      const moduleMatches = aplusRaw.match(/(?:class="apm-|class="aplus-module|<section|celwidget.*?aplus)/gi);
+      productData.aplusModuleCount = moduleMatches ? moduleMatches.length : (aplusRaw.length > 200 ? 1 : 0);
+    } else if (typeof aplusRaw === 'object' && aplusRaw !== null) {
+      // Object with modules property
+      const modules = aplusRaw.modules || aplusRaw.sections || aplusRaw.content;
+      productData.aplusModuleCount = Array.isArray(modules) ? modules.length : (Object.keys(aplusRaw).length > 0 ? 1 : 0);
+    } else {
+      productData.aplusModuleCount = aplusRaw ? 1 : 0;
+    }
+    productData.hasAPlus = productData.aplusModuleCount > 0;
+    console.log(`[BD] A+ modules detected: ${productData.aplusModuleCount}`);
+  }
+  // Brand Story
+  if (p.brand_story != null) productData.hasBrandStory = !!p.brand_story;
+  // Brand Store
+  if (p.brand_store_url || p.brand_url || p.brand_page_url) productData.hasBrandStore = true;
+  // Video
+  if (p.videos?.length > 0 || p.video_count > 0) productData.hasVideo = true;
 
   // Extract image URLs from Bright Data response
   let imageUrls = [];

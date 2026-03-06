@@ -1119,34 +1119,62 @@ function ReviewsTab({ D }) {
 function calcLQS(pd) {
   if (!pd || (!pd.title && !pd.bullets)) return null;
   const titleLen = pd.title?.length || 0;
-  const avgBulletLen = pd.bullets?.length > 0 ? pd.bullets.reduce((a, b) => a + b.length, 0) / pd.bullets.length : 0;
+  // Bullet length in bytes (UTF-8) — use TextEncoder for accurate byte count
+  const encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+  const bulletBytes = (pd.bullets || []).map(b => encoder ? encoder.encode(b).length : b.length);
+  const minBulletBytes = bulletBytes.length > 0 ? Math.min(...bulletBytes) : 0;
   const checks = [
-    { label: "Titel vorhanden", ok: !!pd.title, weight: 1 },
-    { label: "Titel 150–200 Zeichen", ok: titleLen >= 150 && titleLen <= 200, weight: 1.5 },
+    // Sorted by weight descending — highest impact first
+    { label: "Titel 150+ Zeichen", ok: titleLen >= 150, weight: 1.5 },
     { label: "5 Bullet Points", ok: (pd.bullets?.length || 0) >= 5, weight: 1.5 },
-    { label: "Bullets 150–200 Zeichen avg.", ok: avgBulletLen >= 150 && avgBulletLen <= 200, weight: 1.5 },
-    { label: "Beschreibung vorhanden", ok: !!pd.description && pd.description.length > 50, weight: 1 },
-    { label: "Marke angegeben", ok: !!pd.brand, weight: 0.5 },
-    { label: "Rating >= 4.0", ok: parseFloat(pd.rating || 0) >= 4.0, weight: 1 },
-    { label: "7+ Bilder", ok: (pd.imageCount || 0) >= 7, weight: 1.5 },
-    { label: "Inkl. Video", ok: !!pd.hasVideo, weight: 0.5 },
+    { label: "Bullets 200+ Bytes je Bullet", ok: bulletBytes.length >= 5 && minBulletBytes >= 200, weight: 1.5 },
+    { label: "7 Bilder", ok: (pd.imageCount || 0) >= 7, weight: 1.5 },
+    { label: `A+ Content (${pd.aplusModuleCount || 0}/6+ Module)`, ok: (pd.aplusModuleCount || 0) >= 6, weight: 1, badge: "aplus", unknown: pd.hasAPlus == null },
+    { label: pd.buyboxSeller && !pd.hasBuybox ? `Buybox fremd (${pd.buyboxSeller})` : "Buybox vorhanden", ok: !!pd.hasBuybox, weight: 1, unknown: pd.hasBuybox == null },
+    { label: "Versand unter 4 Tagen", ok: pd.deliveryDays != null && pd.deliveryDays < 4, weight: 1, unknown: pd.deliveryDays == null },
+    { label: "Prime", ok: !!pd.isPrime, weight: 1, badge: "prime", unknown: pd.isPrime == null },
+    { label: "Rating 4.3+", ok: parseFloat(pd.rating || 0) >= 4.3, weight: 1 },
     { label: "20+ Bewertungen", ok: parseInt(pd.reviewCount || 0) >= 20, weight: 1 },
+    { label: "Beschreibung vorhanden", ok: !!pd.description && pd.description.length > 50, weight: 1 },
+    { label: "Inkl. Video", ok: !!pd.hasVideo, weight: 0.5 },
+    { label: "Brand Story", ok: !!pd.hasBrandStory, weight: 0.5, badge: "brandstory", unknown: pd.hasBrandStory == null },
+    { label: "Brand Store", ok: !!pd.hasBrandStore, weight: 0.5, badge: "brandstore", unknown: pd.hasBrandStore == null },
+    { label: "Climate Pledge Friendly", ok: !!pd.climatePledge, weight: 0.5, badge: "climate", unknown: pd.climatePledge == null },
   ];
-  const maxW = checks.reduce((a, c) => a + c.weight, 0);
-  const score = checks.reduce((a, c) => a + (c.ok ? c.weight : 0), 0);
+  // Only count checks where data is available (unknown = not scraped → exclude from max weight)
+  const knownChecks = checks.filter(c => !c.unknown);
+  const maxW = knownChecks.reduce((a, c) => a + c.weight, 0);
+  const score = knownChecks.reduce((a, c) => a + (c.ok ? c.weight : 0), 0);
   return { score: Math.round((score / maxW) * 10 * 10) / 10, max: 10, checks, pct: Math.round((score / maxW) * 100) };
 }
+
+// SVG badges for Prime and Climate Pledge
+const PrimeBadge = ({ size = 16, dim }) => <svg width={size} height={size} viewBox="0 0 24 24" style={{ opacity: dim ? 0.35 : 1 }}><path d="M2 12l2-2h4l2-4h4l2 4h4l2 2-6 8H8z" fill={dim ? "#999" : "#00A8E1"} /><path d="M9.5 12.5l1.5 1.5 3.5-3.5" stroke="#fff" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+const ClimateBadge = ({ size = 16, dim }) => <svg width={size} height={size} viewBox="0 0 24 24" style={{ opacity: dim ? 0.35 : 1 }}><circle cx="12" cy="12" r="10" fill={dim ? "#999" : "#2D6B4D"} /><path d="M12 6c-2 2-4 5-2 8s4 3 4 3c0-2-1-4-1-6s1-3 1-5c-1 0-1.5 0-2 0z" fill="#8FD4A4" /><path d="M10 14c1-1 3-1 4 0" stroke="#fff" strokeWidth="1.2" fill="none" strokeLinecap="round" /></svg>;
 
 function LQSCard({ lqs }) {
   if (!lqs) return null;
   const color = lqs.score >= 7 ? V.emerald : lqs.score >= 4 ? V.amber : V.rose;
+  const badgeIcon = (c) => {
+    if (c.badge === "prime") return <PrimeBadge size={14} dim={!c.ok} />;
+    if (c.badge === "climate") return <ClimateBadge size={14} dim={!c.ok} />;
+    return null;
+  };
   return <GC style={{ padding: 20, gridColumn: "1 / -1" }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
       <Lbl c={color}>Listing Quality Score</Lbl>
       <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}><span style={{ fontSize: 28, fontWeight: 900, color }}>{lqs.score}</span><span style={{ fontSize: 12, color: V.textDim, fontWeight: 700 }}>/ {lqs.max}</span></div>
     </div>
     <div style={{ height: 8, background: "rgba(0,0,0,0.06)", borderRadius: 99, overflow: "hidden", marginBottom: 14 }}><div style={{ width: `${lqs.pct}%`, height: "100%", background: `linear-gradient(90deg, ${color}, ${color}BB)`, borderRadius: 99 }} /></div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>{lqs.checks.map((c, i) => <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0" }}><span style={{ color: c.ok ? V.emerald : V.rose, fontSize: 11, fontWeight: 800 }}>{c.ok ? "✓" : "✗"}</span><span style={{ fontSize: 11, color: c.ok ? V.text : V.textDim }}>{c.label}</span></div>)}</div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>{lqs.checks.map((c, i) => {
+      const icon = badgeIcon(c);
+      const statusColor = c.unknown ? V.textDim : c.ok ? V.emerald : V.rose;
+      const statusSymbol = c.unknown ? "–" : c.ok ? "✓" : "✗";
+      return <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 0" }}>
+        {icon || <span style={{ color: statusColor, fontSize: 11, fontWeight: 800 }}>{statusSymbol}</span>}
+        <span style={{ fontSize: 11, color: c.unknown ? V.textDim : c.ok ? V.text : V.textDim, fontStyle: c.unknown ? "italic" : "normal" }}>{c.label}{c.unknown ? " (n/a)" : ""}</span>
+      </div>;
+    })}</div>
   </GC>;
 }
 
