@@ -76,6 +76,9 @@ async function scrapeBrightData(asin, domain, apiKey) {
 
 function mapBrightDataResult(p) {
 
+  // Log all available keys for debugging new fields
+  console.log('[BD] Available fields:', Object.keys(p).join(', '));
+
   // Map Bright Data response to our format
   const productData = {};
   if (p.title) productData.title = p.title;
@@ -92,6 +95,35 @@ function mapBrightDataResult(p) {
   if (bsr?.rank) { productData.bsr = String(bsr.rank); productData.category = bsr.category || ''; }
   // Seller info
   if (p.seller_name) productData.seller = p.seller_name;
+
+  // ── New fields for Listing Quality Score ──
+  // Prime badge
+  if (p.is_prime != null) productData.isPrime = !!p.is_prime;
+  else if (p.prime != null) productData.isPrime = !!p.prime;
+  // Climate Pledge Friendly
+  if (p.climate_pledge_friendly != null) productData.climatePledge = !!p.climate_pledge_friendly;
+  else if (p.badges?.some(b => typeof b === 'string' ? b.toLowerCase().includes('climate') : b?.name?.toLowerCase().includes('climate'))) productData.climatePledge = true;
+  // Buybox — if we have seller info, buybox is present
+  if (p.buybox_seller != null || p.buy_box_winner != null) productData.hasBuybox = true;
+  else if (p.seller_name) productData.hasBuybox = true;
+  // Delivery / Shipping days
+  const deliveryStr = typeof p.delivery === 'string' ? p.delivery : Array.isArray(p.delivery) ? p.delivery[0] : p.delivery?.text || p.delivery_info || '';
+  if (deliveryStr) {
+    productData.deliveryRaw = String(deliveryStr).substring(0, 200);
+    // Try to extract number of days from delivery text
+    const dayMatch = String(deliveryStr).match(/(\d+)\s*(?:Tag|day|jour|día|giorn)/i);
+    if (dayMatch) productData.deliveryDays = parseInt(dayMatch[1]);
+  }
+  // A+ Content / Enhanced Brand Content
+  if (p.a_plus_content != null) productData.hasAPlus = !!p.a_plus_content;
+  else if (p.aplus != null) productData.hasAPlus = !!p.aplus;
+  else if (p.enhanced_content != null) productData.hasAPlus = !!p.enhanced_content;
+  // Brand Story
+  if (p.brand_story != null) productData.hasBrandStory = !!p.brand_story;
+  // Brand Store
+  if (p.brand_store_url || p.brand_url || p.brand_page_url) productData.hasBrandStore = true;
+  // Video
+  if (p.videos?.length > 0 || p.video_count > 0) productData.hasVideo = true;
 
   // Extract image URLs from Bright Data response
   let imageUrls = [];
