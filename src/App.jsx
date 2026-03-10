@@ -1120,8 +1120,27 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
         });
         const normAll = norm(allTexts);
         const missing = triggers.filter(tr => {
+          const trigNorm = norm(tr).replace(/\s+/g, "");
+          // 1. Exact full match
+          if (trigNorm.length >= 4 && normAll.includes(trigNorm)) return false;
+          // 2. Word-level match: split trigger into words, check each
           const words = norm(tr).split(/\s+/).filter(w => w.length > 3);
-          return !words.some(w => normAll.includes(w));
+          if (words.some(w => normAll.includes(w))) return false;
+          // 3. Prefix match: "salzwassertauglichkeit" → check "salzwassertauglich", "salzwassertaug", ... "salzw"
+          if (trigNorm.length >= 6) {
+            for (let pLen = trigNorm.length - 1; pLen >= 5; pLen--) {
+              if (normAll.includes(trigNorm.substring(0, pLen))) return false;
+            }
+          }
+          // 4. German compound splitting: "salzwassertauglichkeit" contains "salzwasser" + "tauglichkeit"
+          //    Check if any substring (≥5 chars) of the trigger appears in texts
+          if (trigNorm.length >= 10) {
+            for (let start = 0; start <= trigNorm.length - 5; start++) {
+              const sub = trigNorm.substring(start, Math.min(start + Math.max(5, Math.floor(trigNorm.length / 2)), trigNorm.length));
+              if (sub.length >= 5 && normAll.includes(sub)) return false;
+            }
+          }
+          return true;
         });
         if (!missing.length) return null;
         return <div style={{ ...gS, padding: "14px 18px", marginTop: 10, background: `${V.rose}08`, border: `2px solid ${V.rose}30`, borderRadius: 14 }}>
