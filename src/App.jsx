@@ -19,6 +19,29 @@ const bText = b => typeof b === "string" ? b : b?.text || "";
 const bFmt = b => typeof b === "string" ? "bullet" : (b?.format || "bullet");
 const formatLabels = { display: "Display-Typografie", headline: "Headline-Element", infocard: "Info-Karte", "zoom-label": "Zoom-Label", annotation: "Annotation/Label", "panel-text": "Kachel-Text", "step-overlay": "Schritt-Overlay", comparison: "Vergleichstext", "badge-context": "Badge m. Kontext", "benefit-pill": "Benefit-Pill", bullet: "Bullet Point" };
 const formatColors = { display: "#7C3AED", headline: "#EA580C", infocard: "#2563EB", "zoom-label": "#0891B2", annotation: "#D97706", "panel-text": "#059669", "step-overlay": "#0D9488", comparison: "#E11D48", "badge-context": "#D97706", "benefit-pill": "#0D9488", bullet: "#64748B" };
+const formatDescriptions = { display: "Große Typografie als visuelles Zentrum — Zahlen, Preise, Claims als Designelement", headline: "Klassische Headline über/neben dem Produkt", infocard: "Eigenständige Info-Karte mit Titel + Beschreibung", "zoom-label": "Text an einem Zoom-Inset oder Detail-Ausschnitt", annotation: "Label mit Pfeil/Linie an konkretem Produktteil", "panel-text": "Text innerhalb einer Bild-Kachel (Grid-Layout)", "step-overlay": "Schrittnummer + Titel auf Lifestyle-Foto", comparison: "Vergleichstext: eigenes Produkt vs. Alternative", "badge-context": "Siegel/Badge neben dem Feature das es belegt", "benefit-pill": "Kompakte Icon + Kurztext Pill-Shape", bullet: "Klassischer Aufzählungspunkt" };
+const formatDescriptionsEn = { display: "Large typography as visual center — numbers, prices, claims as design element", headline: "Classic headline above/next to the product", infocard: "Standalone info card with title + description", "zoom-label": "Text bound to a zoom inset or detail view", annotation: "Label with arrow/line at a specific product part", "panel-text": "Text inside an image tile in grid layouts", "step-overlay": "Step number + title on lifestyle photo", comparison: "Comparison text: own product vs. alternative", "badge-context": "Seal/badge next to the feature it certifies", "benefit-pill": "Compact icon + short text pill shape", bullet: "Classic bullet point" };
+// Eyecatcher helpers — backward compatible with old {idea, risk} format
+const ecType = ec => ec?.type || (ec?.idea?.length <= 40 && ec?.idea?.split(" ").length <= 5 && /^[A-ZÄÖÜ0-9]/.test(ec?.idea || "") ? "text" : "visual");
+const ecCopy = ec => ec?.copyText || (ecType(ec) !== "visual" ? ec?.idea : null);
+// Format legend component — explains text element types
+function FormatLegend({ lang = "de" }) {
+  const [open, setOpen] = useState(false);
+  const descs = lang === "en" ? formatDescriptionsEn : formatDescriptions;
+  const fmts = Object.keys(formatLabels);
+  return <div style={{ ...gS, padding: open ? "12px 14px" : "8px 14px", marginBottom: 10, transition: "all 0.15s" }}>
+    <div onClick={() => setOpen(!open)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", userSelect: "none" }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em" }}>{lang === "en" ? "Text Format Guide" : "Textformat-Legende"}</span>
+      <span style={{ fontSize: 11, color: V.textDim, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>▾</span>
+    </div>
+    {open && <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 14px" }}>
+      {fmts.map(f => <div key={f} style={{ display: "flex", alignItems: "flex-start", gap: 6, padding: "4px 0" }}>
+        <span style={{ fontSize: 8, fontWeight: 800, color: formatColors[f], textTransform: "uppercase", letterSpacing: ".04em", padding: "2px 5px", borderRadius: 3, background: `${formatColors[f]}12`, flexShrink: 0, marginTop: 2 }}>{formatLabels[f]}</span>
+        <span style={{ fontSize: 10, color: V.textMed, lineHeight: 1.4 }}>{descs[f]}</span>
+      </div>)}
+    </div>}
+  </div>;
+}
 // Compress/resize images to stay under Vercel's 4.5MB body limit
 function compressImage(dataUrl, maxDim = 800, quality = 0.7) {
   return new Promise(resolve => {
@@ -308,9 +331,14 @@ REGELN:
 
 BILDER: ${numImages === 7 ? "Main(kein Text, 3 Eyecatcher mit risk:low/medium), PT01(STAERKSTER Kauftrigger), PT02(Differenzierung), PT03(Lifestyle/emotional), PT04-06(Einwandbehandlung neg. Reviews)." : `Erstelle EXAKT ${numImages} Bilder. Main Image (kein Text, 3 Eyecatcher). Die weiteren ${numImages - 1} Bilder decken die wichtigsten USPs, Features und Kauftrigger ab. ALLE relevanten Produktinformationen auf ${numImages} Bilder verteilen, nichts weglassen.`}
 Jedes Bild MUSS ein "theme" Feld haben: Kurze Beschreibung des Bildthemas (2-4 Wörter, DE), z.B. "Materialqualität", "Lifestyle Küche", "Größenvergleich".
+EYECATCHER-TYPEN (nur Main Image): Jeder Eyecatcher hat type + copyText + idea + risk. Typen:
+- type:"text" → Konkreter Text der AUF das Bild kommt (z.B. "4x5 Meter", "Made in Germany"). copyText = der EXAKTE Text zum Copy/Paste.
+- type:"badge" → Badge/Siegel-Text der als Badge auf dem Bild erscheint (z.B. "Inklusive Befestigungszubehör", "TÜV geprüft"). copyText = der EXAKTE Badge-Text.
+- type:"visual" → Visueller Darstellungshinweis OHNE kopierbaren Text (z.B. Produkt im Einsatz zeigen, Maschenweite sichtbar machen). copyText = null.
+WICHTIG: copyText enthält NUR den Text der 1:1 auf das Bild soll, NICHT die Platzierungsanweisung. Die Anweisung kommt in idea.
 
 NUR JSON, keine Backticks/Markdown:
-{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[${numImages} Objekte mit id:main${numImages > 1 ? "/pt01" : ""}${numImages > 2 ? `-pt0${Math.min(numImages - 1, 6)}` : ""}, label, theme(DE kurz 2-4 Wörter), role, concept(DE), conceptEn(EN), rationale(DE), rationaleEn(EN), visual(DE), visualEn(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:[{text:"**fett** markierter Text",format:"headline|display|infocard|zoom-label|annotation|panel-text|step-overlay|comparison|badge-context|benefit-pill|bullet"}],badges:["max 1 oder leer"],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
+{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[${numImages} Objekte mit id:main${numImages > 1 ? "/pt01" : ""}${numImages > 2 ? `-pt0${Math.min(numImages - 1, 6)}` : ""}, label, theme(DE kurz 2-4 Wörter), role, concept(DE), conceptEn(EN), rationale(DE), rationaleEn(EN), visual(DE), visualEn(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:[{text:"**fett** markierter Text",format:"headline|display|infocard|zoom-label|annotation|panel-text|step-overlay|comparison|badge-context|benefit-pill|bullet"}],badges:["max 1 oder leer"],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{type:"text"|"visual"|"badge",copyText:"exakter Text"|null,idea:"Beschreibung/Anweisung",risk:"low"|"medium"}]]}`;
 };
 
 // ═══════ JSON EXTRACTION ═══════
@@ -1073,7 +1101,7 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
           {img.rationale && <div style={{ background: `${V.violet}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.violet}12` }}><Lbl c={V.violet}>Strategische Begründung</Lbl>{isEditing("rationale", 0) ? <textarea autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} style={{ ...inpS, fontSize: 12.5, lineHeight: 1.75, minHeight: 80, resize: "vertical" }} /> : <p onClick={() => startEdit("rationale", 0, img.rationale)} style={{ fontSize: 12.5, color: V.text, lineHeight: 1.75, margin: 0, cursor: "text", borderRadius: 8, padding: "4px 6px", transition: "background 0.15s" }} onMouseEnter={e => e.currentTarget.style.background = `${V.violet}12`} onMouseLeave={e => e.currentTarget.style.background = "transparent"} title="Klick zum Bearbeiten">{img.rationale}</p>}</div>}
           {img.visual && <div style={{ background: `${V.cyan}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.cyan}12` }}><Lbl c={V.cyan}>Visuelle Hinweise für Designer</Lbl>{isEditing("visual", 0) ? <textarea autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} style={{ ...inpS, fontSize: 12.5, lineHeight: 1.65, minHeight: 80, resize: "vertical" }} /> : <p onClick={() => startEdit("visual", 0, img.visual)} style={{ fontSize: 12.5, color: V.text, lineHeight: 1.65, margin: 0, fontStyle: "italic", cursor: "text", borderRadius: 8, padding: "4px 6px", transition: "background 0.15s" }} onMouseEnter={e => e.currentTarget.style.background = `${V.cyan}12`} onMouseLeave={e => e.currentTarget.style.background = "transparent"} title="Klick zum Bearbeiten">{img.visual}</p>}</div>}
 
-          {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher-Vorschläge</Lbl><div style={{ fontSize: 10, color: V.textDim, marginBottom: 8 }}>Wähle einen Eyecatcher aus — nur der ausgewählte wird im Designer-Export angezeigt.</div>{img.eyecatchers.map((ec, i) => { const ecActive = (ecSel[img.id] ?? 0) === i; const isText = ec.idea.length <= 40 && ec.idea.split(" ").length <= 5 && /^[A-ZÄÖÜ0-9]/.test(ec.idea); return <div key={i} onClick={() => { pushUndo(); setEcSel(p => ({ ...p, [img.id]: ecActive ? -1 : i })); }} style={{ ...gS, padding: 12, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center", border: ecActive ? `2px solid ${V.amber}` : "1px solid rgba(0,0,0,0.06)", background: ecActive ? `${V.amber}08` : "transparent", cursor: "pointer", opacity: ecActive ? 1 : 0.6, transition: "all 0.15s" }}><div style={{ display: "flex", gap: 10, flex: 1, alignItems: "center" }}><div style={{ width: 18, height: 18, borderRadius: 99, border: ecActive ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{ecActive && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div><span style={{ color: V.amber, fontWeight: 800, flexShrink: 0 }}>{i + 1}.</span>{isEditing("eyecatcher", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", flex: 1 }} /> : <div onClick={e => { e.stopPropagation(); startEdit("eyecatcher", i, ec.idea); }} style={{ cursor: "text", flex: 1 }} title="Klick zum Bearbeiten">{isText ? <span style={{ padding: "4px 12px", borderRadius: 6, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 13, fontWeight: 800, color: V.amber }}>{ec.idea}</span> : <div><span style={{ fontSize: 9, fontWeight: 700, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em", padding: "1px 6px", borderRadius: 4, background: "rgba(0,0,0,0.04)", marginRight: 6 }}>Darstellungshinweis</span><span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.5 }}>{ec.idea}</span></div>}</div>}</div><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk === "low" ? "Geringes Risiko" : "Graubereich"}</Pill></div>; })}<div onClick={() => { pushUndo(); setEcSel(p => ({ ...p, [img.id]: -1 })); }} style={{ ...gS, padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", opacity: (ecSel[img.id] ?? 0) === -1 ? 1 : 0.5 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: (ecSel[img.id] ?? 0) === -1 ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{(ecSel[img.id] ?? 0) === -1 && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div><span style={{ fontSize: 12, color: V.textDim, fontStyle: "italic" }}>Kein Eyecatcher</span></div></div>}
+          {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher-Vorschläge</Lbl><div style={{ fontSize: 10, color: V.textDim, marginBottom: 8 }}>Wähle einen Eyecatcher aus — nur der ausgewählte wird im Designer-Export angezeigt.</div>{img.eyecatchers.map((ec, i) => { const ecActive = (ecSel[img.id] ?? 0) === i; const eType = ecType(ec); const eCopy = ecCopy(ec); const typeLabel = eType === "badge" ? "Badge-Text" : eType === "text" ? "Bild-Text" : "Darstellungshinweis"; const typeColor = eType === "visual" ? V.textDim : V.amber; return <div key={i} onClick={() => { pushUndo(); setEcSel(p => ({ ...p, [img.id]: ecActive ? -1 : i })); }} style={{ ...gS, padding: 12, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center", border: ecActive ? `2px solid ${V.amber}` : "1px solid rgba(0,0,0,0.06)", background: ecActive ? `${V.amber}08` : "transparent", cursor: "pointer", opacity: ecActive ? 1 : 0.6, transition: "all 0.15s" }}><div style={{ display: "flex", gap: 10, flex: 1, alignItems: "flex-start" }}><div style={{ width: 18, height: 18, borderRadius: 99, border: ecActive ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 2 }}>{ecActive && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div><span style={{ color: V.amber, fontWeight: 800, flexShrink: 0, marginTop: 1 }}>{i + 1}.</span>{isEditing("eyecatcher", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", flex: 1 }} /> : <div onClick={e => { e.stopPropagation(); startEdit("eyecatcher", i, ec.copyText || ec.idea); }} style={{ cursor: "text", flex: 1 }} title="Klick zum Bearbeiten"><div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: eCopy && ec.idea && eType !== "visual" ? 4 : 0 }}><span style={{ fontSize: 9, fontWeight: 700, color: typeColor, textTransform: "uppercase", letterSpacing: ".06em", padding: "1px 6px", borderRadius: 4, background: eType === "visual" ? "rgba(0,0,0,0.04)" : `${V.amber}12` }}>{typeLabel}</span></div>{eCopy ? <span style={{ padding: "4px 12px", borderRadius: 6, background: eType === "badge" ? `${V.emerald}12` : `${V.amber}15`, border: `1px solid ${eType === "badge" ? V.emerald : V.amber}25`, fontSize: 14, fontWeight: 800, color: eType === "badge" ? V.emerald : V.amber, display: "inline-block" }}>{eCopy}</span> : null}{eType === "visual" ? <span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.5 }}>{ec.idea}</span> : ec.idea && ec.idea !== eCopy ? <div style={{ fontSize: 10.5, color: V.textDim, marginTop: 3, fontStyle: "italic" }}>{ec.idea}</div> : null}</div>}</div><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk === "low" ? "Geringes Risiko" : "Graubereich"}</Pill></div>; })}<div onClick={() => { pushUndo(); setEcSel(p => ({ ...p, [img.id]: -1 })); }} style={{ ...gS, padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", opacity: (ecSel[img.id] ?? 0) === -1 ? 1 : 0.5 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: (ecSel[img.id] ?? 0) === -1 ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{(ecSel[img.id] ?? 0) === -1 && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div><span style={{ fontSize: 12, color: V.textDim, fontStyle: "italic" }}>Kein Eyecatcher</span></div></div>}
 
           {te && hls.length > 0 ? <div><Lbl c={V.orange}>Bildtexte (Deutsch)</Lbl>
             {/* HEADLINES */}
@@ -1089,6 +1117,8 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             </div>}
             {/* Legacy single subheadline fallback */}
             {subs.length === 0 && te.subheadline && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><Pill c={V.blue}>SUBHEADLINE</Pill><CopyBtn text={te.subheadline} /></div><div style={{ fontSize: 13, color: V.textMed, lineHeight: 1.6 }}>{te.subheadline}</div></div>}
+            {/* FORMAT LEGEND */}
+            {bullets.length > 0 && bullets.some(b => bFmt(b) !== "bullet") && <FormatLegend lang="de" />}
             {/* TEXTBAUSTEINE — with drag-and-drop reordering + rich text editing + format labels */}
             {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>TEXTBAUSTEINE · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.map(bText).join("\n")} /></div>{bullets.map((b, i) => { const bt = bText(b), bf = bFmt(b), fCol = formatColors[bf] || V.textDim; const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} onDragStart={() => { dragIdxRef.current = i; setDragIdx(i); }} onDragEnd={e => { e.currentTarget.removeAttribute("draggable"); const from = dragIdxRef.current, to = dragOverRef.current; if (from !== null && to !== null && from !== to) { onEditText(sel, "reorder_bullets", from, to); setBulSel(p => { const old = p[bKey] || bullets.map(() => true); const ns = [...old]; const [moved] = ns.splice(from, 1); ns.splice(to, 0, moved); return { ...p, [bKey]: ns }; }); } dragIdxRef.current = null; dragOverRef.current = null; setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); dragOverRef.current = i; if (dragOver !== i) setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${fCol}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${fCol}06` : "transparent", cursor: "default", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
               <div onMouseDown={e => { e.currentTarget.parentElement.setAttribute("draggable", "true"); }} style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, cursor: "grab", padding: "4px 2px", color: V.textDim, fontSize: 10, userSelect: "none" }} title="Ziehen zum Verschieben">⋮⋮</div>
@@ -1139,8 +1169,6 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
           const ab = getAllBadges(t);
           const { badge: sb } = getSelectedBadge(bdgSel, im.id, ab);
           if (sb) allTexts += " " + sb;
-          if (im.concept) allTexts += " " + im.concept;
-          if (im.visual) allTexts += " " + im.visual;
         });
         const normAll = norm(allTexts);
         // German morpheme analysis for compound word matching
@@ -1359,7 +1387,11 @@ function genBrief(D, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel) {
       const selEcIdx = ecSel?.[im.id] ?? 0;
       if (selEcIdx !== -1 && im.eyecatchers[selEcIdx]) {
         const ec = im.eyecatchers[selEcIdx];
-        t += `\nSELECTED EYECATCHER:\n  ${ec.idea} [${ec.risk}]\n`;
+        const eType = ecType(ec); const eCopy = ecCopy(ec);
+        t += `\nSELECTED EYECATCHER [${eType}]:\n`;
+        if (eCopy) t += `  Copy text: "${eCopy}"\n`;
+        if (ec.idea && ec.idea !== eCopy) t += `  ${eType === "visual" ? "Visual direction" : "Placement"}: ${ec.idea}\n`;
+        t += `  Risk: ${ec.risk}\n`;
       }
     }
     if (im.texts) {
@@ -1597,17 +1629,22 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
               {/* Eyecatchers - Main Image only, show only selected */}
               {isMain && img.eyecatchers?.length > 0 && (() => {
                 const selIdx = ecSel[img.id] ?? 0;
-                if (selIdx === -1) return null; // no eyecatcher selected
+                if (selIdx === -1) return null;
                 const ec = img.eyecatchers[selIdx];
                 if (!ec) return null;
-                const isText = ec.idea.length <= 40 && ec.idea.split(" ").length <= 5 && /^[A-ZÄÖÜ0-9]/.test(ec.idea);
+                const eType = ecType(ec); const eCopy = ecCopy(ec);
+                const typeLabel = eType === "badge" ? "Badge Text" : eType === "text" ? "Image Text" : "Visual Direction";
                 return <div><Lbl c={V.amber}>Eyecatcher Element</Lbl><div style={{ ...gS, padding: "10px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
                   <div style={{ flex: 1 }}>
-                    {isText ? (
-                      <ICopy text={ec.idea}><span style={{ padding: "5px 14px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 14, fontWeight: 800, color: V.amber }}>{ec.idea}</span></ICopy>
-                    ) : (
-                      <div><Pill c={V.textDim} s={{ marginBottom: 4 }}>Visual description — not copyable text</Pill><p style={{ fontSize: 14, color: V.text, lineHeight: 1.6, margin: "4px 0 0" }}>{ec.idea}</p></div>
-                    )}
+                    <Pill c={eType === "visual" ? V.textDim : eType === "badge" ? V.emerald : V.amber} s={{ marginBottom: 6 }}>{typeLabel}</Pill>
+                    {eCopy ? (
+                      <ICopy text={eCopy}><span style={{ padding: "5px 14px", borderRadius: 8, background: eType === "badge" ? `${V.emerald}12` : `${V.amber}15`, border: `1px solid ${eType === "badge" ? V.emerald : V.amber}25`, fontSize: 16, fontWeight: 800, color: eType === "badge" ? V.emerald : V.amber, display: "inline-block" }}>{eCopy}</span></ICopy>
+                    ) : null}
+                    {eType === "visual" ? (
+                      <p style={{ fontSize: 14, color: V.text, lineHeight: 1.6, margin: "4px 0 0" }}>{ec.idea}</p>
+                    ) : ec.idea && ec.idea !== eCopy ? (
+                      <p style={{ fontSize: 12, color: V.textDim, lineHeight: 1.5, margin: "6px 0 0", fontStyle: "italic" }}>{ec.idea}</p>
+                    ) : null}
                   </div>
                   <Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk === "low" ? "Low risk" : "Gray area"}</Pill>
                 </div></div>;
@@ -1625,7 +1662,8 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
                   <div style={{ fontSize: 10, fontWeight: 800, color: V.blue, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>Subheadline</div>
                   <ICopy text={d.subheadline}><span style={{ fontSize: 15, color: V.textMed, lineHeight: 1.4 }}>{d.subheadline}</span></ICopy>
                 </div>}
-                {/* TEXT ELEMENTS */}
+                {/* FORMAT LEGEND + TEXT ELEMENTS */}
+                {d.bullets.length > 0 && d.bullets.some(b => bFmt(b) !== "bullet") && <FormatLegend lang="en" />}
                 {d.bullets.length > 0 && <div style={{ marginBottom: 14 }}>
                   <div style={{ fontSize: 10, fontWeight: 800, color: V.teal, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>Text Elements</div>
                   {d.bullets.map((b, i) => { const bt = bText(b), bf = bFmt(b), fCol = formatColors[bf] || V.textDim; return <ICopy key={i} text={strip(bt)} style={{ marginBottom: 5 }}>
@@ -2085,7 +2123,7 @@ export default function App() {
             if (type === "concept") { next.images[imgIdx].concept = newVal; return next; }
             if (type === "visual") { next.images[imgIdx].visual = newVal; return next; }
             if (type === "rationale") { next.images[imgIdx].rationale = newVal; return next; }
-            if (type === "eyecatcher") { if (next.images[imgIdx].eyecatchers?.[textIdx]) next.images[imgIdx].eyecatchers[textIdx].idea = newVal; return next; }
+            if (type === "eyecatcher") { if (next.images[imgIdx].eyecatchers?.[textIdx]) { const ec = next.images[imgIdx].eyecatchers[textIdx]; if (ec.copyText !== undefined) { ec.copyText = newVal; } else { ec.idea = newVal; } } return next; }
             if (type === "badge") { const te = next.images[imgIdx]?.texts; if (te?.badges?.[textIdx] !== undefined) te.badges[textIdx] = newVal; else if (te?.callouts?.[textIdx - (te.badges?.length || 0)] !== undefined) te.callouts[textIdx - (te.badges?.length || 0)] = newVal; return next; }
             if (type === "reorder_bullets") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { const [from, to] = [textIdx, newVal]; const b = [...te.bullets]; const [moved] = b.splice(from, 1); b.splice(to, 0, moved); te.bullets = b; } return next; }
             if (type === "add_bullet") { const te = next.images[imgIdx]?.texts; if (te) { if (!te.bullets) te.bullets = []; te.bullets.push("Neuer Bullet Point"); } return next; }
