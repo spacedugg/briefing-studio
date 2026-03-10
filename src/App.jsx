@@ -1119,26 +1119,58 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
           if (im.visual) allTexts += " " + im.visual;
         });
         const normAll = norm(allTexts);
-        const missing = triggers.filter(tr => {
-          const trigNorm = norm(tr).replace(/\s+/g, "");
-          // 1. Exact full match
-          if (trigNorm.length >= 4 && normAll.includes(trigNorm)) return false;
-          // 2. Word-level match: split trigger into words, check each
-          const words = norm(tr).split(/\s+/).filter(w => w.length > 3);
-          if (words.some(w => normAll.includes(w))) return false;
-          // 3. Prefix match: "salzwassertauglichkeit" → check "salzwassertauglich", "salzwassertaug", ... "salzw"
-          if (trigNorm.length >= 6) {
-            for (let pLen = trigNorm.length - 1; pLen >= 5; pLen--) {
-              if (normAll.includes(trigNorm.substring(0, pLen))) return false;
+        // German morpheme analysis for compound word matching
+        const derivSuffixes = ["keit","heit","ung","lich","isch","bar","sam","los","ig","ieren","iert","tion","ment","nis","tät"];
+        const fugenLaute = ["s","n","en","es","er","ns"];
+        const stripSuffix = (w) => {
+          for (const sx of derivSuffixes) {
+            if (w.endsWith(sx) && w.length > sx.length + 2) return w.substring(0, w.length - sx.length);
+          }
+          return w;
+        };
+        // Split compound into meaningful morphemes at Fugenlaute boundaries
+        const splitCompound = (word) => {
+          const w = norm(word).replace(/[\s\-]+/g, "");
+          if (w.length < 6) return [w];
+          const stems = new Set([w, stripSuffix(w)]);
+          // Try splitting at each position — left part must be ≥3 chars
+          for (let i = 3; i <= w.length - 3; i++) {
+            const left = w.substring(0, i);
+            const right = w.substring(i);
+            // Right side might start with a Fugenlaut
+            let rightCore = right;
+            for (const f of fugenLaute) {
+              if (right.startsWith(f) && right.length > f.length + 2) {
+                rightCore = right.substring(f.length);
+                break;
+              }
+            }
+            // Only keep splits where left is ≥4 chars (meaningful)
+            if (left.length >= 4) {
+              stems.add(left);
+              stems.add(stripSuffix(left));
+            }
+            if (rightCore.length >= 4) {
+              stems.add(rightCore);
+              stems.add(stripSuffix(rightCore));
             }
           }
-          // 4. German compound splitting: "salzwassertauglichkeit" contains "salzwasser" + "tauglichkeit"
-          //    Check if any substring (≥5 chars) of the trigger appears in texts
-          if (trigNorm.length >= 10) {
-            for (let start = 0; start <= trigNorm.length - 5; start++) {
-              const sub = trigNorm.substring(start, Math.min(start + Math.max(5, Math.floor(trigNorm.length / 2)), trigNorm.length));
-              if (sub.length >= 5 && normAll.includes(sub)) return false;
-            }
+          // Filter: only stems ≥4 chars that aren't pure suffixes
+          return [...stems].filter(s => s.length >= 4 && !derivSuffixes.includes(s));
+        };
+        const missing = triggers.filter(tr => {
+          const trigNorm = norm(tr).replace(/[\s\-]+/g, "");
+          // 1. Exact match
+          if (trigNorm.length >= 4 && normAll.includes(trigNorm)) return false;
+          // 2. Space/hyphen-separated words
+          const words = norm(tr).split(/[\s\-]+/).filter(w => w.length > 3);
+          if (words.some(w => normAll.includes(w))) return false;
+          // 3. Morpheme matching via compound splitting
+          const stems = splitCompound(tr);
+          if (stems.length > 0) {
+            const found = stems.filter(s => normAll.includes(s));
+            // Covered if at least one meaningful stem (≥5 chars) found in texts
+            if (found.some(s => s.length >= 5)) return false;
           }
           return true;
         });
