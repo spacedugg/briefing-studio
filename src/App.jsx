@@ -326,9 +326,9 @@ REGELN:
   * "badge-context": Siegel/Badge mit spezifischer Platzierung neben dem Feature das es belegt
   * "benefit-pill": Kompakte Icon + Kurztext Pill-Shapes
   * "bullet": Klassischer Aufzählungspunkt
-- In concept UND visual IMMER beschreiben: WO steht jedes Textelement, WIE GROß ist es, WORAUF bezieht es sich visuell. Nicht nur "Headline: X" sondern "Über dem Produkt steht groß 'X', darunter kleiner 'Y', links am Zoom-Inset der Klemme steht 'Z'."
-- concept = Das Bildkonzept als zusammenhängende Komposition (Produktplatzierung + Textelemente + visuelle Elemente als Einheit)
-- visual = Konkrete Designanweisungen (Kamerawinkel, Beleuchtung, Farben, Stil, Textplatzierung, Typografie-Stil)
+- In concept UND visual KEINE konkreten Designentscheidungen treffen (keine Farben, Transparenzen, Schriftgrößen, Hintergrundstile). Das ist Sache des Designers.
+- concept = Grobe inhaltliche Beschreibung des Bildes: Was zeigt das Bild? Welche Elemente sind zu sehen? Welche Geschichte/Aussage transportiert es? Beschreibe die KOMPOSITION (Produktplatzierung, Szene, Textelemente als Bestandteil der Komposition).
+- visual = Hinweise NUR wenn Textelemente in VISUELLER BEZIEHUNG zu Bildelementen stehen müssen. Beispiele: "Zoom-Labels zeigen auf die konkreten Produktdetails", "Annotations verbinden sich per Linie mit den beschriebenen Produktteilen", "Step-Overlay-Nummern liegen auf den jeweiligen Anwendungsschritten". Wenn keine besondere Text-Bild-Beziehung nötig ist, reicht ein kurzer Hinweis zum Bildstil (z.B. "Clean Freisteller", "Warme Lifestyle-Szene"). KEINE Typografie-Anweisungen, KEINE Farbvorgaben, KEINE Hintergrund-Spezifikationen.
 - Headlines: max 25 Zeichen, 3 Varianten. KEINE Gedankenstriche (—, –, -) in allen Textelementen. Keine Kommas.
   1. "USP": Das TECHNISCHE/FAKTISCHE Alleinstellungsmerkmal als Headline. Nenne die KONKRETE PRODUKTEIGENSCHAFT die dieses Produkt von der Konkurrenz abhebt — Material, Technologie, Maß, Leistungswert, Zertifizierung, Mechanismus. Beispiele: "8h Akkulaufzeit", "Premium-Silikon", "3-Schicht-Filter", "Medical Grade 316L", "40mm Treiber". NIEMALS einen Nutzen oder Vorteil formulieren — nur das nackte Produktmerkmal/die Spezifikation.
   2. "Kundenvorteil": Der NUTZEN aus Kundensicht — was ändert sich im Alltag des Kunden? Formuliere das ERGEBNIS das der Kunde erlebt, NICHT das Feature. Beispiele: "Nie wieder Verbrennungen", "Den ganzen Tag Musik", "Schluss mit Kabelsalat". Die USP-Headline sagt WAS das Produkt hat, die Kundenvorteil-Headline sagt WAS DER KUNDE DAVON HAT.
