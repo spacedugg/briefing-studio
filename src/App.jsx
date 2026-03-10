@@ -14,6 +14,11 @@ const HK = "briefing_history", MH = 5;
 const strip = s => (s || "").replace(/\*\*(.+?)\*\*/g, "$1");
 const md2html = s => (s || "").replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 const html2md = s => (s || "").replace(/<b>(.*?)<\/b>/gi, '**$1**').replace(/<strong>(.*?)<\/strong>/gi, '**$1**').replace(/<[^>]+>/g, '');
+// Normalize bullet: handles both string "text" and {text, format} object format
+const bText = b => typeof b === "string" ? b : b?.text || "";
+const bFmt = b => typeof b === "string" ? "bullet" : (b?.format || "bullet");
+const formatLabels = { display: "Display-Typografie", headline: "Headline-Element", infocard: "Info-Karte", "zoom-label": "Zoom-Label", annotation: "Annotation/Label", "panel-text": "Kachel-Text", "step-overlay": "Schritt-Overlay", comparison: "Vergleichstext", "badge-context": "Badge m. Kontext", "benefit-pill": "Benefit-Pill", bullet: "Bullet Point" };
+const formatColors = { display: "#7C3AED", headline: "#EA580C", infocard: "#2563EB", "zoom-label": "#0891B2", annotation: "#D97706", "panel-text": "#059669", "step-overlay": "#0D9488", comparison: "#E11D48", "badge-context": "#D97706", "benefit-pill": "#0D9488", bullet: "#64748B" };
 // Compress/resize images to stay under Vercel's 4.5MB body limit
 function compressImage(dataUrl, maxDim = 800, quality = 0.7) {
   return new Promise(resolve => {
@@ -267,17 +272,33 @@ ERSTELLE ein NEUES Briefing mit EXAKT diesem Aufbau und Stil, aber tausche ALLE 
   return `Analysiere ${hasA ? "ASIN " + asin + " auf " : ""}${mp || "Amazon.de"}. Erstelle ${numImages}-Bild-Briefing.
 ${pi ? "Produkt: " + pi : ""}${ft ? "\nHinweise: " + ft : ""}${scraped}${kwData}${rvData}${densityHint}${refSection}${imgCountHint}
 REGELN:
-- Headlines: max 25 Zeichen, 3 Varianten. KEINE Gedankenstriche (—, –, -) in Headlines, Subheadlines, Bullets oder Badges. Verwende auch keine Satzkonstruktionen, die Gedankenstriche erfordern. Keine Kommas.
+- BILDKONZEPT-DENKEN: Beschreibe KEINE "Bilder mit Text darüber", sondern INTEGRIERTE BILDKONZEPTE. Jedes Textelement hat eine konkrete Position, Größe und visuelle Beziehung zu Bildelementen. Der Designer muss beim Lesen sofort das fertige Bild vor seinem inneren Auge sehen.
+- TEXTFORMAT-VIELFALT: Verwende verschiedene Textformate passend zum Bildinhalt (NICHT automatisch "Headline + Bullets"):
+  * "display": Große Typografie als visuelles Zentrum (Zahlen, Preise, Claims als Designelement)
+  * "headline": Klassische Headline über dem Bild
+  * "infocard": Eigenständige Info-Karte mit Titel + Beschreibung neben dem Produkt
+  * "zoom-label": Text gebunden an ein Zoom-Inset oder Detail-Ansicht
+  * "annotation": Label mit Pfeil/Linie an einem konkreten Produktteil
+  * "panel-text": Text innerhalb einer Bild-Kachel (bei Grid-Layouts)
+  * "step-overlay": Schrittnummer + Titel + Erklärung auf Lifestyle-Foto
+  * "comparison": Vergleichstext in einer Spalte (eigenes Produkt vs. Alternative)
+  * "badge-context": Siegel/Badge mit spezifischer Platzierung neben dem Feature das es belegt
+  * "benefit-pill": Kompakte Icon + Kurztext Pill-Shapes
+  * "bullet": Klassischer Aufzählungspunkt
+- In concept UND visual IMMER beschreiben: WO steht jedes Textelement, WIE GROß ist es, WORAUF bezieht es sich visuell. Nicht nur "Headline: X" sondern "Über dem Produkt steht groß 'X', darunter kleiner 'Y', links am Zoom-Inset der Klemme steht 'Z'."
+- concept = Das Bildkonzept als zusammenhängende Komposition (Produktplatzierung + Textelemente + visuelle Elemente als Einheit)
+- visual = Konkrete Designanweisungen (Kamerawinkel, Beleuchtung, Farben, Stil, Textplatzierung, Typografie-Stil)
+- Headlines: max 25 Zeichen, 3 Varianten. KEINE Gedankenstriche (—, –, -) in allen Textelementen. Keine Kommas.
   1. "USP": Nenne das KONKRETE Alleinstellungsmerkmal direkt beim Namen (z.B. "Premium-Silikon" statt "Hochwertig kochen", "3-Schicht-Filter" statt "Saubere Luft"). Das wichtigste Produktmerkmal MUSS in der Headline stehen.
   2. "Kundenvorteil": Formuliere den konkreten Nutzen aus Kundensicht (z.B. "Nie wieder Verbrennungen" statt "Sicher kochen"). Was hat der Kunde davon?
   3. "Kreativ": Emotionale, aufmerksamkeitsstarke Variante. MUSS ein grammatisch vollständiger, natürlich klingender deutscher Ausdruck sein (z.B. "Kochen wie ein Profi", "Dein Küchen-Upgrade", "Endlich sorglos grillen"). KEINE einzelnen Adjektive oder abgehackten Wortfragmente. Jede kreative Headline MUSS im normalen Sprachgebrauch Sinn ergeben.
-- HIERARCHIE: Die wichtigsten Produktaspekte (Material, Hauptfeature, Kernvorteil) MÜSSEN bereits in Headline/Subheadline stehen. Bullets vertiefen diese Aspekte, wiederholen sie aber nicht. Headline = Kernaussage, Subheadline = Erweiterung, Bullets = Details.
 - Subheadlines: 3 Varianten (kurz/erklärend/emotional). Dürfen auch leer bleiben falls nicht nötig. KEINE Gedankenstriche.
-- Bullets: So viele wie inhaltlich sinnvoll (2-6), NICHT immer gleich viele pro Bild. Orientiere dich am Bildinhalt. Schlüsselwörter mit **fett** markieren. Jeder Bullet max 1-2 Fettungen. KEINE Gedankenstriche. Achte auf korrekte deutsche Grammatik.
-- Badge: Max 1 Badge pro Bild. Nur wenn es einen wirklich herausragenden Fakt gibt (z.B. "Inkl. Videoanleitung", "Nur 1g Zucker", "TÜV-geprüft"). Nicht jedes Bild braucht ein Badge! badges ist ein Array mit 0 oder 1 Einträgen. Badge = auffälligstes Eyecatcher-Element, nur für besonders wichtige/coole/persönliche Fakten. KEINE Gedankenstriche.
+- Bullets/Textbausteine: Jeder Textbaustein hat ein "format" Feld das seinen Typ beschreibt. So viele wie inhaltlich sinnvoll (2-6), NICHT immer gleich viele pro Bild. Schlüsselwörter mit **fett** markieren. Max 1-2 Fettungen pro Eintrag. KEINE Gedankenstriche. Korrekte deutsche Grammatik. Format-Mix erwünscht!
+- Badge: Max 1 Badge pro Bild. Nur bei wirklich herausragenden Fakten. badges ist ein Array mit 0 oder 1 Einträgen. KEINE Gedankenstriche.
 - Bildtexte DE. Concept/Rationale/Visual jeweils ZWEISPRACHIG: concept(DE) + conceptEn(EN), rationale(DE) + rationaleEn(EN), visual(DE) + visualEn(EN). Keywords integrieren.
-- Lifestyle ohne Text-Overlay: concept+visual DETAILLIERT (Szenerie, Personen, Stimmung, Kamera).
-- KEIN Split-Screen als Standardlayout! Split-Screen/geteiltes Bild nur wenn es inhaltlich Sinn ergibt (z.B. Vorher/Nachher, Innen/Außen). Die meisten Produktbilder sollen EINZELNE Szenen zeigen, nicht zwei Hälften. Variiere die Bildlayouts: Freisteller, Lifestyle-Szene, Detailaufnahme, Infografik, etc.
+- Lifestyle ohne Text-Overlay: concept+visual DETAILLIERT (Szenerie, Personen, Stimmung, Kamera). "Kein Text" ist eine bewusste, valide Option — texts:null setzen.
+- KEIN Split-Screen als Standardlayout! Split-Screen/geteiltes Bild nur wenn es inhaltlich Sinn ergibt (z.B. Vorher/Nachher, Vergleich eigenes Produkt vs. Alternative). Die meisten Produktbilder sollen EINZELNE Szenen zeigen, nicht zwei Hälften. Variiere die Bildlayouts: Freisteller, Lifestyle-Szene, Detailaufnahme, Infografik, Querschnitt, Grid/Kacheln, etc.
+- KATEGORIE-BEWUSSTSEIN: Lifestyle/Fashion-Produkte → weniger Text, mehr Fotografie, 2-3 Bilder können textfrei sein. Technische Produkte → mehr Annotations, Zoom-Labels, Callouts. Nahrungsergänzung/Health → Info-Karten, Benefit-Pills, Schritt-Overlays.
 - Fussnoten mit * im referenzierten Text kennzeichnen (z.B. "Laborgetestet*") und Fussnote beginnt mit "* ...".
 - Reviews: relative %, absteigend, deutlich unterschiedlich (nicht alle 30-35%).
 - Blacklist: vulgaer, negative Laendernennung, Wettbewerber-Vergleiche, unbelegte Statistiken.
@@ -289,7 +310,7 @@ BILDER: ${numImages === 7 ? "Main(kein Text, 3 Eyecatcher mit risk:low/medium), 
 Jedes Bild MUSS ein "theme" Feld haben: Kurze Beschreibung des Bildthemas (2-4 Wörter, DE), z.B. "Materialqualität", "Lifestyle Küche", "Größenvergleich".
 
 NUR JSON, keine Backticks/Markdown:
-{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[${numImages} Objekte mit id:main${numImages > 1 ? "/pt01" : ""}${numImages > 2 ? `-pt0${Math.min(numImages - 1, 6)}` : ""}, label, theme(DE kurz 2-4 Wörter), role, concept(DE), conceptEn(EN), rationale(DE), rationaleEn(EN), visual(DE), visualEn(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:["variabel viele, **fett** markiert"],badges:["max 1 oder leer"],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
+{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[${numImages} Objekte mit id:main${numImages > 1 ? "/pt01" : ""}${numImages > 2 ? `-pt0${Math.min(numImages - 1, 6)}` : ""}, label, theme(DE kurz 2-4 Wörter), role, concept(DE), conceptEn(EN), rationale(DE), rationaleEn(EN), visual(DE), visualEn(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:[{text:"**fett** markierter Text",format:"headline|display|infocard|zoom-label|annotation|panel-text|step-overlay|comparison|badge-context|benefit-pill|bullet"}],badges:["max 1 oder leer"],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
 };
 
 // ═══════ JSON EXTRACTION ═══════
@@ -1001,7 +1022,7 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
   const selectedBullets = bullets.filter((_, i) => bSel[i]);
   const allBadges = getAllBadges(te);
   const { idx: bdgIdx, badge: selectedBadge } = getSelectedBadge(bdgSel, img.id, allBadges);
-  const allTxt = te ? [curHl, curSh, ...selectedBullets, ...(selectedBadge ? [selectedBadge] : [])].filter(Boolean).join("\n") : "";
+  const allTxt = te ? [curHl, curSh, ...selectedBullets.map(bText), ...(selectedBadge ? [selectedBadge] : [])].filter(Boolean).join("\n") : "";
   const isOff = imgDisabled?.[img.id];
   // Inline editing helpers
   const startEdit = (type, idx, val) => { setEditField({ type, idx }); setEditVal(val); };
@@ -1068,13 +1089,16 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             </div>}
             {/* Legacy single subheadline fallback */}
             {subs.length === 0 && te.subheadline && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><Pill c={V.blue}>SUBHEADLINE</Pill><CopyBtn text={te.subheadline} /></div><div style={{ fontSize: 13, color: V.textMed, lineHeight: 1.6 }}>{te.subheadline}</div></div>}
-            {/* BULLETS — with drag-and-drop reordering + rich text editing */}
-            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} onDragStart={() => { dragIdxRef.current = i; setDragIdx(i); }} onDragEnd={e => { e.currentTarget.removeAttribute("draggable"); const from = dragIdxRef.current, to = dragOverRef.current; if (from !== null && to !== null && from !== to) { onEditText(sel, "reorder_bullets", from, to); setBulSel(p => { const old = p[bKey] || bullets.map(() => true); const ns = [...old]; const [moved] = ns.splice(from, 1); ns.splice(to, 0, moved); return { ...p, [bKey]: ns }; }); } dragIdxRef.current = null; dragOverRef.current = null; setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); dragOverRef.current = i; if (dragOver !== i) setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${V.teal}06` : "transparent", cursor: "default", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
+            {/* TEXTBAUSTEINE — with drag-and-drop reordering + rich text editing + format labels */}
+            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>TEXTBAUSTEINE · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.map(bText).join("\n")} /></div>{bullets.map((b, i) => { const bt = bText(b), bf = bFmt(b), fCol = formatColors[bf] || V.textDim; const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} onDragStart={() => { dragIdxRef.current = i; setDragIdx(i); }} onDragEnd={e => { e.currentTarget.removeAttribute("draggable"); const from = dragIdxRef.current, to = dragOverRef.current; if (from !== null && to !== null && from !== to) { onEditText(sel, "reorder_bullets", from, to); setBulSel(p => { const old = p[bKey] || bullets.map(() => true); const ns = [...old]; const [moved] = ns.splice(from, 1); ns.splice(to, 0, moved); return { ...p, [bKey]: ns }; }); } dragIdxRef.current = null; dragOverRef.current = null; setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); dragOverRef.current = i; if (dragOver !== i) setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${fCol}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${fCol}06` : "transparent", cursor: "default", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
               <div onMouseDown={e => { e.currentTarget.parentElement.setAttribute("draggable", "true"); }} style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, cursor: "grab", padding: "4px 2px", color: V.textDim, fontSize: 10, userSelect: "none" }} title="Ziehen zum Verschieben">⋮⋮</div>
-              <div onClick={e => { e.stopPropagation(); const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${V.teal}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, cursor: "pointer" }}>{on && <span style={{ color: V.teal, fontSize: 12, fontWeight: 800 }}>✓</span>}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>{isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={{ display: "flex", gap: 4, marginBottom: 2 }}><button onMouseDown={e => { e.preventDefault(); document.execCommand("bold"); }} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: FN, color: V.ink }}>B</button><span style={{ fontSize: 9, color: V.textDim, alignSelf: "center" }}>oder Strg+B</span></div><div contentEditable suppressContentEditableWarning ref={el => { if (el && !el.dataset.init) { el.innerHTML = editVal; el.dataset.init = "1"; } }} onBlur={e => { onEditText(sel, "bul", i, html2md(e.currentTarget.innerHTML)); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); if (e.key === "b" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.execCommand("bold"); } }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", minHeight: 28, outline: "none", lineHeight: 1.6 }} /></div> : <span onClick={e => { e.stopPropagation(); startEdit("bul", i, md2html(b)); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6, cursor: "text", display: "block" }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A;font-weight:700">$1</b>') }} title="Klick zum Bearbeiten" />}</div>
-              <button onClick={e => { e.stopPropagation(); onEditText(sel, "delete_bullet", i, null); }} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0, opacity: 0.5 }} title="Bullet löschen">×</button>
-            </div>; })}<button onClick={() => onEditText(sel, "add_bullet", bullets.length, "")} style={{ marginTop: 8, padding: "6px 12px", borderRadius: 8, border: `1px dashed ${V.teal}40`, background: "transparent", color: V.teal, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, width: "100%" }}>+ Bullet hinzufügen</button></div>}
+              <div onClick={e => { e.stopPropagation(); const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${fCol}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, cursor: "pointer" }}>{on && <span style={{ color: fCol, fontSize: 12, fontWeight: 800 }}>✓</span>}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {bf !== "bullet" && <span style={{ fontSize: 8, fontWeight: 800, color: fCol, textTransform: "uppercase", letterSpacing: ".06em", padding: "1px 5px", borderRadius: 3, background: `${fCol}12`, marginBottom: 3, display: "inline-block" }}>{formatLabels[bf] || bf}</span>}
+                {isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={{ display: "flex", gap: 4, marginBottom: 2 }}><button onMouseDown={e => { e.preventDefault(); document.execCommand("bold"); }} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: FN, color: V.ink }}>B</button><span style={{ fontSize: 9, color: V.textDim, alignSelf: "center" }}>oder Strg+B</span></div><div contentEditable suppressContentEditableWarning ref={el => { if (el && !el.dataset.init) { el.innerHTML = editVal; el.dataset.init = "1"; } }} onBlur={e => { onEditText(sel, "bul", i, html2md(e.currentTarget.innerHTML)); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); if (e.key === "b" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.execCommand("bold"); } }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", minHeight: 28, outline: "none", lineHeight: 1.6 }} /></div> : <span onClick={e => { e.stopPropagation(); startEdit("bul", i, md2html(bt)); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6, cursor: "text", display: "block" }} dangerouslySetInnerHTML={{ __html: bt.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A;font-weight:700">$1</b>') }} title="Klick zum Bearbeiten" />}
+              </div>
+              <button onClick={e => { e.stopPropagation(); onEditText(sel, "delete_bullet", i, null); }} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0, opacity: 0.5 }} title="Textbaustein löschen">×</button>
+            </div>; })}<button onClick={() => onEditText(sel, "add_bullet", bullets.length, "")} style={{ marginTop: 8, padding: "6px 12px", borderRadius: 8, border: `1px dashed ${V.teal}40`, background: "transparent", color: V.teal, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, width: "100%" }}>+ Textbaustein hinzufügen</button></div>}
             {/* BADGE — select one from multiple options + inline editing */}
             {allBadges.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.amber}>BADGE-VARIANTEN</Pill></div>
@@ -1111,7 +1135,7 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
           if (si !== -1) allTexts += " " + (ss[si] || ss[0] || "");
           const bl = t.bullets || [];
           const bs = bulSel[im.id] || bl.map(() => true);
-          bl.forEach((b, i) => { if (bs[i] !== false) allTexts += " " + b; });
+          bl.forEach((b, i) => { if (bs[i] !== false) allTexts += " " + bText(b); });
           const ab = getAllBadges(t);
           const { badge: sb } = getSelectedBadge(bdgSel, im.id, ab);
           if (sb) allTexts += " " + sb;
@@ -1119,9 +1143,60 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
           if (im.visual) allTexts += " " + im.visual;
         });
         const normAll = norm(allTexts);
+        // German morpheme analysis for compound word matching
+        const derivSuffixes = ["keit","heit","ung","lich","isch","bar","sam","los","ig","ieren","iert","tion","ment","nis","tät"];
+        const fugenLaute = ["s","n","en","es","er","ns"];
+        const stripSuffix = (w) => {
+          for (const sx of derivSuffixes) {
+            if (w.endsWith(sx) && w.length > sx.length + 2) return w.substring(0, w.length - sx.length);
+          }
+          return w;
+        };
+        // Split compound into meaningful morphemes at Fugenlaute boundaries
+        const splitCompound = (word) => {
+          const w = norm(word).replace(/[\s\-]+/g, "");
+          if (w.length < 6) return [w];
+          const stems = new Set([w, stripSuffix(w)]);
+          // Try splitting at each position — left part must be ≥3 chars
+          for (let i = 3; i <= w.length - 3; i++) {
+            const left = w.substring(0, i);
+            const right = w.substring(i);
+            // Right side might start with a Fugenlaut
+            let rightCore = right;
+            for (const f of fugenLaute) {
+              if (right.startsWith(f) && right.length > f.length + 2) {
+                rightCore = right.substring(f.length);
+                break;
+              }
+            }
+            // Only keep splits where left is ≥4 chars (meaningful)
+            if (left.length >= 4) {
+              stems.add(left);
+              stems.add(stripSuffix(left));
+            }
+            if (rightCore.length >= 4) {
+              stems.add(rightCore);
+              stems.add(stripSuffix(rightCore));
+            }
+          }
+          // Filter: only stems ≥4 chars that aren't pure suffixes
+          return [...stems].filter(s => s.length >= 4 && !derivSuffixes.includes(s));
+        };
         const missing = triggers.filter(tr => {
-          const words = norm(tr).split(/\s+/).filter(w => w.length > 3);
-          return !words.some(w => normAll.includes(w));
+          const trigNorm = norm(tr).replace(/[\s\-]+/g, "");
+          // 1. Exact match
+          if (trigNorm.length >= 4 && normAll.includes(trigNorm)) return false;
+          // 2. Space/hyphen-separated words
+          const words = norm(tr).split(/[\s\-]+/).filter(w => w.length > 3);
+          if (words.some(w => normAll.includes(w))) return false;
+          // 3. Morpheme matching via compound splitting
+          const stems = splitCompound(tr);
+          if (stems.length > 0) {
+            const found = stems.filter(s => normAll.includes(s));
+            // Covered if at least one meaningful stem (≥5 chars) found in texts
+            if (found.some(s => s.length >= 5)) return false;
+          }
+          return true;
         });
         if (!missing.length) return null;
         return <div style={{ ...gS, padding: "14px 18px", marginTop: 10, background: `${V.rose}08`, border: `2px solid ${V.rose}30`, borderRadius: 14 }}>
@@ -1300,7 +1375,7 @@ function genBrief(D, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel) {
       t += "\nTEXTS (DE):\n";
       if (h.length) t += `  Headline: "${h[ci] || h[0]}"\n`;
       if (si !== -1 && subs.length > 0) { t += `  Subheadline: "${subs[si] || subs[0]}"\n`; }
-      if (selBullets.length) t += `  Bullets:\n${selBullets.map(b => `    - "${strip(b)}"`).join("\n")}\n`;
+      if (selBullets.length) t += `  Text Elements:\n${selBullets.map(b => { const f = bFmt(b); return `    - [${f}] "${strip(bText(b))}"` }).join("\n")}\n`;
       if (selBadge) t += `  Badge: "${selBadge}"\n`;
       if (im.texts.footnotes?.length) t += `  Footnotes: ${im.texts.footnotes.map(f => `"${f}"`).join(" | ")}\n`;
     } else { t += "\nTEXTS: None — visual-only image\n"; }
@@ -1510,7 +1585,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
                 {img.theme && <Pill c={V.violet}>{img.theme}</Pill>}
                 <span style={{ fontSize: 12, color: V.textDim }}>{img.role}</span>
               </div>
-              {d.hasTexts && <CopyBtn text={[d.headline, d.subheadline, ...d.bullets.map(strip), ...d.badges].filter(Boolean).join("\n")} label="Copy All" />}
+              {d.hasTexts && <CopyBtn text={[d.headline, d.subheadline, ...d.bullets.map(b => strip(bText(b))), ...d.badges].filter(Boolean).join("\n")} label="Copy All" />}
             </div>
             <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
               {/* Concept + Visual side by side */}
@@ -1550,13 +1625,16 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
                   <div style={{ fontSize: 10, fontWeight: 800, color: V.blue, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>Subheadline</div>
                   <ICopy text={d.subheadline}><span style={{ fontSize: 15, color: V.textMed, lineHeight: 1.4 }}>{d.subheadline}</span></ICopy>
                 </div>}
-                {/* BULLETS */}
+                {/* TEXT ELEMENTS */}
                 {d.bullets.length > 0 && <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 10, fontWeight: 800, color: V.teal, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>Bullet Points (+ Icons)</div>
-                  {d.bullets.map((b, i) => <ICopy key={i} text={strip(b)} style={{ marginBottom: 3 }}>
-                    <span style={{ color: V.teal, fontWeight: 800, flexShrink: 0 }}>-</span>
-                    <span style={{ fontSize: 14, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="font-weight:700;color:#0F172A">$1</b>') }} />
-                  </ICopy>)}
+                  <div style={{ fontSize: 10, fontWeight: 800, color: V.teal, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>Text Elements</div>
+                  {d.bullets.map((b, i) => { const bt = bText(b), bf = bFmt(b), fCol = formatColors[bf] || V.textDim; return <ICopy key={i} text={strip(bt)} style={{ marginBottom: 5 }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                      {bf !== "bullet" && <span style={{ fontSize: 7, fontWeight: 800, color: fCol, textTransform: "uppercase", letterSpacing: ".04em", padding: "2px 5px", borderRadius: 3, background: `${fCol}12`, flexShrink: 0, marginTop: 4 }}>{formatLabels[bf] || bf}</span>}
+                      {bf === "bullet" && <span style={{ color: V.teal, fontWeight: 800, flexShrink: 0, marginTop: 2 }}>-</span>}
+                      <span style={{ fontSize: 14, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: bt.replace(/\*\*(.+?)\*\*/g, '<b style="font-weight:700;color:#0F172A">$1</b>') }} />
+                    </div>
+                  </ICopy>; })}
                 </div>}
                 {/* BADGES */}
                 {d.badges.length > 0 && <div style={{ marginBottom: 14 }}>
@@ -2021,7 +2099,15 @@ export default function App() {
               if (te.subheadlines) te.subheadlines[textIdx] = newVal;
               else te.subheadline = newVal;
             } else if (type === "bul") {
-              if (te.bullets) te.bullets[textIdx] = newVal;
+              if (te.bullets) {
+                const old = te.bullets[textIdx];
+                // Preserve format if bullet is an object
+                if (typeof old === "object" && old !== null) {
+                  te.bullets[textIdx] = { ...old, text: newVal };
+                } else {
+                  te.bullets[textIdx] = newVal;
+                }
+              }
             }
             return next;
           });
