@@ -275,8 +275,9 @@ REGELN:
 - Subheadlines: 3 Varianten (kurz/erklärend/emotional). Dürfen auch leer bleiben falls nicht nötig. KEINE Gedankenstriche.
 - Bullets: So viele wie inhaltlich sinnvoll (2-6), NICHT immer gleich viele pro Bild. Orientiere dich am Bildinhalt. Schlüsselwörter mit **fett** markieren. Jeder Bullet max 1-2 Fettungen. KEINE Gedankenstriche. Achte auf korrekte deutsche Grammatik.
 - Badge: Max 1 Badge pro Bild. Nur wenn es einen wirklich herausragenden Fakt gibt (z.B. "Inkl. Videoanleitung", "Nur 1g Zucker", "TÜV-geprüft"). Nicht jedes Bild braucht ein Badge! badges ist ein Array mit 0 oder 1 Einträgen. Badge = auffälligstes Eyecatcher-Element, nur für besonders wichtige/coole/persönliche Fakten. KEINE Gedankenstriche.
-- Bildtexte DE, Concept/Rationale/Visual EN. Keywords integrieren.
+- Bildtexte DE. Concept/Rationale/Visual jeweils ZWEISPRACHIG: concept(DE) + conceptEn(EN), rationale(DE) + rationaleEn(EN), visual(DE) + visualEn(EN). Keywords integrieren.
 - Lifestyle ohne Text-Overlay: concept+visual DETAILLIERT (Szenerie, Personen, Stimmung, Kamera).
+- KEIN Split-Screen als Standardlayout! Split-Screen/geteiltes Bild nur wenn es inhaltlich Sinn ergibt (z.B. Vorher/Nachher, Innen/Außen). Die meisten Produktbilder sollen EINZELNE Szenen zeigen, nicht zwei Hälften. Variiere die Bildlayouts: Freisteller, Lifestyle-Szene, Detailaufnahme, Infografik, etc.
 - Fussnoten mit * im referenzierten Text kennzeichnen (z.B. "Laborgetestet*") und Fussnote beginnt mit "* ...".
 - Reviews: relative %, absteigend, deutlich unterschiedlich (nicht alle 30-35%).
 - Blacklist: vulgaer, negative Laendernennung, Wettbewerber-Vergleiche, unbelegte Statistiken.
@@ -288,7 +289,7 @@ BILDER: ${numImages === 7 ? "Main(kein Text, 3 Eyecatcher mit risk:low/medium), 
 Jedes Bild MUSS ein "theme" Feld haben: Kurze Beschreibung des Bildthemas (2-4 Wörter, DE), z.B. "Materialqualität", "Lifestyle Küche", "Größenvergleich".
 
 NUR JSON, keine Backticks/Markdown:
-{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[${numImages} Objekte mit id:main${numImages > 1 ? "/pt01" : ""}${numImages > 2 ? `-pt0${Math.min(numImages - 1, 6)}` : ""}, label, theme(DE kurz 2-4 Wörter), role, concept(EN), rationale(EN), visual(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:["variabel viele, **fett** markiert"],badges:["max 1 oder leer"],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
+{product:{name,brand,sku,marketplace,category,price,position}, audience:{persona,desire,fear,triggers:[absteigend],balance}, listingWeaknesses:${hasA ? "[{weakness,impact:high/medium/low,briefingAction}]" : "null"}, reviews:{source,estimated:true, positive:[{theme,pct}], negative:[{theme,pct,quotes:[],status:solved/unclear/neutral,implication}]}, keywords:{volume:[{kw,used:bool}],purchase:[{kw,used:bool}],badges:[{kw,note,requiresApplication:bool}]}, competitive:{patterns,gaps:[]}, images:[${numImages} Objekte mit id:main${numImages > 1 ? "/pt01" : ""}${numImages > 2 ? `-pt0${Math.min(numImages - 1, 6)}` : ""}, label, theme(DE kurz 2-4 Wörter), role, concept(DE), conceptEn(EN), rationale(DE), rationaleEn(EN), visual(DE), visualEn(EN), texts:{headlines:[3],subheadlines:[3 Varianten oder leeres Array],bullets:["variabel viele, **fett** markiert"],badges:["max 1 oder leer"],footnotes:["* Fussnotentext"]}|null, eyecatchers(nur main):[{idea(DE),risk}]]}`;
 };
 
 // ═══════ JSON EXTRACTION ═══════
@@ -978,12 +979,14 @@ function OverwriteWarn({ name, onOk, onNo }) {
 }
 
 // ═══════ BILD-BRIEFING ═══════
-function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, setBdgSel, imgDisabled, setImgDisabled, refImages, setRefImages, onEditText }) {
+function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, setBdgSel, imgDisabled, setImgDisabled, refImages, setRefImages, ecSel, setEcSel, pushUndo, onEditText }) {
   const [sel, setSel] = useState(0);
   const [editField, setEditField] = useState(null); // { type: 'hl'|'sub'|'bul'|'badge'|'concept'|'visual'|'rationale'|'eyecatcher', idx: number }
   const [editVal, setEditVal] = useState("");
   const [dragIdx, setDragIdx] = useState(null); // bullet drag-and-drop
   const [dragOver, setDragOver] = useState(null);
+  const dragIdxRef = useRef(null); // refs to avoid stale closures in drag events
+  const dragOverRef = useRef(null);
   useEffect(() => { setEditField(null); setEditVal(""); }, [sel]);
   if (!D.images?.length) return null;
   const img = D.images[sel], te = img?.texts;
@@ -1039,7 +1042,7 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
       <GC>
         <div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}><span style={{ fontSize: 18, fontWeight: 800, color: isOff ? V.textDim : V.ink }}>{getImgLabel(D.images, sel)}</span><span style={{ fontSize: 12, color: V.textDim }}>{img.role}</span>
-            <button onClick={() => setImgDisabled(p => ({ ...p, [img.id]: !isOff }))} style={{ ...gS, padding: "4px 10px", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: FN, borderRadius: 8, color: isOff ? V.rose : V.emerald, background: isOff ? `${V.rose}10` : `${V.emerald}10`, border: isOff ? `1px solid ${V.rose}30` : `1px solid ${V.emerald}30`, marginLeft: 4 }}>{isOff ? "Deaktiviert" : "Aktiv"}</button>
+            <button onClick={() => { pushUndo(); setImgDisabled(p => ({ ...p, [img.id]: !isOff })); }} style={{ ...gS, padding: "4px 10px", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: FN, borderRadius: 8, color: isOff ? V.rose : V.emerald, background: isOff ? `${V.rose}10` : `${V.emerald}10`, border: isOff ? `1px solid ${V.rose}30` : `1px solid ${V.emerald}30`, marginLeft: 4 }}>{isOff ? "Deaktiviert" : "Aktiv"}</button>
           </div>
           {te && <CopyBtn text={allTxt} label="Alle Texte" />}
         </div>
@@ -1049,7 +1052,7 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
           {img.rationale && <div style={{ background: `${V.violet}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.violet}12` }}><Lbl c={V.violet}>Strategische Begründung</Lbl>{isEditing("rationale", 0) ? <textarea autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} style={{ ...inpS, fontSize: 12.5, lineHeight: 1.75, minHeight: 80, resize: "vertical" }} /> : <p onClick={() => startEdit("rationale", 0, img.rationale)} style={{ fontSize: 12.5, color: V.text, lineHeight: 1.75, margin: 0, cursor: "text", borderRadius: 8, padding: "4px 6px", transition: "background 0.15s" }} onMouseEnter={e => e.currentTarget.style.background = `${V.violet}12`} onMouseLeave={e => e.currentTarget.style.background = "transparent"} title="Klick zum Bearbeiten">{img.rationale}</p>}</div>}
           {img.visual && <div style={{ background: `${V.cyan}08`, borderRadius: 14, padding: 16, border: `1px solid ${V.cyan}12` }}><Lbl c={V.cyan}>Visuelle Hinweise für Designer</Lbl>{isEditing("visual", 0) ? <textarea autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} style={{ ...inpS, fontSize: 12.5, lineHeight: 1.65, minHeight: 80, resize: "vertical" }} /> : <p onClick={() => startEdit("visual", 0, img.visual)} style={{ fontSize: 12.5, color: V.text, lineHeight: 1.65, margin: 0, fontStyle: "italic", cursor: "text", borderRadius: 8, padding: "4px 6px", transition: "background 0.15s" }} onMouseEnter={e => e.currentTarget.style.background = `${V.cyan}12`} onMouseLeave={e => e.currentTarget.style.background = "transparent"} title="Klick zum Bearbeiten">{img.visual}</p>}</div>}
 
-          {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher-Vorschläge</Lbl>{img.eyecatchers.map((ec, i) => <div key={i} style={{ ...gS, padding: 12, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", gap: 10, flex: 1 }}><span style={{ color: V.amber, fontWeight: 800 }}>{i + 1}.</span>{isEditing("eyecatcher", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", flex: 1 }} /> : <span onClick={() => startEdit("eyecatcher", i, ec.idea)} style={{ fontSize: 12.5, color: V.text, lineHeight: 1.5, cursor: "text" }} title="Klick zum Bearbeiten">{ec.idea}</span>}</div><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk === "low" ? "Geringes Risiko" : "Graubereich"}</Pill></div>)}</div>}
+          {img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher-Vorschläge</Lbl><div style={{ fontSize: 10, color: V.textDim, marginBottom: 8 }}>Wähle einen Eyecatcher aus — nur der ausgewählte wird im Designer-Export angezeigt.</div>{img.eyecatchers.map((ec, i) => { const ecActive = (ecSel[img.id] ?? 0) === i; const isText = ec.idea.length <= 40 && ec.idea.split(" ").length <= 5 && /^[A-ZÄÖÜ0-9]/.test(ec.idea); return <div key={i} onClick={() => { pushUndo(); setEcSel(p => ({ ...p, [img.id]: ecActive ? -1 : i })); }} style={{ ...gS, padding: 12, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center", border: ecActive ? `2px solid ${V.amber}` : "1px solid rgba(0,0,0,0.06)", background: ecActive ? `${V.amber}08` : "transparent", cursor: "pointer", opacity: ecActive ? 1 : 0.6, transition: "all 0.15s" }}><div style={{ display: "flex", gap: 10, flex: 1, alignItems: "center" }}><div style={{ width: 18, height: 18, borderRadius: 99, border: ecActive ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{ecActive && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div><span style={{ color: V.amber, fontWeight: 800, flexShrink: 0 }}>{i + 1}.</span>{isEditing("eyecatcher", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", flex: 1 }} /> : <div onClick={e => { e.stopPropagation(); startEdit("eyecatcher", i, ec.idea); }} style={{ cursor: "text", flex: 1 }} title="Klick zum Bearbeiten">{isText ? <span style={{ padding: "4px 12px", borderRadius: 6, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 13, fontWeight: 800, color: V.amber }}>{ec.idea}</span> : <div><span style={{ fontSize: 9, fontWeight: 700, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em", padding: "1px 6px", borderRadius: 4, background: "rgba(0,0,0,0.04)", marginRight: 6 }}>Darstellungshinweis</span><span style={{ fontSize: 12.5, color: V.text, lineHeight: 1.5 }}>{ec.idea}</span></div>}</div>}</div><Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk === "low" ? "Geringes Risiko" : "Graubereich"}</Pill></div>; })}<div onClick={() => { pushUndo(); setEcSel(p => ({ ...p, [img.id]: -1 })); }} style={{ ...gS, padding: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", opacity: (ecSel[img.id] ?? 0) === -1 ? 1 : 0.5 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: (ecSel[img.id] ?? 0) === -1 ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{(ecSel[img.id] ?? 0) === -1 && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div><span style={{ fontSize: 12, color: V.textDim, fontStyle: "italic" }}>Kein Eyecatcher</span></div></div>}
 
           {te && hls.length > 0 ? <div><Lbl c={V.orange}>Bildtexte (Deutsch)</Lbl>
             {/* HEADLINES */}
@@ -1066,7 +1069,7 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             {/* Legacy single subheadline fallback */}
             {subs.length === 0 && te.subheadline && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><Pill c={V.blue}>SUBHEADLINE</Pill><CopyBtn text={te.subheadline} /></div><div style={{ fontSize: 13, color: V.textMed, lineHeight: 1.6 }}>{te.subheadline}</div></div>}
             {/* BULLETS — with drag-and-drop reordering + rich text editing */}
-            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} onDragStart={() => setDragIdx(i)} onDragEnd={e => { e.currentTarget.removeAttribute("draggable"); if (dragIdx !== null && dragOver !== null && dragIdx !== dragOver) { onEditText(sel, "reorder_bullets", dragIdx, dragOver); setBulSel(p => { const old = p[bKey] || bullets.map(() => true); const ns = [...old]; const [moved] = ns.splice(dragIdx, 1); ns.splice(dragOver, 0, moved); return { ...p, [bKey]: ns }; }); } setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); if (dragOver !== i) setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${V.teal}06` : "transparent", cursor: "default", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
+            {bullets.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><Pill c={V.teal}>BULLETS · {selectedBullets.length}/{bullets.length}</Pill><CopyBtn text={selectedBullets.join("\n")} /></div>{bullets.map((b, i) => { const on = bSel[i] !== false; const isDragging = dragIdx === i; const isDragOver = dragOver === i && dragIdx !== i; return <div key={i} onDragStart={() => { dragIdxRef.current = i; setDragIdx(i); }} onDragEnd={e => { e.currentTarget.removeAttribute("draggable"); const from = dragIdxRef.current, to = dragOverRef.current; if (from !== null && to !== null && from !== to) { onEditText(sel, "reorder_bullets", from, to); setBulSel(p => { const old = p[bKey] || bullets.map(() => true); const ns = [...old]; const [moved] = ns.splice(from, 1); ns.splice(to, 0, moved); return { ...p, [bKey]: ns }; }); } dragIdxRef.current = null; dragOverRef.current = null; setDragIdx(null); setDragOver(null); }} onDragOver={e => { e.preventDefault(); dragOverRef.current = i; if (dragOver !== i) setDragOver(i); }} onDragLeave={() => setDragOver(null)} style={{ display: "flex", gap: 6, marginTop: 10, padding: "8px 10px", borderRadius: 8, border: isDragOver ? `2px solid ${V.teal}` : on ? `1.5px solid ${V.teal}30` : "1.5px solid rgba(0,0,0,0.04)", background: isDragOver ? `${V.teal}15` : on ? `${V.teal}06` : "transparent", cursor: "default", opacity: isDragging ? 0.4 : on ? 1 : 0.45, transition: "all 0.15s", alignItems: "flex-start" }}>
               <div onMouseDown={e => { e.currentTarget.parentElement.setAttribute("draggable", "true"); }} style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, cursor: "grab", padding: "4px 2px", color: V.textDim, fontSize: 10, userSelect: "none" }} title="Ziehen zum Verschieben">⋮⋮</div>
               <div onClick={e => { e.stopPropagation(); const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${V.teal}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, cursor: "pointer" }}>{on && <span style={{ color: V.teal, fontSize: 12, fontWeight: 800 }}>✓</span>}</div>
               <div style={{ flex: 1, minWidth: 0 }}>{isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={{ display: "flex", gap: 4, marginBottom: 2 }}><button onMouseDown={e => { e.preventDefault(); document.execCommand("bold"); }} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: FN, color: V.ink }}>B</button><span style={{ fontSize: 9, color: V.textDim, alignSelf: "center" }}>oder Strg+B</span></div><div contentEditable suppressContentEditableWarning ref={el => { if (el && !el.dataset.init) { el.innerHTML = editVal; el.dataset.init = "1"; } }} onBlur={e => { onEditText(sel, "bul", i, html2md(e.currentTarget.innerHTML)); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); if (e.key === "b" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.execCommand("bold"); } }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", minHeight: 28, outline: "none", lineHeight: 1.6 }} /></div> : <span onClick={e => { e.stopPropagation(); startEdit("bul", i, md2html(b)); }} style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6, cursor: "text", display: "block" }} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A;font-weight:700">$1</b>') }} title="Klick zum Bearbeiten" />}</div>
@@ -1090,6 +1093,49 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
 
         </div>
       </GC>
+      {/* Kaufauslöser-Abdeckung — live check across all selected texts */}
+      {D.audience?.triggers?.length > 0 && (() => {
+        const triggers = D.audience.triggers;
+        const norm = s => (s || "").toLowerCase().replace(/[^a-zäöüß0-9\s]/g, "");
+        // Collect all currently selected texts across all images
+        let allTexts = "";
+        (D.images || []).forEach(im => {
+          if (imgDisabled?.[im.id]) return;
+          const t = im.texts;
+          if (!t) return;
+          const h = t.headlines || (t.headline ? [t.headline] : []);
+          const ci = hlC[im.id] ?? 0;
+          allTexts += " " + (h[ci] || h[0] || "");
+          const ss = Array.isArray(t.subheadlines) ? t.subheadlines : (t.subheadline ? [t.subheadline] : []);
+          const si = shC[im.id] ?? 0;
+          if (si !== -1) allTexts += " " + (ss[si] || ss[0] || "");
+          const bl = t.bullets || [];
+          const bs = bulSel[im.id] || bl.map(() => true);
+          bl.forEach((b, i) => { if (bs[i] !== false) allTexts += " " + b; });
+          const ab = getAllBadges(t);
+          const { badge: sb } = getSelectedBadge(bdgSel, im.id, ab);
+          if (sb) allTexts += " " + sb;
+          if (im.concept) allTexts += " " + im.concept;
+          if (im.visual) allTexts += " " + im.visual;
+        });
+        const normAll = norm(allTexts);
+        const missing = triggers.filter(tr => {
+          const words = norm(tr).split(/\s+/).filter(w => w.length > 3);
+          return !words.some(w => normAll.includes(w));
+        });
+        if (!missing.length) return null;
+        return <div style={{ ...gS, padding: "14px 18px", marginTop: 10, background: `${V.rose}08`, border: `2px solid ${V.rose}30`, borderRadius: 14 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>⚠</span>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: V.rose, marginBottom: 6 }}>Kaufauslöser nicht abgedeckt</div>
+              <div style={{ fontSize: 11, color: V.text, lineHeight: 1.6, marginBottom: 6 }}>Folgende Kaufauslöser aus der Analyse sind in der aktuellen Textauswahl nicht erkennbar:</div>
+              {missing.map((tr, i) => <div key={i} style={{ fontSize: 12, fontWeight: 700, color: V.rose, padding: "4px 10px", borderRadius: 6, background: `${V.rose}10`, display: "inline-block", marginRight: 6, marginBottom: 4 }}>{tr}</div>)}
+              <div style={{ fontSize: 10, color: V.textDim, marginTop: 8 }}>Prüfe, ob diese Kaufargumente durch andere Texte/Bilder oder die aktuelle Auswahl abgedeckt werden.</div>
+            </div>
+          </div>
+        </div>;
+      })()}
     </div>
   );
 }
@@ -1228,13 +1274,19 @@ function getImgFileName(images, idx, asin) {
   }
   return asin ? `${asin}.${label}` : label;
 }
-function genBrief(D, hlC, shC, bulSel, bdgSel, imgDisabled) {
+function genBrief(D, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel) {
   let t = `AMAZON GALLERY IMAGE BRIEFING\n${"=".repeat(50)}\nProduct: ${D.product?.name} | ${D.product?.brand}\nMarketplace: ${D.product?.marketplace}\n\n`;
   (D.images || []).forEach((im, idx) => {
     if (imgDisabled?.[im.id]) return; // skip disabled images
     const expLabel = getImgLabel(D.images, idx) + (im.theme ? " | " + im.theme : "") + " (" + (im.role || im.label) + ")";
-    t += `${"-".repeat(50)}\n${expLabel}\n${"-".repeat(50)}\nCONCEPT:\n${im.concept}\n\nRATIONALE:\n${im.rationale}\n`;
-    if (im.eyecatchers?.length) t += `\nEYECATCHER IDEAS:\n${im.eyecatchers.map((e, i) => `  ${i + 1}. ${e.idea} [${e.risk}]`).join("\n")}\n`;
+    t += `${"-".repeat(50)}\n${expLabel}\n${"-".repeat(50)}\nCONCEPT:\n${im.conceptEn || im.concept}\n\nRATIONALE:\n${im.rationaleEn || im.rationale}\n`;
+    if (im.eyecatchers?.length) {
+      const selEcIdx = ecSel?.[im.id] ?? 0;
+      if (selEcIdx !== -1 && im.eyecatchers[selEcIdx]) {
+        const ec = im.eyecatchers[selEcIdx];
+        t += `\nSELECTED EYECATCHER:\n  ${ec.idea} [${ec.risk}]\n`;
+      }
+    }
     if (im.texts) {
       const h = im.texts.headlines || (im.texts.headline ? [im.texts.headline] : []);
       const ci = hlC[im.id] ?? 0;
@@ -1252,7 +1304,7 @@ function genBrief(D, hlC, shC, bulSel, bdgSel, imgDisabled) {
       if (selBadge) t += `  Badge: "${selBadge}"\n`;
       if (im.texts.footnotes?.length) t += `  Footnotes: ${im.texts.footnotes.map(f => `"${f}"`).join(" | ")}\n`;
     } else { t += "\nTEXTS: None — visual-only image\n"; }
-    t += `\nVISUAL NOTES:\n${im.visual}\n\n`;
+    t += `\nVISUAL NOTES:\n${im.visualEn || im.visual}\n\n`;
   });
   return t;
 }
@@ -1266,7 +1318,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
   const [liveD, setLiveD] = useState(initialD);
   const [liveSelections, setLiveSelections] = useState(initialSelections);
   const D = liveD;
-  const hlC = liveSelections?.hlC || {}, shC = liveSelections?.shC || {}, bulSel = liveSelections?.bulSel || {}, bdgSel = liveSelections?.bdgSel || {};
+  const hlC = liveSelections?.hlC || {}, shC = liveSelections?.shC || {}, bulSel = liveSelections?.bulSel || {}, bdgSel = liveSelections?.bdgSel || {}, ecSel = liveSelections?.ecSel || {};
   const links = liveSelections?.links || {};
   const [updateBanner, setUpdateBanner] = useState(null);
   const [changedFields, setChangedFields] = useState(new Set());
@@ -1463,25 +1515,28 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
             <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 16 }}>
               {/* Concept + Visual side by side */}
               <div style={{ display: "grid", gridTemplateColumns: img.visual ? "1fr 1fr" : "1fr", gap: 16 }}>
-                {img.concept && <div><Lbl c={V.blue}>Concept</Lbl><p style={{ fontSize: 14, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.concept}</p></div>}
-                {img.visual && <div><Lbl c={V.textDim}>Visual Notes</Lbl><p style={{ fontSize: 13, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visual}</p></div>}
+                {img.concept && <div><Lbl c={V.blue}>Concept</Lbl><p style={{ fontSize: 14, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.conceptEn || img.concept}</p></div>}
+                {img.visual && <div><Lbl c={V.textDim}>Visual Notes</Lbl><p style={{ fontSize: 13, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visualEn || img.visual}</p></div>}
               </div>
-              {img.rationale && <div style={{ background: `${V.violet}06`, borderRadius: 12, padding: 16, border: `1px solid ${V.violet}10` }}><Lbl c={V.violet}>Rationale</Lbl><p style={{ fontSize: 13, color: V.text, lineHeight: 1.7, margin: 0 }}>{img.rationale}</p></div>}
-              {/* Eyecatchers - Main Image only */}
-              {isMain && img.eyecatchers?.length > 0 && <div><Lbl c={V.amber}>Eyecatcher Elements</Lbl><div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{img.eyecatchers.map((ec, i) => {
-                const isShort = ec.idea.length <= 30 && !ec.idea.includes(" ");
-                const looksLikeBadgeText = isShort || /^[A-ZÄÖÜ0-9]/.test(ec.idea) && ec.idea.split(" ").length <= 4;
-                return <div key={i} style={{ ...gS, padding: "10px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <span style={{ fontSize: 12, fontWeight: 800, color: V.amber, flexShrink: 0, marginTop: 2 }}>{i + 1}.</span>
+              {img.rationale && <div style={{ background: `${V.violet}06`, borderRadius: 12, padding: 16, border: `1px solid ${V.violet}10` }}><Lbl c={V.violet}>Rationale</Lbl><p style={{ fontSize: 13, color: V.text, lineHeight: 1.7, margin: 0 }}>{img.rationaleEn || img.rationale}</p></div>}
+              {/* Eyecatchers - Main Image only, show only selected */}
+              {isMain && img.eyecatchers?.length > 0 && (() => {
+                const selIdx = ecSel[img.id] ?? 0;
+                if (selIdx === -1) return null; // no eyecatcher selected
+                const ec = img.eyecatchers[selIdx];
+                if (!ec) return null;
+                const isText = ec.idea.length <= 40 && ec.idea.split(" ").length <= 5 && /^[A-ZÄÖÜ0-9]/.test(ec.idea);
+                return <div><Lbl c={V.amber}>Eyecatcher Element</Lbl><div style={{ ...gS, padding: "10px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
                   <div style={{ flex: 1 }}>
-                    {looksLikeBadgeText ? (
+                    {isText ? (
                       <ICopy text={ec.idea}><span style={{ padding: "5px 14px", borderRadius: 8, background: `${V.amber}15`, border: `1px solid ${V.amber}25`, fontSize: 14, fontWeight: 800, color: V.amber }}>{ec.idea}</span></ICopy>
                     ) : (
-                      <div><Pill c={V.textDim} s={{ marginBottom: 4 }}>Visual description</Pill><p style={{ fontSize: 14, color: V.text, lineHeight: 1.6, margin: "4px 0 0" }}>{ec.idea}</p></div>
+                      <div><Pill c={V.textDim} s={{ marginBottom: 4 }}>Visual description — not copyable text</Pill><p style={{ fontSize: 14, color: V.text, lineHeight: 1.6, margin: "4px 0 0" }}>{ec.idea}</p></div>
                     )}
                   </div>
-                </div>;
-              })}</div></div>}
+                  <Pill c={ec.risk === "low" ? V.emerald : V.amber}>{ec.risk === "low" ? "Low risk" : "Gray area"}</Pill>
+                </div></div>;
+              })()}
               {/* ── IMAGE TEXTS ── clearly separated from concept/visual above */}
               {d.hasTexts && <div style={{ background: `${V.orange}06`, borderRadius: 14, padding: 18, border: `2px solid ${V.orange}18`, marginTop: 4 }}>
                 <div style={{ fontSize: 13, fontWeight: 900, color: V.orange, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 14, paddingBottom: 10, borderBottom: `2px solid ${V.orange}20` }}>Image Texts</div>
@@ -1663,6 +1718,43 @@ export default function App() {
   const [showLinks, setShowLinks] = useState(false);
   // Track the shared briefing ID so we can update it instead of creating duplicates
   const [sharedBriefingId, setSharedBriefingId] = useState(null);
+  // Eyecatcher selection per main image (keyed by image id → selected eyecatcher index, -1 = none)
+  const [ecSel, setEcSel] = useState({});
+  // Undo/Redo history for data + selections
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const pushUndo = useCallback(() => {
+    if (!data) return;
+    undoStack.current.push(JSON.stringify({ data, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }));
+    if (undoStack.current.length > 50) undoStack.current.shift();
+    redoStack.current = [];
+    setCanUndo(true); setCanRedo(false);
+  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel]);
+  const doUndo = useCallback(() => {
+    if (!undoStack.current.length) return;
+    redoStack.current.push(JSON.stringify({ data, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }));
+    const prev = JSON.parse(undoStack.current.pop());
+    setData(prev.data); setHlC(prev.hlC); setShC(prev.shC); setBulSel(prev.bulSel); setBdgSel(prev.bdgSel); setImgDisabled(prev.imgDisabled); setEcSel(prev.ecSel || {});
+    setCanUndo(undoStack.current.length > 0); setCanRedo(true);
+  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel]);
+  const doRedo = useCallback(() => {
+    if (!redoStack.current.length) return;
+    undoStack.current.push(JSON.stringify({ data, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }));
+    const next = JSON.parse(redoStack.current.pop());
+    setData(next.data); setHlC(next.hlC); setShC(next.shC); setBulSel(next.bulSel); setBdgSel(next.bdgSel); setImgDisabled(next.imgDisabled); setEcSel(next.ecSel || {});
+    setCanUndo(true); setCanRedo(redoStack.current.length > 0);
+  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel]);
+  // Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const h = e => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); doUndo(); }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); doRedo(); }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [doUndo, doRedo]);
   // Load briefing from shared URL on mount (short ID or legacy hash)
   useEffect(() => {
     const hash = window.location.hash.slice(1);
@@ -1710,7 +1802,7 @@ export default function App() {
   const shareDesignerLink = useCallback(async () => {
     if (!data) return;
     setShareLoading(true);
-    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null }, userAsin: curAsin || "" } };
+    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null }, userAsin: curAsin || "" } };
     if (sharedBriefingId) payload._updateId = sharedBriefingId;
     try {
       const bodyStr = JSON.stringify(payload);
@@ -1748,21 +1840,21 @@ export default function App() {
       setShareUrl("error");
     }
     setShareLoading(false);
-  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId, curAsin]);
+  }, [data, hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId, curAsin]);
   // Auto-sync changes to designer link whenever data/selections change (debounced 3s)
   const autoSyncRef = useRef(null);
   useEffect(() => {
     if (!sharedBriefingId || !data) return;
     if (autoSyncRef.current) clearTimeout(autoSyncRef.current);
     autoSyncRef.current = setTimeout(async () => {
-      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null }, userAsin: curAsin || "" }, _updateId: sharedBriefingId };
+      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null }, userAsin: curAsin || "" }, _updateId: sharedBriefingId };
       try {
         const r = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         if (!r.ok) console.warn("[auto-sync] Failed:", r.status, await r.text().catch(() => ""));
       } catch (e) { console.warn("[auto-sync] Error:", e.message); }
     }, 3000);
     return () => clearTimeout(autoSyncRef.current);
-  }, [data, hlC, shC, bulSel, bdgSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId, curAsin]);
+  }, [data, hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId, curAsin]);
   const go = useCallback(async (a, m, p, f, refData, imgCount, h10Keywords, bestsellerAsin) => {
     setL(true); setE(null); setSt("Starte...");
     try {
@@ -1823,9 +1915,9 @@ export default function App() {
       // Step 3: Run AI analysis with all scraped + researched data
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
       const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7, h10Keywords || null);
-      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); setSharedBriefingId(null); saveH(result, a);
+      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setEcSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); setSharedBriefingId(null); undoStack.current = []; redoStack.current = []; setCanUndo(false); setCanRedo(false); saveH(result, a);
       // Auto-save to DB with retry — every briefing must get a permanent ID
-      const autoSavePayload = { briefing: result, selections: { hlC: {}, shC: {}, bulSel: {}, bdgSel: {}, imgDisabled: {}, refImages: {}, links: {}, userAsin: a || "" } };
+      const autoSavePayload = { briefing: result, selections: { hlC: {}, shC: {}, bulSel: {}, bdgSel: {}, ecSel: {}, imgDisabled: {}, refImages: {}, links: {}, userAsin: a || "" } };
       for (let att = 0; att < 3; att++) {
         try {
           const sr = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(autoSavePayload) });
@@ -1844,7 +1936,7 @@ export default function App() {
   if ((!data && !showNew) || (showNew && !loading) || (loading && !data)) return <StartScreen onStart={data ? goNew : go} loading={loading} status={status} error={error} onDismiss={() => setE(null)} onLoad={(briefingData, selections, briefingId) => {
     setData(briefingData); setTab("b"); setSN(false);
     const sel = selections || {};
-    setHlC(sel.hlC || {}); setShC(sel.shC || {}); setBulSel(sel.bulSel || {}); setBdgSel(sel.bdgSel || {});
+    setHlC(sel.hlC || {}); setShC(sel.shC || {}); setBulSel(sel.bulSel || {}); setBdgSel(sel.bdgSel || {}); setEcSel(sel.ecSel || {});
     setImgDisabled(sel.imgDisabled || {}); setRefImages(sel.refImages || {});
     setCurAsin(briefingData.product?.sku || "");
     if (briefingId) setSharedBriefingId(briefingId);
@@ -1860,6 +1952,10 @@ export default function App() {
             <button onClick={() => setSN(true)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10 }}>Neues Briefing</button>
             <button onClick={() => setShowHist(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, position: "relative" }}>Verlauf</button>
             <button onClick={() => setShowLinks(p => !p)} style={{ ...gS, padding: "7px 12px", fontSize: 10, fontWeight: 700, color: showLinks ? V.blue : V.textDim, cursor: "pointer", fontFamily: FN, borderRadius: 10, border: showLinks ? `1.5px solid ${V.blue}40` : "1px solid rgba(0,0,0,0.08)" }}>Links</button>
+            <div style={{ display: "flex", gap: 2, marginLeft: 4 }}>
+              <button onClick={doUndo} disabled={!canUndo} title="Rückgängig (Strg+Z)" style={{ ...gS, padding: "6px 8px", fontSize: 14, fontWeight: 700, color: canUndo ? V.ink : V.textDim, cursor: canUndo ? "pointer" : "default", fontFamily: FN, borderRadius: 8, opacity: canUndo ? 1 : 0.35, lineHeight: 1 }}>↩</button>
+              <button onClick={doRedo} disabled={!canRedo} title="Wiederherstellen (Strg+Y)" style={{ ...gS, padding: "6px 8px", fontSize: 14, fontWeight: 700, color: canRedo ? V.ink : V.textDim, cursor: canRedo ? "pointer" : "default", fontFamily: FN, borderRadius: 8, opacity: canRedo ? 1 : 0.35, lineHeight: 1 }}>↪</button>
+            </div>
             {sharedBriefingId && <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: `1.5px solid ${V.emerald}40`, background: `${V.emerald}10`, color: V.emerald, fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Speichern..." : "Speichern"}</button>}
             <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30`, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Erstellen..." : "Designer-Link"}</button>
           </div>
@@ -1872,7 +1968,7 @@ export default function App() {
             if (d?.data?.briefing?.product) {
               setData(d.data.briefing); setTab("b");
               const sel = d.data.selections || {};
-              setHlC(sel.hlC || {}); setShC(sel.shC || {}); setBulSel(sel.bulSel || {}); setBdgSel(sel.bdgSel || {}); setImgDisabled(sel.imgDisabled || {}); setRefImages(sel.refImages || {});
+              setHlC(sel.hlC || {}); setShC(sel.shC || {}); setBulSel(sel.bulSel || {}); setBdgSel(sel.bdgSel || {}); setEcSel(sel.ecSel || {}); setImgDisabled(sel.imgDisabled || {}); setRefImages(sel.refImages || {});
               setCurAsin(d.data.briefing.product?.sku || "");
               setSharedBriefingId(briefingId);
               setShowHist(false);
@@ -1904,7 +2000,8 @@ export default function App() {
             <div style={{ fontSize: 10, color: V.textDim }}>Diese Links werden im Designer-Export sichtbar. Klicke "Designer-Link" um den Link mit den aktuellen Einstellungen neu zu generieren.</div>
           </div>
         </GC>}
-        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} imgDisabled={imgDisabled} setImgDisabled={setImgDisabled} refImages={refImages} setRefImages={setRefImages} onEditText={(imgIdx, type, textIdx, newVal) => {
+        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} imgDisabled={imgDisabled} setImgDisabled={setImgDisabled} refImages={refImages} setRefImages={setRefImages} ecSel={ecSel} setEcSel={setEcSel} pushUndo={pushUndo} onEditText={(imgIdx, type, textIdx, newVal) => {
+          pushUndo();
           setData(prev => {
             const next = JSON.parse(JSON.stringify(prev));
             if (type === "concept") { next.images[imgIdx].concept = newVal; return next; }
