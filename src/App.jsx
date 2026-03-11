@@ -9,7 +9,7 @@ const BG = "linear-gradient(170deg, #f0f0ff 0%, #fff8f0 30%, #f0faf5 60%, #f8f0f
 const Orbs = () => <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0, overflow: "hidden" }}><div style={{ position: "absolute", top: -80, right: -80, width: 350, height: 350, borderRadius: "50%", background: `radial-gradient(circle, ${V.violet}12, transparent 70%)` }} /><div style={{ position: "absolute", bottom: -60, left: -60, width: 300, height: 300, borderRadius: "50%", background: `radial-gradient(circle, ${V.cyan}10, transparent 70%)` }} /></div>;
 const inpS = { width: "100%", padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(0,0,0,0.08)", background: "rgba(255,255,255,0.6)", fontFamily: FN, fontSize: 13, color: V.ink, outline: "none", boxSizing: "border-box" };
 
-const HK = "briefing_history", MH = 5;
+const HK = "briefing_history", MH = 10;
 // ═══════ SHARED HELPERS ═══════
 const strip = s => (s || "").replace(/\*\*(.+?)\*\*/g, "$1");
 const md2html = s => (s || "").replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
