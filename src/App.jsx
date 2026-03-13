@@ -1167,28 +1167,37 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
 
         </div>
       </GC>
-      {/* Kaufauslöser-Abdeckung — live check across all selected texts */}
+      {/* Kaufauslöser-Abdeckung — live check across all selected texts (updates on every edit, toggle, add, delete) */}
       {D.audience?.triggers?.length > 0 && (() => {
         const triggers = D.audience.triggers;
         const norm = s => (s || "").toLowerCase().replace(/[^a-zäöüß0-9\s]/g, "");
-        // Collect all currently selected texts across all images
+        // Helper: return live editVal if this field is currently being edited, otherwise the committed value
+        const liveVal = (imgIdx, type, idx, committed) => (editField && sel === imgIdx && editField.type === type && editField.idx === idx) ? editVal : committed;
+        // Collect all currently active texts across all enabled images
         let allTexts = "";
-        (D.images || []).forEach(im => {
+        (D.images || []).forEach((im, imgIdx) => {
           if (imgDisabled?.[im.id]) return;
           const t = im.texts;
           if (!t) return;
+          // Headlines — selected variant, with live edit overlay
           const h = t.headlines || (t.headline ? [t.headline] : []);
           const ci = hlC[im.id] ?? 0;
-          allTexts += " " + (h[ci] || h[0] || "");
+          allTexts += " " + liveVal(imgIdx, "hl", ci, h[ci] || h[0] || "");
+          // Subheadlines — selected variant
           const ss = Array.isArray(t.subheadlines) ? t.subheadlines : (t.subheadline ? [t.subheadline] : []);
           const si = shC[im.id] ?? 0;
-          if (si !== -1) allTexts += " " + (ss[si] || ss[0] || "");
+          if (si !== -1) allTexts += " " + liveVal(imgIdx, "sub", si, ss[si] || ss[0] || "");
+          // Bullets — only active ones
           const bl = t.bullets || [];
           const bs = bulSel[im.id] || bl.map(() => true);
-          bl.forEach((b, i) => { if (bs[i] !== false) allTexts += " " + bText(b); });
+          bl.forEach((b, i) => { if (bs[i] !== false) allTexts += " " + liveVal(imgIdx, "bul", i, bText(b)); });
+          // Badges — all badges (not variant-selected, all contribute to the image)
           const ab = getAllBadges(t);
-          const { badge: sb } = getSelectedBadge(bdgSel, im.id, ab);
-          if (sb) allTexts += " " + sb;
+          ab.forEach((b, i) => { if (b) allTexts += " " + liveVal(imgIdx, "badge", i, b); });
+          // Eyecatchers — selected one
+          const ecIdx = ecSel?.[im.id] ?? 0;
+          const ec = im.eyecatchers?.[ecIdx];
+          if (ec) { const ct = liveVal(imgIdx, "eyecatcher", ecIdx, ecCopy(ec)); if (ct) allTexts += " " + ct; allTexts += " " + (ec.idea || ""); }
         });
         const normAll = norm(allTexts);
         // German morpheme analysis for compound word matching
@@ -2140,9 +2149,9 @@ export default function App() {
           pushUndo();
           setData(prev => {
             const next = JSON.parse(JSON.stringify(prev));
-            if (type === "concept") { next.images[imgIdx].concept = newVal; return next; }
-            if (type === "visual") { next.images[imgIdx].visual = newVal; return next; }
-            if (type === "rationale") { next.images[imgIdx].rationale = newVal; return next; }
+            if (type === "concept") { next.images[imgIdx].concept = newVal; delete next.images[imgIdx].conceptEn; return next; }
+            if (type === "visual") { next.images[imgIdx].visual = newVal; delete next.images[imgIdx].visualEn; return next; }
+            if (type === "rationale") { next.images[imgIdx].rationale = newVal; delete next.images[imgIdx].rationaleEn; return next; }
             if (type === "eyecatcher") { if (next.images[imgIdx].eyecatchers?.[textIdx]) { const ec = next.images[imgIdx].eyecatchers[textIdx]; if (ec.copyText !== undefined) { ec.copyText = newVal; } else { ec.idea = newVal; } } return next; }
             if (type === "badge") { const te = next.images[imgIdx]?.texts; if (te?.badges?.[textIdx] !== undefined) te.badges[textIdx] = newVal; else if (te?.callouts?.[textIdx - (te.badges?.length || 0)] !== undefined) te.callouts[textIdx - (te.badges?.length || 0)] = newVal; return next; }
             if (type === "reorder_bullets") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { const [from, to] = [textIdx, newVal]; const b = [...te.bullets]; const [moved] = b.splice(from, 1); b.splice(to, 0, moved); te.bullets = b; } return next; }
