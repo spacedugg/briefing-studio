@@ -1187,8 +1187,11 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
           const bs = bulSel[im.id] || bl.map(() => true);
           bl.forEach((b, i) => { if (bs[i] !== false) allTexts += " " + bText(b); });
           const ab = getAllBadges(t);
-          const { badge: sb } = getSelectedBadge(bdgSel, im.id, ab);
-          if (sb) allTexts += " " + sb;
+          ab.forEach(b => { if (b) allTexts += " " + b; });
+          // Include selected eyecatcher text
+          const ecIdx = ecSel?.[im.id] ?? 0;
+          const ec = im.eyecatchers?.[ecIdx];
+          if (ec) { const ct = ecCopy(ec); if (ct) allTexts += " " + ct; allTexts += " " + (ec.idea || ""); }
         });
         const normAll = norm(allTexts);
         // German morpheme analysis for compound word matching
@@ -2140,9 +2143,9 @@ export default function App() {
           pushUndo();
           setData(prev => {
             const next = JSON.parse(JSON.stringify(prev));
-            if (type === "concept") { next.images[imgIdx].concept = newVal; return next; }
-            if (type === "visual") { next.images[imgIdx].visual = newVal; return next; }
-            if (type === "rationale") { next.images[imgIdx].rationale = newVal; return next; }
+            if (type === "concept") { next.images[imgIdx].concept = newVal; delete next.images[imgIdx].conceptEn; return next; }
+            if (type === "visual") { next.images[imgIdx].visual = newVal; delete next.images[imgIdx].visualEn; return next; }
+            if (type === "rationale") { next.images[imgIdx].rationale = newVal; delete next.images[imgIdx].rationaleEn; return next; }
             if (type === "eyecatcher") { if (next.images[imgIdx].eyecatchers?.[textIdx]) { const ec = next.images[imgIdx].eyecatchers[textIdx]; if (ec.copyText !== undefined) { ec.copyText = newVal; } else { ec.idea = newVal; } } return next; }
             if (type === "badge") { const te = next.images[imgIdx]?.texts; if (te?.badges?.[textIdx] !== undefined) te.badges[textIdx] = newVal; else if (te?.callouts?.[textIdx - (te.badges?.length || 0)] !== undefined) te.callouts[textIdx - (te.badges?.length || 0)] = newVal; return next; }
             if (type === "reorder_bullets") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { const [from, to] = [textIdx, newVal]; const b = [...te.bullets]; const [moved] = b.splice(from, 1); b.splice(to, 0, moved); te.bullets = b; } return next; }
