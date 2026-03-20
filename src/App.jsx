@@ -1458,6 +1458,8 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
   const D = liveD;
   const hlC = liveSelections?.hlC || {}, shC = liveSelections?.shC || {}, bulSel = liveSelections?.bulSel || {}, bdgSel = liveSelections?.bdgSel || {}, ecSel = liveSelections?.ecSel || {};
   const links = liveSelections?.links || {};
+  const designerNotes = liveSelections?.designerNotes || "";
+  const [dTab, setDTab] = useState(0); // designer tab index
   const [updateBanner, setUpdateBanner] = useState(null);
   const [changedFields, setChangedFields] = useState(new Set());
   const versionRef = useRef(serverVersion || 1);
@@ -1623,9 +1625,15 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
           <div style={{ fontSize: 13, color: V.textDim }}>{D.product?.brand} · {D.product?.marketplace}{asin ? ` · ${asin}` : ""}</div>
         </div>
         {/* Links section */}
-        {(links.inputUrl || links.outputUrl) && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, display: "flex", gap: 14, flexWrap: "wrap" }}>
-          {links.inputUrl && <a href={links.inputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Assets / Source Files</a>}
+        {(links.inputUrls?.length > 0 || links.inputUrl || links.outputUrl || links.psdUrl) && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {(links.inputUrls || (links.inputUrl ? [links.inputUrl] : [])).map((u, i) => u && <a key={i} href={u} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>{(links.inputUrls?.length || 0) > 1 ? `Assets ${i + 1}` : "Assets / Source Files"}</a>)}
           {links.outputUrl && <a href={links.outputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.emerald}, ${V.teal})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Upload Results</a>}
+          {links.psdUrl && <a href={links.psdUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.violet}, ${V.rose})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>PSD Files</a>}
+        </div>}
+        {/* Designer Notes */}
+        {designerNotes && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, border: `1px solid ${V.orange}20` }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: V.orange, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>General Notes</div>
+          <p style={{ fontSize: 14, color: V.text, lineHeight: 1.7, margin: 0, whiteSpace: "pre-wrap" }}>{designerNotes}</p>
         </div>}
         {/* File naming convention — click to copy */}
         <div style={{ ...gS, padding: "12px 18px", marginBottom: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -1633,14 +1641,23 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
           {D.images.map((img, i) => liveImgDisabled[img.id] ? null : <FileNameCopy key={i} name={imgName(i)} />)}
           <span style={{ fontSize: 11, color: V.textDim }}>.jpg / .png, max 5 MB each</span>
         </div>
-        {/* All images listed sequentially */}
-        {D.images.map((img, idx) => {
-          if (liveImgDisabled[img.id]) return null; // skip disabled images
+        {/* Image tabs — like Studio, switch between images */}
+        {(() => {
+          const visibleImages = D.images.map((img, idx) => ({ img, idx })).filter(({ img }) => !liveImgDisabled[img.id]);
+          const safeTab = Math.min(dTab, visibleImages.length - 1);
+          if (!visibleImages.length) return <div style={{ ...glass, padding: 32, textAlign: "center", color: V.textDim }}>No images in this briefing.</div>;
+          const { img, idx } = visibleImages[safeTab] || visibleImages[0];
           const d = getImageData(img);
           const isMain = (img.id || "").toLowerCase().startsWith("main");
           const isChanged = changedFields.has(idx);
           const imgRefs = liveRefImages[img.id] || [];
-          return <GC key={idx} style={{ marginBottom: 18, border: isChanged ? `2px solid ${V.orange}50` : undefined }}>
+          return <>
+          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, marginBottom: 14 }}>{visibleImages.map(({ img: vi, idx: vi_idx }, ti) => {
+            const viChanged = changedFields.has(vi_idx);
+            const active = ti === safeTab;
+            return <button key={vi_idx} onClick={() => setDTab(ti)} style={{ ...gS, padding: "8px 14px", background: active ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : viChanged ? `${V.orange}12` : "rgba(255,255,255,0.5)", color: active ? "#fff" : V.textDim, border: active ? "none" : viChanged ? `1px solid ${V.orange}40` : "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: active ? `0 4px 20px ${V.violet}40` : "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 0, transition: "all 0.15s" }}><span style={{ fontSize: 11, fontWeight: 800 }}>{imgName(vi_idx)}</span>{vi.theme && <span style={{ fontSize: 9, fontWeight: 500, opacity: active ? 0.85 : 0.7, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis" }}>{vi.theme}</span>}</button>;
+          })}</div>
+          <GC key={idx} style={{ marginBottom: 18, border: isChanged ? `2px solid ${V.orange}50` : undefined }}>
             {isChanged && <div style={{ padding: "8px 22px", background: `${V.orange}10`, borderBottom: `1px solid ${V.orange}20`, fontSize: 12, fontWeight: 700, color: V.orange }}>This image was changed in the latest update</div>}
             <div style={{ padding: "16px 24px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
@@ -1723,8 +1740,9 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>{imgRefs.map((src, ri) => <img key={ri} src={src} alt="" style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 10, border: "1px solid rgba(0,0,0,0.08)" }} />)}</div>
               </div>}
             </div>
-          </GC>;
-        })}
+          </GC>
+          </>;
+        })()}
       </div>
     </div>
   );
@@ -1860,8 +1878,10 @@ export default function App() {
   const [serverHist, setServerHist] = useState([]);
   const [histLoading, setHistLoading] = useState(false);
   // Input/Output links for designer collaboration
-  const [inputUrl, setInputUrl] = useState("");
+  const [inputUrls, setInputUrls] = useState([""]);
   const [outputUrl, setOutputUrl] = useState("");
+  const [psdUrl, setPsdUrl] = useState("");
+  const [designerNotes, setDesignerNotes] = useState("");
   const [showLinks, setShowLinks] = useState(false);
   // Track the shared briefing ID so we can update it instead of creating duplicates
   const [sharedBriefingId, setSharedBriefingId] = useState(null);
@@ -1949,7 +1969,7 @@ export default function App() {
   const shareDesignerLink = useCallback(async () => {
     if (!data) return;
     setShareLoading(true);
-    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null }, userAsin: curAsin || "" } };
+    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, links: { inputUrls: inputUrls.map(u => u.trim()).filter(Boolean), outputUrl: outputUrl.trim() || null, psdUrl: psdUrl.trim() || null }, designerNotes: designerNotes.trim() || null, userAsin: curAsin || "" } };
     if (sharedBriefingId) payload._updateId = sharedBriefingId;
     try {
       const bodyStr = JSON.stringify(payload);
@@ -1987,21 +2007,21 @@ export default function App() {
       setShareUrl("error");
     }
     setShareLoading(false);
-  }, [data, hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId, curAsin]);
+  }, [data, hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, inputUrls, outputUrl, psdUrl, designerNotes, sharedBriefingId, curAsin]);
   // Auto-sync changes to designer link whenever data/selections change (debounced 3s)
   const autoSyncRef = useRef(null);
   useEffect(() => {
     if (!sharedBriefingId || !data) return;
     if (autoSyncRef.current) clearTimeout(autoSyncRef.current);
     autoSyncRef.current = setTimeout(async () => {
-      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, links: { inputUrl: inputUrl.trim() || null, outputUrl: outputUrl.trim() || null }, userAsin: curAsin || "" }, _updateId: sharedBriefingId };
+      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, links: { inputUrls: inputUrls.map(u => u.trim()).filter(Boolean), outputUrl: outputUrl.trim() || null, psdUrl: psdUrl.trim() || null }, designerNotes: designerNotes.trim() || null, userAsin: curAsin || "" }, _updateId: sharedBriefingId };
       try {
         const r = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         if (!r.ok) console.warn("[auto-sync] Failed:", r.status, await r.text().catch(() => ""));
       } catch (e) { console.warn("[auto-sync] Error:", e.message); }
     }, 3000);
     return () => clearTimeout(autoSyncRef.current);
-  }, [data, hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, inputUrl, outputUrl, sharedBriefingId, curAsin]);
+  }, [data, hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, inputUrls, outputUrl, psdUrl, designerNotes, sharedBriefingId, curAsin]);
   const go = useCallback(async (a, m, p, f, refData, imgCount, h10Keywords, bestsellerAsin) => {
     setL(true); setE(null); setSt("Starte...");
     try {
@@ -2087,8 +2107,10 @@ export default function App() {
     setImgDisabled(sel.imgDisabled || {}); setRefImages(sel.refImages || {});
     setCurAsin(briefingData.product?.sku || "");
     if (briefingId) setSharedBriefingId(briefingId);
-    if (sel.links?.inputUrl) setInputUrl(sel.links.inputUrl);
+    if (sel.links?.inputUrls?.length) setInputUrls(sel.links.inputUrls); else if (sel.links?.inputUrl) setInputUrls([sel.links.inputUrl]);
     if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
+    if (sel.links?.psdUrl) setPsdUrl(sel.links.psdUrl);
+    if (sel.designerNotes) setDesignerNotes(sel.designerNotes);
   }} txtDensity={txtDensity} setTD={setTD} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
@@ -2119,23 +2141,44 @@ export default function App() {
               setCurAsin(d.data.briefing.product?.sku || "");
               setSharedBriefingId(briefingId);
               setShowHist(false);
-              if (sel.links?.inputUrl) setInputUrl(sel.links.inputUrl);
+              if (sel.links?.inputUrls?.length) setInputUrls(sel.links.inputUrls); else if (sel.links?.inputUrl) setInputUrls([sel.links.inputUrl]);
               if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
+              if (sel.links?.psdUrl) setPsdUrl(sel.links.psdUrl);
+              if (sel.designerNotes) setDesignerNotes(sel.designerNotes);
             }
           }).catch(() => {});
         }} onClose={() => setShowHist(false)} />}
         {showLinks && <GC style={{ padding: 0, marginBottom: 14 }}>
-          <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.blue}>Designer Links</Lbl><button onClick={() => setShowLinks(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div>
+          <div style={{ padding: "12px 18px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Lbl c={V.blue}>Designer Links & Notizen</Lbl><button onClick={() => setShowLinks(false)} style={{ background: "none", border: "none", color: V.textDim, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 14 }}>×</button></div>
           <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+            {/* INPUT LINKS — up to 5 */}
             <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: V.blue, marginBottom: 6, display: "block" }}>Input Link (Assets / Source Files)</label>
-              <input type="url" value={inputUrl} onChange={e => setInputUrl(e.target.value)} placeholder="z.B. Google Drive, Dropbox, Figma..." style={inpS} />
-              <div style={{ fontSize: 10, color: V.textDim, marginTop: 3 }}>Link zu Produktfotos, Logos, Assets die der Designer braucht.</div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: V.blue, marginBottom: 6, display: "block" }}>Input Links (Assets / Source Files)</label>
+              {inputUrls.map((u, i) => <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                <input type="url" value={u} onChange={e => { const n = [...inputUrls]; n[i] = e.target.value; setInputUrls(n); }} placeholder={`Link ${i + 1} — z.B. Google Drive, Dropbox, Figma...`} style={{ ...inpS, flex: 1 }} />
+                {inputUrls.length > 1 && <button onClick={() => setInputUrls(inputUrls.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: V.textDim, fontSize: 16, cursor: "pointer", padding: "0 4px", flexShrink: 0 }}>×</button>}
+              </div>)}
+              {inputUrls.length < 5 && <button onClick={() => setInputUrls([...inputUrls, ""])} style={{ fontSize: 10, fontWeight: 700, color: V.blue, cursor: "pointer", fontFamily: FN, background: `${V.blue}08`, border: `1px dashed ${V.blue}30`, borderRadius: 6, padding: "4px 10px" }}>+ Weiteren Input-Link hinzufügen</button>}
+              <div style={{ fontSize: 10, color: V.textDim, marginTop: 3 }}>Links zu Produktfotos, Logos, Assets die der Designer braucht (max. 5).</div>
             </div>
+            {/* OUTPUT LINKS — normal + PSD */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: V.emerald, marginBottom: 6, display: "block" }}>Output Link (Upload-Ordner)</label>
+                <input type="url" value={outputUrl} onChange={e => setOutputUrl(e.target.value)} placeholder="z.B. Google Drive Upload-Ordner..." style={inpS} />
+                <div style={{ fontSize: 10, color: V.textDim, marginTop: 3 }}>Ordner für fertige Bilder (.jpg/.png).</div>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: V.violet, marginBottom: 6, display: "block" }}>PSD-Output Link</label>
+                <input type="url" value={psdUrl} onChange={e => setPsdUrl(e.target.value)} placeholder="z.B. Google Drive PSD-Ordner..." style={inpS} />
+                <div style={{ fontSize: 10, color: V.textDim, marginTop: 3 }}>Separater Ordner für PSD-Dateien.</div>
+              </div>
+            </div>
+            {/* DESIGNER NOTES */}
             <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: V.emerald, marginBottom: 6, display: "block" }}>Output Link (Upload-Ordner)</label>
-              <input type="url" value={outputUrl} onChange={e => setOutputUrl(e.target.value)} placeholder="z.B. Google Drive Upload-Ordner..." style={inpS} />
-              <div style={{ fontSize: 10, color: V.textDim, marginTop: 3 }}>Ordner in den der Designer seine fertigen Bilder hochlädt.</div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: V.orange, marginBottom: 6, display: "block" }}>Allgemeine Hinweise für den Designer</label>
+              <textarea value={designerNotes} onChange={e => { setDesignerNotes(e.target.value); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }} ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }} placeholder="z.B. organisatorische Hinweise, Varianten-Info, Prioritäten, besondere Wünsche..." style={{ ...inpS, resize: "vertical", lineHeight: 1.6, minHeight: 60, overflow: "hidden" }} />
+              <div style={{ fontSize: 10, color: V.textDim, marginTop: 3 }}>Allgemeine Infos, die nicht zu einem bestimmten Bild gehören. Wird im Designer-Export oben angezeigt.</div>
             </div>
             <div style={{ ...gS, padding: "10px 14px" }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: V.textMed, marginBottom: 4 }}>Dateinamen-Konvention:</div>
@@ -2144,7 +2187,7 @@ export default function App() {
                 <span style={{ fontSize: 10, color: V.textDim, alignSelf: "center" }}>.jpg / .png, max 5 MB</span>
               </div>
             </div>
-            <div style={{ fontSize: 10, color: V.textDim }}>Diese Links werden im Designer-Export sichtbar. Klicke "Designer-Link" um den Link mit den aktuellen Einstellungen neu zu generieren.</div>
+            <div style={{ fontSize: 10, color: V.textDim }}>Diese Links und Notizen werden im Designer-Export sichtbar.</div>
           </div>
         </GC>}
         {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} imgDisabled={imgDisabled} setImgDisabled={setImgDisabled} refImages={refImages} setRefImages={setRefImages} ecSel={ecSel} setEcSel={setEcSel} pushUndo={pushUndo} onEditText={(imgIdx, type, textIdx, newVal) => {
