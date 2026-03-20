@@ -1084,16 +1084,25 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
   const handleRefUpload = (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
-    files.forEach(file => {
+    processRefFiles(files);
+    e.target.value = "";
+  };
+  const processRefFiles = (files) => {
+    files.filter(f => f.type.startsWith("image/")).forEach(file => {
       const reader = new FileReader();
       reader.onload = async () => {
-        // Compress to 400px for briefing save (these are just for designer reference)
         const compressed = await compressImage(reader.result, 400, 0.6);
         setRefImages(prev => ({ ...prev, [img.id]: [...(prev[img.id] || []), compressed] }));
       };
       reader.readAsDataURL(file);
     });
-    e.target.value = "";
+  };
+  const [refDragOver, setRefDragOver] = useState(false);
+  const handleRefDrop = (e) => {
+    e.preventDefault();
+    setRefDragOver(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length) processRefFiles(files);
   };
   const removeRefImage = (imgId, idx) => {
     setRefImages(prev => ({ ...prev, [imgId]: (prev[imgId] || []).filter((_, i) => i !== idx) }));
@@ -1161,10 +1170,10 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             {te.footnotes?.length > 0 && <div style={{ ...gS, padding: 12, background: `${V.textDim}08`, marginBottom: 10 }}><span style={{ fontSize: 10, fontWeight: 800, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em" }}>Fußnoten</span>{te.footnotes.map((f, i) => <div key={i} style={{ fontSize: 11, color: V.textDim, marginTop: 4, lineHeight: 1.5 }}>{f}</div>)}</div>}
           </div> : <div style={{ padding: 16, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Kein Text-Overlay. Rein visuelles Bild.</span></div>}
 
-          {/* REFERENCE IMAGES — upload per image */}
-          <div style={{ ...gS, padding: 14, marginTop: 8, borderStyle: (refImages[img.id]?.length ? "solid" : "dashed") }}>
+          {/* REFERENCE IMAGES — upload per image, supports drag-and-drop */}
+          <div onDragOver={e => { e.preventDefault(); setRefDragOver(true); }} onDragLeave={() => setRefDragOver(false)} onDrop={handleRefDrop} style={{ ...gS, padding: 14, marginTop: 8, borderStyle: (refImages[img.id]?.length ? "solid" : "dashed"), borderColor: refDragOver ? V.blue : undefined, background: refDragOver ? `${V.blue}08` : undefined, transition: "all 0.15s" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}><Lbl c={V.textMed}>Referenzbilder</Lbl><label style={{ fontSize: 10, fontWeight: 700, color: V.blue, cursor: "pointer", padding: "4px 10px", borderRadius: 6, background: `${V.blue}10`, border: `1px solid ${V.blue}25` }}>+ Hochladen<input type="file" accept="image/*" multiple onChange={handleRefUpload} style={{ display: "none" }} /></label></div>
-            {(refImages[img.id]?.length > 0) ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{refImages[img.id].map((src, ri) => <div key={ri} style={{ position: "relative", width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(0,0,0,0.08)" }}><img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /><button onClick={() => removeRefImage(img.id, ri)} style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 99, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button></div>)}</div> : <div style={{ textAlign: "center", padding: "12px 0", fontSize: 11, color: V.textDim }}>Beispielbilder hier hochladen, um dem Designer Inspiration zu geben.</div>}
+            {(refImages[img.id]?.length > 0) ? <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{refImages[img.id].map((src, ri) => <div key={ri} style={{ position: "relative", width: 80, height: 80, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(0,0,0,0.08)" }}><img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /><button onClick={() => removeRefImage(img.id, ri)} style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: 99, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button></div>)}</div> : <div style={{ textAlign: "center", padding: "16px 0", fontSize: 11, color: refDragOver ? V.blue : V.textDim }}>{refDragOver ? "Bilder hier ablegen..." : "Bilder hierher ziehen oder oben klicken zum Hochladen."}</div>}
           </div>
 
         </div>
@@ -1460,6 +1469,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
   const links = liveSelections?.links || {};
   const designerNotes = liveSelections?.designerNotes || "";
   const [dTab, setDTab] = useState(0); // designer tab index
+  const [lightboxSrc, setLightboxSrc] = useState(null); // enlarged reference image
   const [updateBanner, setUpdateBanner] = useState(null);
   const [changedFields, setChangedFields] = useState(new Set());
   const versionRef = useRef(serverVersion || 1);
@@ -1734,16 +1744,21 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
                 </div>}
               </div>}
               {!d.hasTexts && <div style={{ padding: 18, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 13, color: V.textDim }}>No text overlay. Visual-only image.</span></div>}
-              {/* Reference images */}
+              {/* Reference images — click to enlarge */}
               {imgRefs.length > 0 && <div style={{ marginTop: 8 }}>
                 <div style={{ fontSize: 10, fontWeight: 800, color: V.textMed, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>Reference Images</div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>{imgRefs.map((src, ri) => <img key={ri} src={src} alt="" style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 10, border: "1px solid rgba(0,0,0,0.08)" }} />)}</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>{imgRefs.map((src, ri) => <img key={ri} src={src} alt="" onClick={() => setLightboxSrc(src)} style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 10, border: "1px solid rgba(0,0,0,0.08)", cursor: "pointer", transition: "transform 0.15s" }} onMouseEnter={e => e.currentTarget.style.transform = "scale(1.05)"} onMouseLeave={e => e.currentTarget.style.transform = ""} />)}</div>
               </div>}
             </div>
           </GC>
           </>;
         })()}
       </div>
+      {/* Lightbox overlay for reference images */}
+      {lightboxSrc && <div onClick={() => setLightboxSrc(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-out", padding: 24 }}>
+        <img src={lightboxSrc} alt="" style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 12, boxShadow: "0 20px 80px rgba(0,0,0,0.5)" }} />
+        <button onClick={() => setLightboxSrc(null)} style={{ position: "absolute", top: 20, right: 20, width: 40, height: 40, borderRadius: 99, background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", fontSize: 22, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+      </div>}
     </div>
   );
 }
