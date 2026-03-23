@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { jsPDF } from "jspdf";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ShadingType } from "docx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ShadingType, ImageRun, TabStopType, TabStopPosition, Tab, PageBreak } from "docx";
 
 const MAX_HL = 35, SOFT_HL = 30, FN = "'Outfit', system-ui, sans-serif";
 const V = { violet: "#7C3AED", blue: "#2563EB", cyan: "#0891B2", teal: "#0D9488", emerald: "#059669", orange: "#EA580C", rose: "#E11D48", amber: "#D97706", ink: "#0F172A", text: "#334155", textMed: "#64748B", textDim: "#94A3B8" };
@@ -1913,42 +1913,59 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
 }
 
 // ═══════ CLIENT DOCX EXPORT ═══════
-async function generateClientDocx(D, selections, lang) {
+async function generateClientDocx(D, selections, lang, clientLogoData) {
   const isDE = lang === "de";
   const hlC = selections?.hlC || {}, shC = selections?.shC || {}, bulSel = selections?.bulSel || {}, bdgSel = selections?.bdgSel || {}, imgDisabled = selections?.imgDisabled || {}, ecSel = selections?.ecSel || {};
   const productName = D.product?.name || "";
   const brand = D.product?.brand || "";
   const sku = D.product?.sku || "";
   const marketplace = D.product?.marketplace || "";
+  // Clean text: remove em-dashes, en-dashes, fix ampersands, remove direct address
+  const clean = (s) => (s || "").replace(/\u2014/g, " ").replace(/\u2013/g, " ").replace(/—/g, " ").replace(/–/g, " ").replace(/&amp;/g, "&").replace(/&/g, " und ");
 
   // helpers
-  const txt = (s, opts = {}) => new TextRun({ text: s || "", font: "Calibri", ...opts });
-  const bold = (s, opts = {}) => txt(s, { bold: true, ...opts });
+  const txt = (s, opts = {}) => new TextRun({ text: clean(s) || "", font: "Calibri", ...opts });
+  const bld = (s, opts = {}) => txt(s, { bold: true, ...opts });
   const para = (children, opts = {}) => new Paragraph({ children: Array.isArray(children) ? children : [children], spacing: { after: 120 }, ...opts });
-  const h1 = (s) => new Paragraph({ children: [new TextRun({ text: s, bold: true, size: 36, color: "7C3AED", font: "Calibri" })], heading: HeadingLevel.HEADING_1, spacing: { before: 480, after: 160 } });
-  const h2 = (s) => new Paragraph({ children: [new TextRun({ text: s, bold: true, size: 28, color: "2563EB", font: "Calibri" })], heading: HeadingLevel.HEADING_2, spacing: { before: 320, after: 120 } });
-  const h3 = (s) => new Paragraph({ children: [new TextRun({ text: s, bold: true, size: 24, color: "334155", font: "Calibri" })], heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 80 } });
-  const divider = () => new Paragraph({ children: [], border: { bottom: { color: "E2E8F0", style: BorderStyle.SINGLE, size: 6 } }, spacing: { after: 200 } });
-  const getImgLabelStr = (images, i) => { const m = images.filter(x => (x.id || "").toLowerCase().startsWith("main")); const p = images.filter(x => !(x.id || "").toLowerCase().startsWith("main")); const isM = (images[i]?.id || "").toLowerCase().startsWith("main"); if (isM) { const mi = m.indexOf(images[i]); return m.length === 1 ? (isDE ? "Hauptbild" : "Main Image") : `${isDE ? "Hauptbild" : "Main Image"} ${mi + 1}`; } return `${isDE ? "Produktbild" : "Product Image"} ${p.indexOf(images[i]) + 1}`; };
+  const h2 = (s) => new Paragraph({ children: [new TextRun({ text: clean(s), bold: true, size: 28, color: "2563EB", font: "Calibri" })], heading: HeadingLevel.HEADING_2, spacing: { before: 360, after: 140 }, border: { bottom: { color: "E2E8F0", style: BorderStyle.SINGLE, size: 4 } } });
+  const h3 = (s) => new Paragraph({ children: [new TextRun({ text: clean(s), bold: true, size: 22, color: "475569", font: "Calibri" })], heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 80 } });
+  const spacer = () => para([txt("", { size: 8 })]);
+  const divider = () => new Paragraph({ children: [], border: { bottom: { color: "E2E8F0", style: BorderStyle.SINGLE, size: 4 } }, spacing: { before: 120, after: 200 } });
+  const getImgLabelStr = (images, i) => { const m = images.filter(x => (x.id || "").toLowerCase().startsWith("main")); const p = images.filter(x => !(x.id || "").toLowerCase().startsWith("main")); const isM = (images[i]?.id || "").toLowerCase().startsWith("main"); if (isM) { const mi = m.indexOf(images[i]); return m.length === 1 ? "Main Image" : `Main Image ${mi + 1}`; } return `PT${String(p.indexOf(images[i]) + 1).padStart(2, "0")}`; };
+  // Convert dataUrl to Uint8Array for ImageRun
+  const dataUrlToUint8 = (dataUrl) => { const b64 = dataUrl.split(",")[1]; const bin = atob(b64); const arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); return arr; };
 
-  const sections = [];
-
+  const titleChildren = [];
   // ── TITLE PAGE ──
-  sections.push(para([bold(productName, { size: 52, color: "7C3AED" })]));
-  if (brand) sections.push(para([txt(brand, { size: 28, color: "64748B" })]));
-  sections.push(para([]));
-  if (sku) sections.push(para([bold(isDE ? "ASIN / SKU: " : "ASIN / SKU: "), txt(sku)]));
-  if (marketplace) sections.push(para([bold(isDE ? "Marktplatz: " : "Marketplace: "), txt(marketplace)]));
-  sections.push(para([bold(isDE ? "Erstellt am: " : "Created: "), txt(new Date().toLocaleDateString(isDE ? "de-DE" : "en-US"))]));
-  sections.push(divider());
-
-  // ── INTRO ──
-  sections.push(h1(isDE ? "Ihr Listing-Konzept" : "Your Listing Concept"));
-  sections.push(para([txt(isDE
-    ? `Dieses Dokument stellt das entwickelte Konzept für Ihr Amazon-Listing dar. Es umfasst das visuelle Konzept, die strategische Ausrichtung sowie die empfohlenen Textelemente für jedes Ihrer Produktbilder.`
-    : `This document presents the developed concept for your Amazon listing. It covers the visual concept, strategic direction, and recommended text elements for each of your product images.`,
-    { size: 24 })]));
-  sections.push(divider());
+  // Logos row (company left, client right) — if available
+  const logoRow = [];
+  if (clientLogoData?.dataUrl) {
+    try {
+      const logoBytes = dataUrlToUint8(clientLogoData.dataUrl);
+      logoRow.push(new Paragraph({ children: [new ImageRun({ data: logoBytes, transformation: { width: 120, height: 50 }, type: clientLogoData.dataUrl.includes("image/png") ? "png" : "jpg" })], spacing: { after: 300 } }));
+    } catch (e) { /* skip logo on error */ }
+  }
+  titleChildren.push(...logoRow);
+  titleChildren.push(spacer()); titleChildren.push(spacer()); titleChildren.push(spacer());
+  titleChildren.push(para([txt(isDE ? "Listing Konzept" : "Listing Concept", { size: 20, color: "94A3B8", font: "Calibri", allCaps: true, characterSpacing: 120 })], { alignment: AlignmentType.LEFT }));
+  titleChildren.push(para([bld(isDE ? `${productName}` : `${productName}`, { size: 52, color: "1E293B" })], { spacing: { after: 60 } }));
+  if (brand) titleChildren.push(para([txt(brand, { size: 26, color: "64748B" })], { spacing: { after: 200 } }));
+  titleChildren.push(spacer());
+  // Metadata table
+  const metaRows = [];
+  if (sku) metaRows.push(["ASIN / SKU", sku]);
+  if (marketplace) metaRows.push([isDE ? "Marktplatz" : "Marketplace", marketplace]);
+  metaRows.push([isDE ? "Erstellt" : "Created", new Date().toLocaleDateString(isDE ? "de-DE" : "en-US", { year: "numeric", month: "long", day: "numeric" })]);
+  for (const [label, value] of metaRows) {
+    titleChildren.push(para([bld(`${label}:  `, { size: 20, color: "64748B" }), txt(value, { size: 20, color: "334155" })], { spacing: { after: 60 } }));
+  }
+  titleChildren.push(divider());
+  titleChildren.push(spacer());
+  // Intro text — no direct address
+  titleChildren.push(para([txt(isDE
+    ? "Dieses Dokument beschreibt das entwickelte Konzept fuer das Amazon-Listing. Es umfasst das visuelle Konzept sowie die empfohlenen Textelemente fuer jedes Produktbild."
+    : "This document describes the developed concept for the Amazon listing. It covers the visual concept and recommended text elements for each product image.",
+    { size: 22, color: "475569" })], { spacing: { after: 200 } }));
 
   // ── PER IMAGE ──
   const visibleImages = D.images.filter(im => !imgDisabled[im.id]);
@@ -1956,63 +1973,94 @@ async function generateClientDocx(D, selections, lang) {
     const img = visibleImages[i];
     const realIdx = D.images.indexOf(img);
     const label = getImgLabelStr(D.images, realIdx);
-    const concept = isDE ? img.concept : (img.conceptEn || img.concept);
+    const concept = clean(isDE ? img.concept : (img.conceptEn || img.concept));
     const te = img.texts;
     const hls = te?.headlines || (te?.headline ? [te.headline] : []);
     const ci = hlC[img.id] ?? 0;
-    const headline = hls[ci] || hls[0] || "";
+    const headline = clean(hls[ci] || hls[0] || "");
     const subs = te ? (Array.isArray(te.subheadlines) ? te.subheadlines : (te.subheadline ? [te.subheadline] : [])) : [];
     const si = shC[img.id] ?? 0;
-    const subheadline = si !== -1 ? (subs[si] || subs[0] || "") : "";
+    const subheadline = si !== -1 ? clean(subs[si] || subs[0] || "") : "";
     const bullets = te?.bullets || [];
     const bSelArr = bulSel[img.id] || bullets.map(() => true);
     const activeBullets = bullets.filter((_, bi) => bSelArr[bi] !== false);
+    // Badge
+    const allBdg = getAllBadges(te);
+    const { badge: selBadge } = getSelectedBadge(bdgSel, img.id, allBdg);
 
-    sections.push(h2(`${label}${img.theme ? ` — ${img.theme}` : ""}`));
+    if (i > 0) titleChildren.push(new Paragraph({ children: [new PageBreak()] }));
+    const themeStr = img.theme ? ` | ${clean(img.theme)}` : "";
+    titleChildren.push(h2(`${label}${themeStr}`));
+    if (img.role) titleChildren.push(para([txt(img.role, { size: 20, color: "94A3B8", italics: true })], { spacing: { after: 100 } }));
 
     // Concept
     if (concept) {
-      sections.push(h3(isDE ? "Bildkonzept" : "Image Concept"));
-      sections.push(para([txt(concept, { size: 22 })]));
+      titleChildren.push(h3(isDE ? "Bildkonzept" : "Image Concept"));
+      titleChildren.push(para([txt(concept, { size: 21, color: "334155" })], { spacing: { after: 140 } }));
     }
-
-    // Rationale removed from designer/PDF export — irrelevant for designer
 
     // Text elements
-    if (headline || subheadline || activeBullets.length > 0) {
-      sections.push(h3(isDE ? "Empfohlene Textelemente" : "Recommended Text Elements"));
+    if (headline || subheadline || activeBullets.length > 0 || selBadge) {
+      titleChildren.push(h3(isDE ? "Textelemente" : "Text Elements"));
       if (headline) {
-        sections.push(para([bold(isDE ? "Überschrift: " : "Headline: "), txt(headline, { size: 22 })]));
+        titleChildren.push(new Paragraph({
+          children: [bld(isDE ? "Headline" : "Headline", { size: 18, color: "7C3AED" }), txt("  "), txt(headline, { size: 24, bold: true, color: "1E293B" })],
+          spacing: { after: 80 }, shading: { type: ShadingType.SOLID, color: "F8F7FF" }, indent: { left: 120, right: 120 }
+        }));
       }
       if (subheadline) {
-        sections.push(para([bold(isDE ? "Unterzeile: " : "Subheadline: "), txt(subheadline, { size: 22 })]));
+        titleChildren.push(new Paragraph({
+          children: [bld(isDE ? "Subheadline" : "Subheadline", { size: 18, color: "2563EB" }), txt("  "), txt(subheadline, { size: 22, color: "334155" })],
+          spacing: { after: 80 }, indent: { left: 120, right: 120 }
+        }));
       }
       if (activeBullets.length > 0) {
-        sections.push(para([bold(isDE ? "Weitere Textelemente:" : "Additional text elements:")]));
         for (const b of activeBullets) {
-          const bt = typeof b === "string" ? b : b.text || "";
-          const cleanBt = bt.replace(/\*\*(.+?)\*\*/g, "$1");
-          sections.push(new Paragraph({ children: [txt(`• ${cleanBt}`, { size: 22 })], spacing: { after: 80 }, indent: { left: 360 } }));
+          const bt = clean(typeof b === "string" ? b : b.text || "");
+          const bf = bFmt(b);
+          const fLabel = bf !== "bullet" ? (isDE ? formatLabels[bf] : formatLabelsEn[bf]) || bf : "";
+          // Parse bold markdown
+          const parts = bt.replace(/\*\*(.+?)\*\*/g, "%%BOLD%%$1%%/BOLD%%").split(/(%%BOLD%%.+?%%\/BOLD%%)/);
+          const runs = [];
+          if (fLabel) runs.push(txt(`[${fLabel}]  `, { size: 16, color: "64748B", italics: true }));
+          for (const part of parts) {
+            if (part.startsWith("%%BOLD%%")) { runs.push(bld(part.replace(/%%\/?BOLD%%/g, ""), { size: 21, color: "1E293B" })); }
+            else if (part) { runs.push(txt(part, { size: 21, color: "334155" })); }
+          }
+          // Context for badge-context
+          if (bf === "badge-context" && typeof b === "object" && b.context) {
+            runs.push(txt(`  (${isDE ? "Platzierung" : "Placement"}: ${clean(b.context)})`, { size: 18, color: "D97706", italics: true }));
+          }
+          titleChildren.push(new Paragraph({ children: [txt("   ", { size: 21 }), ...runs], spacing: { after: 70 }, indent: { left: 240 } }));
         }
       }
+      if (selBadge) {
+        titleChildren.push(spacer());
+        titleChildren.push(new Paragraph({
+          children: [bld(isDE ? "Badge: " : "Badge: ", { size: 18, color: "D97706" }), txt(clean(selBadge), { size: 22, bold: true, color: "D97706" })],
+          spacing: { after: 80 }, indent: { left: 120 }
+        }));
+      }
     }
-
-    if (i < visibleImages.length - 1) sections.push(divider());
   }
 
-  // ── FOOTER NOTE ──
-  sections.push(divider());
-  sections.push(para([txt(isDE
-    ? "Alle Konzepte und Texte sind urheberrechtlich geschützt und wurden exklusiv für dieses Projekt entwickelt."
+  // ── FOOTER ──
+  titleChildren.push(divider());
+  titleChildren.push(para([txt(isDE
+    ? "Alle Konzepte und Texte sind urheberrechtlich geschuetzt und wurden exklusiv fuer dieses Projekt entwickelt."
     : "All concepts and texts are protected by copyright and have been developed exclusively for this project.",
-    { size: 18, color: "94A3B8", italics: true })]));
+    { size: 18, color: "94A3B8", italics: true })], { spacing: { before: 200 } }));
 
-  const doc = new Document({ sections: [{ properties: {}, children: sections }], creator: "Briefing Studio", title: productName });
+  const doc = new Document({
+    sections: [{ properties: { page: { margin: { top: 1200, bottom: 1000, left: 1100, right: 1100 } } }, children: titleChildren }],
+    creator: "Briefing Studio",
+    title: `${isDE ? "Listing Konzept" : "Listing Concept"} - ${productName}`
+  });
   const blob = await Packer.toBlob(doc);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${(productName || "briefing").replace(/\s+/g, "_")}_concept_${lang}.docx`;
+  a.download = `Listing_Konzept_${(productName || "briefing").replace(/[^a-zA-Z0-9äöüÄÖÜß]/g, "_")}.docx`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -2153,6 +2201,9 @@ export default function App() {
   const [designerNotes, setDesignerNotes] = useState("");
   const [showLinks, setShowLinks] = useState(false);
   const [clientExportLoading, setClientExportLoading] = useState(false);
+  const [showDocxPopup, setShowDocxPopup] = useState(false);
+  const [docxLang, setDocxLang] = useState("de");
+  const [clientLogo, setClientLogo] = useState(null); // { dataUrl, name }
   const [feedback, setFeedback] = useState([]); // [{id, timestamp, text, images:[]}]
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackImages, setFeedbackImages] = useState([]);
@@ -2362,7 +2413,10 @@ export default function App() {
       // Step 3: Run AI analysis with all scraped + researched data
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
       const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7, h10Keywords || null);
-      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setEcSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); setSharedBriefingId(null); undoStack.current = []; redoStack.current = []; setCanUndo(false); setCanRedo(false); saveH(result, a);
+      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setEcSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); setSharedBriefingId(null); undoStack.current = []; redoStack.current = []; setCanUndo(false); setCanRedo(false);
+      // Reset all briefing-scoped state for fresh briefing
+      setInputUrls([""]); setOutputUrl(""); setPsdUrl(""); setDesignerNotes(""); setFeedback([]); setFeedbackChanges(null); setFeedbackText(""); setFeedbackImages([]); setFeedbackRefineError(null); baselineBriefing.current = null; setImgDisabled({}); setRefImages({});
+      saveH(result, a);
       // Auto-save to DB with retry — every briefing must get a permanent ID
       const autoSavePayload = { briefing: result, selections: { hlC: {}, shC: {}, bulSel: {}, bdgSel: {}, ecSel: {}, imgDisabled: {}, refImages: {}, links: {}, userAsin: a || "" } };
       for (let att = 0; att < 3; att++) {
@@ -2386,12 +2440,16 @@ export default function App() {
     setHlC(sel.hlC || {}); setShC(sel.shC || {}); setBulSel(sel.bulSel || {}); setBdgSel(sel.bdgSel || {}); setEcSel(sel.ecSel || {});
     setImgDisabled(sel.imgDisabled || {}); setRefImages(sel.refImages || {});
     setCurAsin(briefingData.product?.sku || "");
-    if (briefingId) setSharedBriefingId(briefingId);
-    if (sel.links?.inputUrls?.length) setInputUrls(sel.links.inputUrls); else if (sel.links?.inputUrl) setInputUrls([sel.links.inputUrl]);
-    if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
-    if (sel.links?.psdUrl) setPsdUrl(sel.links.psdUrl);
-    if (sel.designerNotes) setDesignerNotes(sel.designerNotes);
-    if (sel.feedback?.length) setFeedback(sel.feedback);
+    if (briefingId) setSharedBriefingId(briefingId); else setSharedBriefingId(null);
+    // Always reset briefing-scoped state, then restore from selections
+    setInputUrls(sel.links?.inputUrls?.length ? sel.links.inputUrls : sel.links?.inputUrl ? [sel.links.inputUrl] : [""]);
+    setOutputUrl(sel.links?.outputUrl || "");
+    setPsdUrl(sel.links?.psdUrl || "");
+    setDesignerNotes(sel.designerNotes || "");
+    setFeedback(sel.feedback?.length ? sel.feedback : []);
+    setFeedbackChanges(null); setFeedbackText(""); setFeedbackImages([]); setFeedbackRefineError(null);
+    baselineBriefing.current = null;
+    undoStack.current = []; redoStack.current = []; setCanUndo(false); setCanRedo(false);
   }} txtDensity={txtDensity} setTD={setTD} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
@@ -2406,17 +2464,66 @@ export default function App() {
               <button onClick={doUndo} disabled={!canUndo} title="Rückgängig (Strg+Z)" style={{ ...gS, padding: "6px 8px", fontSize: 14, fontWeight: 700, color: canUndo ? V.ink : V.textDim, cursor: canUndo ? "pointer" : "default", fontFamily: FN, borderRadius: 8, opacity: canUndo ? 1 : 0.35, lineHeight: 1 }}>↩</button>
               <button onClick={doRedo} disabled={!canRedo} title="Wiederherstellen (Strg+Y)" style={{ ...gS, padding: "6px 8px", fontSize: 14, fontWeight: 700, color: canRedo ? V.ink : V.textDim, cursor: canRedo ? "pointer" : "default", fontFamily: FN, borderRadius: 8, opacity: canRedo ? 1 : 0.35, lineHeight: 1 }}>↪</button>
             </div>
-            {/* Client DOCX export — DE / EN */}
-            <div style={{ display: "flex", gap: 2 }}>
-              <button onClick={async () => { setClientExportLoading(true); try { await generateClientDocx(data, { hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }, "de"); } finally { setClientExportLoading(false); } }} disabled={clientExportLoading} style={{ ...gS, padding: "7px 10px", fontSize: 10, fontWeight: 700, color: V.orange, cursor: clientExportLoading ? "wait" : "pointer", fontFamily: FN, borderRadius: "10px 0 0 10px", border: `1.5px solid ${V.orange}30`, background: `${V.orange}08` }} title="Kunden-Export als DOCX (Deutsch)">📄 DE</button>
-              <button onClick={async () => { setClientExportLoading(true); try { await generateClientDocx(data, { hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }, "en"); } finally { setClientExportLoading(false); } }} disabled={clientExportLoading} style={{ ...gS, padding: "7px 10px", fontSize: 10, fontWeight: 700, color: V.orange, cursor: clientExportLoading ? "wait" : "pointer", fontFamily: FN, borderRadius: "0 10px 10px 0", border: `1.5px solid ${V.orange}30`, borderLeft: "none", background: `${V.orange}08` }} title="Client Export as DOCX (English)">📄 EN</button>
-            </div>
+            <button onClick={() => setShowDocxPopup(true)} style={{ ...gS, padding: "7px 14px", fontSize: 10, fontWeight: 700, color: V.orange, cursor: "pointer", fontFamily: FN, borderRadius: 10, border: `1.5px solid ${V.orange}30`, background: `${V.orange}08` }} title="Kunden-Export als DOCX">📄 Export</button>
             {sharedBriefingId && <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: `1.5px solid ${V.emerald}40`, background: `${V.emerald}10`, color: V.emerald, fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Speichern..." : "Speichern"}</button>}
             <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30`, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Erstellen..." : "Designer-Link"}</button>
           </div>
         </div>
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
       </div></div>
+      {/* DOCX Export Popup */}
+      {showDocxPopup && <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)" }} onClick={() => setShowDocxPopup(false)} />
+        <div style={{ position: "relative", width: 440, maxWidth: "90vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 80px rgba(0,0,0,0.2)", padding: "28px 32px", fontFamily: FN }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>Listing Konzept exportieren</div>
+            <button onClick={() => setShowDocxPopup(false)} style={{ background: "none", border: "none", fontSize: 18, color: V.textDim, cursor: "pointer", fontFamily: FN }}>x</button>
+          </div>
+          {/* Language selection */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Sprache / Language</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[["de", "Deutsch"], ["en", "English"]].map(([code, label]) => <button key={code} onClick={() => setDocxLang(code)} style={{ flex: 1, padding: "10px 16px", borderRadius: 10, border: docxLang === code ? `2px solid ${V.violet}` : "2px solid rgba(0,0,0,0.08)", background: docxLang === code ? `${V.violet}08` : "transparent", color: docxLang === code ? V.violet : V.textMed, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FN, transition: "all 0.15s" }}>{label}</button>)}
+            </div>
+          </div>
+          {/* Client logo upload */}
+          <div style={{ marginBottom: 22 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Kundenlogo (optional)</div>
+            <div
+              onClick={() => { const inp = document.createElement("input"); inp.type = "file"; inp.accept = "image/png,image/jpeg,image/svg+xml"; inp.onchange = (e) => { const f = e.target.files?.[0]; if (!f) return; const reader = new FileReader(); reader.onload = (ev) => setClientLogo({ dataUrl: ev.target.result, name: f.name }); reader.readAsDataURL(f); }; inp.click(); }}
+              onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = V.violet; e.currentTarget.style.background = `${V.violet}08`; }}
+              onDragLeave={e => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.15)"; e.currentTarget.style.background = "transparent"; }}
+              onDrop={e => { e.preventDefault(); e.currentTarget.style.borderColor = "rgba(0,0,0,0.15)"; e.currentTarget.style.background = "transparent"; const f = e.dataTransfer.files?.[0]; if (!f || !f.type.startsWith("image/")) return; const reader = new FileReader(); reader.onload = (ev) => setClientLogo({ dataUrl: ev.target.result, name: f.name }); reader.readAsDataURL(f); }}
+              style={{ border: "2px dashed rgba(0,0,0,0.15)", borderRadius: 12, padding: clientLogo ? "12px 16px" : "24px 16px", textAlign: "center", cursor: "pointer", transition: "all 0.15s", background: "transparent" }}
+            >
+              {clientLogo ? <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <img src={clientLogo.dataUrl} alt="" style={{ maxHeight: 40, maxWidth: 100, objectFit: "contain" }} />
+                <div style={{ flex: 1, textAlign: "left" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: V.text }}>{clientLogo.name}</div>
+                  <div style={{ fontSize: 10, color: V.textDim }}>Klick oder Drag and Drop zum Ersetzen</div>
+                </div>
+                <button onClick={e => { e.stopPropagation(); setClientLogo(null); }} style={{ background: "none", border: "none", color: V.rose, fontSize: 14, fontWeight: 800, cursor: "pointer" }}>x</button>
+              </div> : <div>
+                <div style={{ fontSize: 24, marginBottom: 4 }}>+</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: V.textMed }}>Logo hierher ziehen</div>
+                <div style={{ fontSize: 10, color: V.textDim, marginTop: 2 }}>oder klicken zum Auswaehlen (PNG, JPG)</div>
+              </div>}
+            </div>
+          </div>
+          {/* Preview info */}
+          <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(0,0,0,0.02)", marginBottom: 20, fontSize: 11, color: V.textMed, lineHeight: 1.5 }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>Listing Konzept fuer {data.product?.name}</div>
+            <div>{data.product?.brand}{curAsin ? ` | ${curAsin}` : ""}{data.product?.marketplace ? ` | ${data.product.marketplace}` : ""}</div>
+            <div>{(data.images || []).filter(im => !imgDisabled[im.id]).length} {docxLang === "de" ? "Bilder" : "images"}</div>
+          </div>
+          {/* Export button */}
+          <button
+            onClick={async () => { setClientExportLoading(true); try { await generateClientDocx(data, { hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }, docxLang, clientLogo); setShowDocxPopup(false); } finally { setClientExportLoading(false); } }}
+            disabled={clientExportLoading}
+            style={{ width: "100%", padding: "12px 20px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: clientExportLoading ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}30`, opacity: clientExportLoading ? 0.7 : 1 }}
+          >{clientExportLoading ? "Wird erstellt..." : `DOCX exportieren (${docxLang === "de" ? "Deutsch" : "English"})`}</button>
+        </div>
+      </div>}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 80px", position: "relative", zIndex: 1 }}>
         {showHist && <ServerHistory items={serverHist} loading={histLoading} onLoad={(briefingId) => {
           fetch("/api/briefing?id=" + briefingId).then(r => r.ok ? r.json() : null).then(d => {
@@ -2427,11 +2534,14 @@ export default function App() {
               setCurAsin(d.data.briefing.product?.sku || "");
               setSharedBriefingId(briefingId);
               setShowHist(false);
-              if (sel.links?.inputUrls?.length) setInputUrls(sel.links.inputUrls); else if (sel.links?.inputUrl) setInputUrls([sel.links.inputUrl]);
-              if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
-              if (sel.links?.psdUrl) setPsdUrl(sel.links.psdUrl);
-              if (sel.designerNotes) setDesignerNotes(sel.designerNotes);
-    if (sel.feedback?.length) setFeedback(sel.feedback);
+              // Always reset briefing-scoped state, then restore from selections
+              setInputUrls(sel.links?.inputUrls?.length ? sel.links.inputUrls : sel.links?.inputUrl ? [sel.links.inputUrl] : [""]);
+              setOutputUrl(sel.links?.outputUrl || "");
+              setPsdUrl(sel.links?.psdUrl || "");
+              setDesignerNotes(sel.designerNotes || "");
+              setFeedback(sel.feedback?.length ? sel.feedback : []);
+              setFeedbackChanges(null); setFeedbackText(""); setFeedbackImages([]); setFeedbackRefineError(null);
+              baselineBriefing.current = null;
             }
           }).catch(() => {});
         }} onClose={() => setShowHist(false)} />}
