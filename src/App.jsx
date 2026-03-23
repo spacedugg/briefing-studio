@@ -1280,6 +1280,127 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
           </div>
         </div>;
       })()}
+      {/* Duplikat-Erkennung — prüft ob sich ausgewählte Texte inhaltlich doppeln */}
+      {(() => {
+        const norm = s => (s || "").toLowerCase().replace(/[^a-zäöüß0-9\s]/g, "");
+        const derivSuffixes = ["keit","heit","ung","lich","isch","bar","sam","los","ig","ieren","iert","tion","ment","nis","tät"];
+        const fugenLaute = ["s","n","en","es","er","ns"];
+        const stripSuffix = (w) => { for (const sx of derivSuffixes) { if (w.endsWith(sx) && w.length > sx.length + 2) return w.substring(0, w.length - sx.length); } return w; };
+        const getStems = (text) => {
+          const words = norm(text).split(/[\s\-\/\|,;:·•]+/).filter(w => w.length >= 4);
+          const stems = new Set();
+          for (const w of words) {
+            stems.add(w); stems.add(stripSuffix(w));
+            // Compound splitting
+            const wn = w.replace(/[\s\-]+/g, "");
+            if (wn.length >= 8) {
+              for (let i = 4; i <= wn.length - 3; i++) {
+                const left = wn.substring(0, i), right = wn.substring(i);
+                let rightCore = right;
+                for (const f of fugenLaute) { if (right.startsWith(f) && right.length > f.length + 2) { rightCore = right.substring(f.length); break; } }
+                if (left.length >= 4) { stems.add(left); stems.add(stripSuffix(left)); }
+                if (rightCore.length >= 4) { stems.add(rightCore); stems.add(stripSuffix(rightCore)); }
+              }
+            }
+          }
+          return [...stems].filter(s => s.length >= 4 && !derivSuffixes.includes(s));
+        };
+        // Stopwords that shouldn't count as meaningful overlap
+        const stopwords = new Set(["sich","dein","deine","deinem","deinen","deiner","eine","einem","einen","einer","eines","für","mit","und","oder","der","die","das","den","dem","des","von","auf","aus","bei","nach","über","unter","vor","zum","zur","durch","gegen","ohne","nicht","noch","auch","aber","wenn","weil","dass","wird","wird","haben","werden","sein","kann","mehr","sehr","alle","jede","jeder","jedes","neue","neuer","neues","neuen","neuem"]);
+        // Collect all selected text elements with metadata
+        const textItems = [];
+        const imgLabel = (im, idx) => { const isM = (im.id || "").toLowerCase().startsWith("main"); return isM ? "Main Image" : `PT.${String((D.images || []).filter((x, j) => j <= idx && !(x.id || "").toLowerCase().startsWith("main")).length).padStart(2, "0")}`; };
+        const liveVal = (imgIdx, type, idx, committed) => (editField && sel === imgIdx && editField.type === type && editField.idx === idx) ? editVal : committed;
+        (D.images || []).forEach((im, imgIdx) => {
+          if (imgDisabled?.[im.id]) return;
+          const t = im.texts; if (!t) return;
+          const label = imgLabel(im, imgIdx);
+          // Headlines
+          const h = t.headlines || (t.headline ? [t.headline] : []);
+          const ci2 = hlC[im.id] ?? 0;
+          const hlText = liveVal(imgIdx, "hl", ci2, h[ci2] || h[0] || "");
+          if (hlText) textItems.push({ text: hlText, label, type: "Headline", imgIdx, fieldType: "hl", fieldIdx: ci2 });
+          // Subheadlines
+          const ss = Array.isArray(t.subheadlines) ? t.subheadlines : (t.subheadline ? [t.subheadline] : []);
+          const si2 = shC[im.id] ?? 0;
+          if (si2 !== -1) { const shText = liveVal(imgIdx, "sub", si2, ss[si2] || ss[0] || ""); if (shText) textItems.push({ text: shText, label, type: "Subheadline", imgIdx, fieldType: "sub", fieldIdx: si2 }); }
+          // Bullets
+          const bl = t.bullets || [];
+          const bs = bulSel[im.id] || bl.map(() => true);
+          bl.forEach((b, i) => { if (bs[i] !== false) { const bt = liveVal(imgIdx, "bul", i, bText(b)); if (bt) textItems.push({ text: bt, label, type: bFmt(b) !== "bullet" ? formatLabels[bFmt(b)] || bFmt(b) : "Textbaustein", imgIdx, fieldType: "bul", fieldIdx: i }); } });
+          // Badges
+          const ab = getAllBadges(t);
+          const { idx: bdgI } = getSelectedBadge(bdgSel, im.id, ab);
+          if (bdgI >= 0 && ab[bdgI]) textItems.push({ text: liveVal(imgIdx, "badge", bdgI, ab[bdgI]), label, type: "Badge", imgIdx, fieldType: "badge", fieldIdx: bdgI });
+        });
+        // Compare all pairs for stem overlap
+        const dupes = [];
+        for (let i = 0; i < textItems.length; i++) {
+          for (let j = i + 1; j < textItems.length; j++) {
+            const a = textItems[i], b = textItems[j];
+            if (a.imgIdx === b.imgIdx && a.fieldType === b.fieldType) continue; // same field type on same image = variants, not duplicates
+            const stemsA = getStems(a.text), stemsB = getStems(b.text);
+            const meaningfulA = stemsA.filter(s => !stopwords.has(s));
+            const meaningfulB = stemsB.filter(s => !stopwords.has(s));
+            if (meaningfulA.length < 2 || meaningfulB.length < 2) continue;
+            const shared = meaningfulA.filter(s => meaningfulB.some(sb => sb === s || (s.length >= 5 && sb.length >= 5 && (sb.startsWith(s) || s.startsWith(sb)))));
+            const overlapRatio = Math.max(shared.length / meaningfulA.length, shared.length / meaningfulB.length);
+            if (shared.length >= 2 && overlapRatio >= 0.4) {
+              dupes.push({ a, b, shared, overlapRatio });
+            }
+          }
+        }
+        if (!dupes.length) return null;
+        // Collect alternative suggestions from unselected options
+        const getAlternatives = (item) => {
+          const im = D.images[item.imgIdx]; if (!im?.texts) return [];
+          const alts = [];
+          if (item.fieldType === "hl") {
+            const h = im.texts.headlines || []; h.forEach((hl, i) => { if (i !== item.fieldIdx) alts.push({ text: hl, action: () => { setHlC(p => ({ ...p, [im.id]: i })); } }); });
+          } else if (item.fieldType === "sub") {
+            const ss = Array.isArray(im.texts.subheadlines) ? im.texts.subheadlines : []; ss.forEach((s, i) => { if (i !== item.fieldIdx) alts.push({ text: s, action: () => { setShC(p => ({ ...p, [im.id]: i })); } }); });
+            alts.push({ text: "Keine Subheadline", action: () => { setShC(p => ({ ...p, [im.id]: -1 })); } });
+          } else if (item.fieldType === "bul") {
+            alts.push({ text: "Diesen Textbaustein abwählen", action: () => { setBulSel(p => { const bs = [...(p[im.id] || (im.texts.bullets || []).map(() => true))]; bs[item.fieldIdx] = false; return { ...p, [im.id]: bs }; }); } });
+          }
+          return alts;
+        };
+        return <div style={{ ...gS, padding: "14px 18px", marginTop: 10, background: `${V.orange}08`, border: `2px solid ${V.orange}30`, borderRadius: 14 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>⚠</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: V.orange, marginBottom: 6 }}>Inhaltliche Überschneidungen erkannt</div>
+              <div style={{ fontSize: 11, color: V.text, lineHeight: 1.6, marginBottom: 10 }}>Folgende ausgewählte Texte vermitteln eine ähnliche Aussage — das schwächt die Überzeugungskraft, weil der verfügbare Platz nicht für verschiedene Argumente genutzt wird:</div>
+              {dupes.map((d, di) => <div key={di} style={{ marginBottom: 14, padding: "12px 14px", borderRadius: 10, background: "rgba(255,255,255,0.7)", border: `1px solid ${V.orange}20` }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+                    <span style={{ fontWeight: 700, color: V.orange }}>{d.a.label}</span>
+                    <span style={{ color: V.textDim }}> · {d.a.type}:</span>
+                    <span style={{ color: V.text, fontWeight: 600 }}> „{d.a.text}"</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: V.textDim, paddingLeft: 8 }}>↕ überschneidet sich mit</div>
+                  <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+                    <span style={{ fontWeight: 700, color: V.orange }}>{d.b.label}</span>
+                    <span style={{ color: V.textDim }}> · {d.b.type}:</span>
+                    <span style={{ color: V.text, fontWeight: 600 }}> „{d.b.text}"</span>
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: V.textDim, marginBottom: 6 }}>Gemeinsame Kernbegriffe: {d.shared.slice(0, 5).map((s, i) => <span key={i} style={{ display: "inline-block", padding: "2px 6px", borderRadius: 4, background: `${V.orange}15`, fontWeight: 600, color: V.orange, marginRight: 4, marginBottom: 2 }}>{s}</span>)}</div>
+                {/* Alternatives for item A */}
+                {(() => { const altsA = getAlternatives(d.a); if (!altsA.length) return null; return <div style={{ marginTop: 6 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: V.textMed, marginBottom: 4 }}>Alternativen für {d.a.label} ({d.a.type}):</div>
+                  {altsA.map((alt, ai) => <button key={ai} onClick={() => { pushUndo(); alt.action(); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 10px", marginBottom: 3, borderRadius: 6, border: `1px solid ${V.blue}25`, background: `${V.blue}05`, color: V.text, fontSize: 11, cursor: "pointer", fontFamily: FN, lineHeight: 1.4 }}>→ {alt.text}</button>)}
+                </div>; })()}
+                {/* Alternatives for item B */}
+                {(() => { const altsB = getAlternatives(d.b); if (!altsB.length) return null; return <div style={{ marginTop: 6 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: V.textMed, marginBottom: 4 }}>Alternativen für {d.b.label} ({d.b.type}):</div>
+                  {altsB.map((alt, ai) => <button key={ai} onClick={() => { pushUndo(); alt.action(); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 10px", marginBottom: 3, borderRadius: 6, border: `1px solid ${V.blue}25`, background: `${V.blue}05`, color: V.text, fontSize: 11, cursor: "pointer", fontFamily: FN, lineHeight: 1.4 }}>→ {alt.text}</button>)}
+                </div>; })()}
+              </div>)}
+            </div>
+          </div>
+        </div>;
+      })()}
     </div>
   );
 }
