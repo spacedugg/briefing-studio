@@ -329,12 +329,12 @@ REGELN:
 - In concept UND visual KEINE konkreten Designentscheidungen treffen (keine Farben, Transparenzen, Schriftgrößen, Hintergrundstile). Das ist Sache des Designers.
 - concept = Grobe inhaltliche Beschreibung des Bildes: Was zeigt das Bild? Welche Elemente sind zu sehen? Welche Geschichte/Aussage transportiert es? Beschreibe die KOMPOSITION (Produktplatzierung, Szene, Textelemente als Bestandteil der Komposition).
 - visual = Hinweise NUR wenn Textelemente in VISUELLER BEZIEHUNG zu Bildelementen stehen müssen. Beispiele: "Zoom-Labels zeigen auf die konkreten Produktdetails", "Annotations verbinden sich per Linie mit den beschriebenen Produktteilen", "Step-Overlay-Nummern liegen auf den jeweiligen Anwendungsschritten". Wenn keine besondere Text-Bild-Beziehung nötig ist, reicht ein kurzer Hinweis zum Bildstil (z.B. "Clean Freisteller", "Warme Lifestyle-Szene"). KEINE Typografie-Anweisungen, KEINE Farbvorgaben, KEINE Hintergrund-Spezifikationen.
-- Headlines: max 25 Zeichen, 3 Varianten. KEINE Gedankenstriche (—, –, -) in allen Textelementen. Keine Kommas.
+- Headlines: max 25 Zeichen, 3 Varianten. HARTE REGEL: KEINE Bindestriche (-), Gedankenstriche (–), Em-Dashes (—) in ALLEN Textelementen (Headlines, Subheadlines, Bullets, Badges). Auch keine Kommas.
   1. "USP": Das TECHNISCHE/FAKTISCHE Alleinstellungsmerkmal als Headline. Nenne die KONKRETE PRODUKTEIGENSCHAFT die dieses Produkt von der Konkurrenz abhebt — Material, Technologie, Maß, Leistungswert, Zertifizierung, Mechanismus. Beispiele: "8h Akkulaufzeit", "Premium-Silikon", "3-Schicht-Filter", "Medical Grade 316L", "40mm Treiber". NIEMALS einen Nutzen oder Vorteil formulieren — nur das nackte Produktmerkmal/die Spezifikation.
   2. "Kundenvorteil": Der NUTZEN aus Kundensicht — was ändert sich im Alltag des Kunden? Formuliere das ERGEBNIS das der Kunde erlebt, NICHT das Feature. Beispiele: "Nie wieder Verbrennungen", "Den ganzen Tag Musik", "Schluss mit Kabelsalat". Die USP-Headline sagt WAS das Produkt hat, die Kundenvorteil-Headline sagt WAS DER KUNDE DAVON HAT.
   3. "Kreativ": Emotionale, aufmerksamkeitsstarke Variante. MUSS ein grammatisch vollständiger, natürlich klingender deutscher Ausdruck sein (z.B. "Kochen wie ein Profi", "Dein Küchen-Upgrade", "Endlich sorglos grillen"). KEINE einzelnen Adjektive oder abgehackten Wortfragmente. Jede kreative Headline MUSS im normalen Sprachgebrauch Sinn ergeben.
 - Subheadlines: 3 Varianten (kurz/erklärend/emotional). Dürfen auch leer bleiben falls nicht nötig. KEINE Gedankenstriche.
-- Bullets/Textbausteine: Jeder Textbaustein hat ein "format" Feld das seinen Typ beschreibt. So viele wie inhaltlich sinnvoll (2-6), NICHT immer gleich viele pro Bild. Schlüsselwörter mit **fett** markieren. Max 1-2 Fettungen pro Eintrag. KEINE Gedankenstriche. Korrekte deutsche Grammatik. Format-Mix erwünscht!
+- Bullets/Textbausteine: Jeder Textbaustein hat ein "format" Feld das seinen Typ beschreibt. So viele wie inhaltlich sinnvoll (2-6), NICHT immer gleich viele pro Bild. KEINE Bindestriche, Gedankenstriche (–), Em-Dashes (—) oder Trennstriche (-) verwenden — NIEMALS, HARTE REGEL. Empfohlene Textstruktur: Erste Zeile **fett** als Kernaussage, zweite Zeile normaler Text als Erklärung (Zeilenumbruch per \\n). Texte dürfen auch kürzer ausfallen — kompakte Texte wirken oft überzeugender. Max 1-2 Fettungen pro Eintrag. Korrekte deutsche Grammatik. Format-Mix erwünscht!
 - Badge: Max 1 Badge pro Bild. Nur bei wirklich herausragenden Fakten. badges ist ein Array mit 0 oder 1 Einträgen. KEINE Gedankenstriche.
 - Bildtexte DE. Concept/Rationale/Visual jeweils ZWEISPRACHIG: concept(DE) + conceptEn(EN), rationale(DE) + rationaleEn(EN), visual(DE) + visualEn(EN). Keywords integrieren.
 - Lifestyle ohne Text-Overlay: concept+visual DETAILLIERT (Szenerie, Personen, Stimmung, Kamera). "Kein Text" ist eine bewusste, valide Option — texts:null setzen.
@@ -1046,7 +1046,7 @@ function OverwriteWarn({ name, onOk, onNo }) {
 }
 
 // ═══════ BILD-BRIEFING ═══════
-function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, setBdgSel, imgDisabled, setImgDisabled, refImages, setRefImages, ecSel, setEcSel, pushUndo, onEditText }) {
+function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, setBdgSel, imgDisabled, setImgDisabled, refImages, setRefImages, ecSel, setEcSel, pushUndo, onEditText, feedbackChanges }) {
   const [sel, setSel] = useState(0);
   const [editField, setEditField] = useState(null); // { type: 'hl'|'sub'|'bul'|'badge'|'concept'|'visual'|'rationale'|'eyecatcher', idx: number }
   const [editVal, setEditVal] = useState("");
@@ -1114,7 +1114,8 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
         const tabLabel = getImgLabel(D.images, i);
         const theme = im.theme || "";
         const isOff = imgDisabled?.[D.images[i]?.id];
-        return <button key={i} onClick={() => setSel(i)} style={{ ...gS, padding: "8px 14px", background: sel === i ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : isOff ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.5)", color: sel === i ? "#fff" : V.textDim, border: sel === i ? "none" : "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: sel === i ? `0 4px 20px ${V.violet}40` : "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 0, opacity: isOff ? 0.45 : 1, transition: "all 0.15s" }}><span style={{ fontSize: 11, fontWeight: 800 }}>{tabLabel}</span>{theme && <span style={{ fontSize: 9, fontWeight: 500, opacity: sel === i ? 0.85 : 0.7, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis" }}>{theme}</span>}{isOff && <span style={{ fontSize: 8, color: sel === i ? "#fff" : V.textDim }}>AUS</span>}</button>;
+        const hasChanges = feedbackChanges?.changedImages?.some(c => c.idx === i);
+        return <button key={i} onClick={() => setSel(i)} style={{ ...gS, padding: "8px 14px", background: sel === i ? `linear-gradient(135deg, ${V.violet}, ${V.blue})` : isOff ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.5)", color: sel === i ? "#fff" : V.textDim, border: sel === i ? "none" : "1px solid rgba(0,0,0,0.06)", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, whiteSpace: "nowrap", borderRadius: 12, boxShadow: sel === i ? `0 4px 20px ${V.violet}40` : "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 0, opacity: isOff ? 0.45 : 1, transition: "all 0.15s", position: "relative" }}>{hasChanges && <div style={{ position: "absolute", top: 4, right: 4, width: 8, height: 8, borderRadius: 99, background: V.orange, boxShadow: `0 0 6px ${V.orange}60` }} title="Durch Feedback geändert" />}<span style={{ fontSize: 11, fontWeight: 800 }}>{tabLabel}</span>{theme && <span style={{ fontSize: 9, fontWeight: 500, opacity: sel === i ? 0.85 : 0.7, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis" }}>{theme}</span>}{isOff && <span style={{ fontSize: 8, color: sel === i ? "#fff" : V.textDim }}>AUS</span>}</button>;
       })}</div>
       <GC>
         <div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1161,12 +1162,13 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
               </div>
               <button onClick={e => { e.stopPropagation(); onEditText(sel, "delete_bullet", i, null); }} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0, opacity: 0.5 }} title="Textbaustein löschen">×</button>
             </div>; })}</>}<div style={{ position: "relative", marginTop: 8 }}><button onClick={() => setAddFmtOpen(!addFmtOpen)} style={{ padding: "6px 12px", borderRadius: 8, border: `1px dashed ${V.teal}40`, background: addFmtOpen ? `${V.teal}08` : "transparent", color: V.teal, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, width: "100%" }}>+ Textbaustein hinzufügen</button>{addFmtOpen && <><div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setAddFmtOpen(false)} /><div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, zIndex: 100, marginBottom: 4, background: "rgba(255,255,255,0.97)", backdropFilter: "blur(16px)", borderRadius: 12, border: "1px solid rgba(0,0,0,0.1)", boxShadow: "0 -8px 40px rgba(0,0,0,0.15)", padding: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, maxHeight: 360, overflowY: "auto" }}>{Object.keys(formatLabels).map(f => { const c = formatColors[f]; return <button key={f} onClick={() => { onEditText(sel, "add_bullet", bullets.length, f); setAddFmtOpen(false); setTimeout(() => startEdit("bul", bullets.length, f === "comparison" ? "" : ""), 50); }} onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.03)"; e.currentTarget.style.boxShadow = `0 2px 12px ${c}25`; e.currentTarget.style.borderColor = `${c}50`; }} onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; e.currentTarget.style.borderColor = `${c}20`; }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${c}20`, background: `${c}04`, cursor: "pointer", fontFamily: FN, textAlign: "left", transition: "all 0.15s" }}><div style={{ flexShrink: 0, width: 48, height: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>{formatWireframes[f]?.(c) || null}</div><div><div style={{ fontSize: 9, fontWeight: 800, color: c, textTransform: "uppercase", letterSpacing: ".04em" }}>{formatLabels[f]}</div><div style={{ fontSize: 8.5, color: V.textDim, lineHeight: 1.3, marginTop: 1 }}>{formatDescriptions[f]?.split("—")[0]?.trim() || ""}</div></div></button>; })}</div></>}</div></div>
-            {/* BADGE — select one from multiple options + inline editing */}
-            {allBadges.length > 0 && <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
+            {/* BADGE — select one from multiple options + inline editing + add new */}
+            <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.amber}>BADGE-VARIANTEN</Pill></div>
               {allBadges.map((b, i) => { const act = bdgIdx === i; return <div key={i} onClick={() => setBdgSel(p => ({ ...p, [img.id]: act ? -1 : i }))} style={{ padding: "8px 12px", borderRadius: 10, border: act ? `2px solid ${V.amber}` : "1px solid rgba(0,0,0,0.06)", background: act ? `${V.amber}08` : "transparent", cursor: "pointer", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center", opacity: act ? 1 : 0.6, transition: "all 0.15s" }}><div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: act ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{act && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div>{isEditing("badge", i) ? <input autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={commitEdit} onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 13, fontWeight: 800, padding: "4px 8px", flex: 1 }} /> : <span onClick={e => { e.stopPropagation(); startEdit("badge", i, b); }} style={{ fontSize: 13, fontWeight: 800, color: V.amber, cursor: "text" }} title="Klick zum Bearbeiten">{b}</span>}</div>{act && <CopyBtn text={b} />}</div>; })}
-              <div onClick={() => setBdgSel(p => ({ ...p, [img.id]: -1 }))} style={{ padding: "8px 12px", borderRadius: 10, border: bdgIdx === -1 ? `2px solid ${V.amber}` : "1px solid rgba(0,0,0,0.06)", background: bdgIdx === -1 ? `${V.amber}08` : "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: bdgIdx === -1 ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{bdgIdx === -1 && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div><span style={{ fontSize: 13, fontWeight: 600, color: V.textDim, fontStyle: "italic" }}>Kein Badge</span></div>
-            </div>}
+              <div onClick={() => setBdgSel(p => ({ ...p, [img.id]: -1 }))} style={{ padding: "8px 12px", borderRadius: 10, border: bdgIdx === -1 ? `2px solid ${V.amber}` : "1px solid rgba(0,0,0,0.06)", background: bdgIdx === -1 ? `${V.amber}08` : "transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}><div style={{ width: 18, height: 18, borderRadius: 99, border: bdgIdx === -1 ? `2px solid ${V.amber}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>{bdgIdx === -1 && <div style={{ width: 8, height: 8, borderRadius: 99, background: V.amber }} />}</div><span style={{ fontSize: 13, fontWeight: 600, color: V.textDim, fontStyle: "italic" }}>Kein Badge</span></div>
+              <button onClick={() => { pushUndo(); onEditText(sel, "add_badge", 0, ""); setTimeout(() => startEdit("badge", allBadges.length, ""), 50); }} style={{ padding: "6px 12px", borderRadius: 8, border: `1px dashed ${V.amber}40`, background: "transparent", color: V.amber, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, width: "100%" }}>+ Badge hinzufügen</button>
+            </div>
             {/* FOOTNOTES */}
             {te.footnotes?.length > 0 && <div style={{ ...gS, padding: 12, background: `${V.textDim}08`, marginBottom: 10 }}><span style={{ fontSize: 10, fontWeight: 800, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em" }}>Fußnoten</span>{te.footnotes.map((f, i) => <div key={i} style={{ fontSize: 11, color: V.textDim, marginTop: 4, lineHeight: 1.5 }}>{f}</div>)}</div>}
           </div> : <div style={{ padding: 16, ...gS, borderStyle: "dashed", textAlign: "center" }}><span style={{ fontSize: 12, color: V.textDim }}>Kein Text-Overlay. Rein visuelles Bild.</span></div>}
@@ -1276,6 +1278,127 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
               <div style={{ fontSize: 11, color: V.text, lineHeight: 1.6, marginBottom: 6 }}>Folgende Kaufauslöser aus der Analyse sind in der aktuellen Textauswahl nicht erkennbar:</div>
               {missing.map((tr, i) => <div key={i} style={{ fontSize: 12, fontWeight: 700, color: V.rose, padding: "4px 10px", borderRadius: 6, background: `${V.rose}10`, display: "inline-block", marginRight: 6, marginBottom: 4 }}>{tr}</div>)}
               <div style={{ fontSize: 10, color: V.textDim, marginTop: 8 }}>Prüfe, ob diese Kaufargumente durch andere Texte/Bilder oder die aktuelle Auswahl abgedeckt werden.</div>
+            </div>
+          </div>
+        </div>;
+      })()}
+      {/* Duplikat-Erkennung — prüft ob sich ausgewählte Texte inhaltlich doppeln */}
+      {(() => {
+        const norm = s => (s || "").toLowerCase().replace(/[^a-zäöüß0-9\s]/g, "");
+        const derivSuffixes = ["keit","heit","ung","lich","isch","bar","sam","los","ig","ieren","iert","tion","ment","nis","tät"];
+        const fugenLaute = ["s","n","en","es","er","ns"];
+        const stripSuffix = (w) => { for (const sx of derivSuffixes) { if (w.endsWith(sx) && w.length > sx.length + 2) return w.substring(0, w.length - sx.length); } return w; };
+        const getStems = (text) => {
+          const words = norm(text).split(/[\s\-\/\|,;:·•]+/).filter(w => w.length >= 4);
+          const stems = new Set();
+          for (const w of words) {
+            stems.add(w); stems.add(stripSuffix(w));
+            // Compound splitting
+            const wn = w.replace(/[\s\-]+/g, "");
+            if (wn.length >= 8) {
+              for (let i = 4; i <= wn.length - 3; i++) {
+                const left = wn.substring(0, i), right = wn.substring(i);
+                let rightCore = right;
+                for (const f of fugenLaute) { if (right.startsWith(f) && right.length > f.length + 2) { rightCore = right.substring(f.length); break; } }
+                if (left.length >= 4) { stems.add(left); stems.add(stripSuffix(left)); }
+                if (rightCore.length >= 4) { stems.add(rightCore); stems.add(stripSuffix(rightCore)); }
+              }
+            }
+          }
+          return [...stems].filter(s => s.length >= 4 && !derivSuffixes.includes(s));
+        };
+        // Stopwords that shouldn't count as meaningful overlap
+        const stopwords = new Set(["sich","dein","deine","deinem","deinen","deiner","eine","einem","einen","einer","eines","für","mit","und","oder","der","die","das","den","dem","des","von","auf","aus","bei","nach","über","unter","vor","zum","zur","durch","gegen","ohne","nicht","noch","auch","aber","wenn","weil","dass","wird","wird","haben","werden","sein","kann","mehr","sehr","alle","jede","jeder","jedes","neue","neuer","neues","neuen","neuem"]);
+        // Collect all selected text elements with metadata
+        const textItems = [];
+        const imgLabel = (im, idx) => { const isM = (im.id || "").toLowerCase().startsWith("main"); return isM ? "Main Image" : `PT${String((D.images || []).filter((x, j) => j <= idx && !(x.id || "").toLowerCase().startsWith("main")).length).padStart(2, "0")}`; };
+        const liveVal = (imgIdx, type, idx, committed) => (editField && sel === imgIdx && editField.type === type && editField.idx === idx) ? editVal : committed;
+        (D.images || []).forEach((im, imgIdx) => {
+          if (imgDisabled?.[im.id]) return;
+          const t = im.texts; if (!t) return;
+          const label = imgLabel(im, imgIdx);
+          // Headlines
+          const h = t.headlines || (t.headline ? [t.headline] : []);
+          const ci2 = hlC[im.id] ?? 0;
+          const hlText = liveVal(imgIdx, "hl", ci2, h[ci2] || h[0] || "");
+          if (hlText) textItems.push({ text: hlText, label, type: "Headline", imgIdx, fieldType: "hl", fieldIdx: ci2 });
+          // Subheadlines
+          const ss = Array.isArray(t.subheadlines) ? t.subheadlines : (t.subheadline ? [t.subheadline] : []);
+          const si2 = shC[im.id] ?? 0;
+          if (si2 !== -1) { const shText = liveVal(imgIdx, "sub", si2, ss[si2] || ss[0] || ""); if (shText) textItems.push({ text: shText, label, type: "Subheadline", imgIdx, fieldType: "sub", fieldIdx: si2 }); }
+          // Bullets
+          const bl = t.bullets || [];
+          const bs = bulSel[im.id] || bl.map(() => true);
+          bl.forEach((b, i) => { if (bs[i] !== false) { const bt = liveVal(imgIdx, "bul", i, bText(b)); if (bt) textItems.push({ text: bt, label, type: bFmt(b) !== "bullet" ? formatLabels[bFmt(b)] || bFmt(b) : "Textbaustein", imgIdx, fieldType: "bul", fieldIdx: i }); } });
+          // Badges
+          const ab = getAllBadges(t);
+          const { idx: bdgI } = getSelectedBadge(bdgSel, im.id, ab);
+          if (bdgI >= 0 && ab[bdgI]) textItems.push({ text: liveVal(imgIdx, "badge", bdgI, ab[bdgI]), label, type: "Badge", imgIdx, fieldType: "badge", fieldIdx: bdgI });
+        });
+        // Compare all pairs for stem overlap
+        const dupes = [];
+        for (let i = 0; i < textItems.length; i++) {
+          for (let j = i + 1; j < textItems.length; j++) {
+            const a = textItems[i], b = textItems[j];
+            if (a.imgIdx === b.imgIdx && a.fieldType === b.fieldType) continue; // same field type on same image = variants, not duplicates
+            const stemsA = getStems(a.text), stemsB = getStems(b.text);
+            const meaningfulA = stemsA.filter(s => !stopwords.has(s));
+            const meaningfulB = stemsB.filter(s => !stopwords.has(s));
+            if (meaningfulA.length < 2 || meaningfulB.length < 2) continue;
+            const shared = meaningfulA.filter(s => meaningfulB.some(sb => sb === s || (s.length >= 5 && sb.length >= 5 && (sb.startsWith(s) || s.startsWith(sb)))));
+            const overlapRatio = Math.max(shared.length / meaningfulA.length, shared.length / meaningfulB.length);
+            if (shared.length >= 2 && overlapRatio >= 0.4) {
+              dupes.push({ a, b, shared, overlapRatio });
+            }
+          }
+        }
+        if (!dupes.length) return null;
+        // Collect alternative suggestions from unselected options
+        const getAlternatives = (item) => {
+          const im = D.images[item.imgIdx]; if (!im?.texts) return [];
+          const alts = [];
+          if (item.fieldType === "hl") {
+            const h = im.texts.headlines || []; h.forEach((hl, i) => { if (i !== item.fieldIdx) alts.push({ text: hl, action: () => { setHlC(p => ({ ...p, [im.id]: i })); } }); });
+          } else if (item.fieldType === "sub") {
+            const ss = Array.isArray(im.texts.subheadlines) ? im.texts.subheadlines : []; ss.forEach((s, i) => { if (i !== item.fieldIdx) alts.push({ text: s, action: () => { setShC(p => ({ ...p, [im.id]: i })); } }); });
+            alts.push({ text: "Keine Subheadline", action: () => { setShC(p => ({ ...p, [im.id]: -1 })); } });
+          } else if (item.fieldType === "bul") {
+            alts.push({ text: "Diesen Textbaustein abwählen", action: () => { setBulSel(p => { const bs = [...(p[im.id] || (im.texts.bullets || []).map(() => true))]; bs[item.fieldIdx] = false; return { ...p, [im.id]: bs }; }); } });
+          }
+          return alts;
+        };
+        return <div style={{ ...gS, padding: "14px 18px", marginTop: 10, background: `${V.orange}08`, border: `2px solid ${V.orange}30`, borderRadius: 14 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>⚠</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: V.orange, marginBottom: 6 }}>Inhaltliche Überschneidungen erkannt</div>
+              <div style={{ fontSize: 11, color: V.text, lineHeight: 1.6, marginBottom: 10 }}>Folgende ausgewählte Texte vermitteln eine ähnliche Aussage — das schwächt die Überzeugungskraft, weil der verfügbare Platz nicht für verschiedene Argumente genutzt wird:</div>
+              {dupes.map((d, di) => <div key={di} style={{ marginBottom: 14, padding: "12px 14px", borderRadius: 10, background: "rgba(255,255,255,0.7)", border: `1px solid ${V.orange}20` }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+                    <span style={{ fontWeight: 700, color: V.orange }}>{d.a.label}</span>
+                    <span style={{ color: V.textDim }}> · {d.a.type}:</span>
+                    <span style={{ color: V.text, fontWeight: 600 }}> „{d.a.text}"</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: V.textDim, paddingLeft: 8 }}>↕ überschneidet sich mit</div>
+                  <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+                    <span style={{ fontWeight: 700, color: V.orange }}>{d.b.label}</span>
+                    <span style={{ color: V.textDim }}> · {d.b.type}:</span>
+                    <span style={{ color: V.text, fontWeight: 600 }}> „{d.b.text}"</span>
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: V.textDim, marginBottom: 6 }}>Gemeinsame Kernbegriffe: {d.shared.slice(0, 5).map((s, i) => <span key={i} style={{ display: "inline-block", padding: "2px 6px", borderRadius: 4, background: `${V.orange}15`, fontWeight: 600, color: V.orange, marginRight: 4, marginBottom: 2 }}>{s}</span>)}</div>
+                {/* Alternatives for item A */}
+                {(() => { const altsA = getAlternatives(d.a); if (!altsA.length) return null; return <div style={{ marginTop: 6 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: V.textMed, marginBottom: 4 }}>Alternativen für {d.a.label} ({d.a.type}):</div>
+                  {altsA.map((alt, ai) => <button key={ai} onClick={() => { pushUndo(); alt.action(); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 10px", marginBottom: 3, borderRadius: 6, border: `1px solid ${V.blue}25`, background: `${V.blue}05`, color: V.text, fontSize: 11, cursor: "pointer", fontFamily: FN, lineHeight: 1.4 }}>→ {alt.text}</button>)}
+                </div>; })()}
+                {/* Alternatives for item B */}
+                {(() => { const altsB = getAlternatives(d.b); if (!altsB.length) return null; return <div style={{ marginTop: 6 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: V.textMed, marginBottom: 4 }}>Alternativen für {d.b.label} ({d.b.type}):</div>
+                  {altsB.map((alt, ai) => <button key={ai} onClick={() => { pushUndo(); alt.action(); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 10px", marginBottom: 3, borderRadius: 6, border: `1px solid ${V.blue}25`, background: `${V.blue}05`, color: V.text, fontSize: 11, cursor: "pointer", fontFamily: FN, lineHeight: 1.4 }}>→ {alt.text}</button>)}
+                </div>; })()}
+              </div>)}
             </div>
           </div>
         </div>;
@@ -1399,7 +1522,7 @@ function getImgLabel(images, idx) {
     return mainIdx === 1 ? "Main Image" : `Main Image ${mainIdx}`;
   }
   const ptIdx = images.slice(0, idx + 1).filter(im => !(im.id || "").toLowerCase().startsWith("main")).length;
-  return `PT.${String(ptIdx).padStart(2, "0")}`;
+  return `PT${String(ptIdx).padStart(2, "0")}`;
 }
 function getImgFileName(images, idx, asin) {
   const img = images[idx];
@@ -1423,7 +1546,7 @@ function genBrief(D, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel) {
   (D.images || []).forEach((im, idx) => {
     if (imgDisabled?.[im.id]) return; // skip disabled images
     const expLabel = getImgLabel(D.images, idx) + (im.theme ? " | " + im.theme : "") + " (" + (im.role || im.label) + ")";
-    t += `${"-".repeat(50)}\n${expLabel}\n${"-".repeat(50)}\nCONCEPT:\n${im.conceptEn || im.concept}\n\nRATIONALE:\n${im.rationaleEn || im.rationale}\n`;
+    t += `${"-".repeat(50)}\n${expLabel}\n${"-".repeat(50)}\nCONCEPT:\n${im.conceptEn || im.concept}\n`;
     if (im.eyecatchers?.length) {
       const selEcIdx = ecSel?.[im.id] ?? 0;
       if (selEcIdx !== -1 && im.eyecatchers[selEcIdx]) {
@@ -1514,7 +1637,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
               const id = (img?.id || "").toLowerCase();
               if (id.startsWith("main")) return "Main Image";
               const ptIdx = newBriefing.images.slice(0, idx + 1).filter(im => !(im.id || "").toLowerCase().startsWith("main")).length;
-              return `PT.${String(ptIdx).padStart(2, "0")}`;
+              return `PT${String(ptIdx).padStart(2, "0")}`;
             });
             parts.push(`Images changed: ${changedNames.join(", ")}`);
           }
@@ -1554,7 +1677,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
         const id = (img?.id || "").toLowerCase();
         if (id.startsWith("main")) return "Main Image";
         const ptIdx = D.images.slice(0, idx + 1).filter(im => !(im.id || "").toLowerCase().startsWith("main")).length;
-        return `PT.${String(ptIdx).padStart(2, "0")}`;
+        return `PT${String(ptIdx).padStart(2, "0")}`;
       });
       setChangedFields(changes);
       setUpdateBanner({ text: `Images changed since last version: ${changedNames.join(", ")}`, time: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) });
@@ -1684,7 +1807,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
                 {img.concept && <div><Lbl c={V.blue}>Concept</Lbl><p style={{ fontSize: 14, color: V.text, lineHeight: 1.75, margin: 0 }}>{img.conceptEn || img.concept}</p></div>}
                 {img.visual && <div><Lbl c={V.textDim}>Visual Notes</Lbl><p style={{ fontSize: 13, color: V.textDim, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>{img.visualEn || img.visual}</p></div>}
               </div>
-              {img.rationale && <div style={{ background: `${V.violet}06`, borderRadius: 12, padding: 16, border: `1px solid ${V.violet}10` }}><Lbl c={V.violet}>Rationale</Lbl><p style={{ fontSize: 13, color: V.text, lineHeight: 1.7, margin: 0 }}>{img.rationaleEn || img.rationale}</p></div>}
+              {/* Rationale removed from designer export — irrelevant for designer */}
               {/* Eyecatchers - Main Image only, show only selected */}
               {isMain && img.eyecatchers?.length > 0 && (() => {
                 const selIdx = ecSel[img.id] ?? 0;
@@ -1809,7 +1932,6 @@ async function generateClientDocx(D, selections, lang) {
     const realIdx = D.images.indexOf(img);
     const label = getImgLabelStr(D.images, realIdx);
     const concept = isDE ? img.concept : (img.conceptEn || img.concept);
-    const rationale = isDE ? img.rationale : (img.rationaleEn || img.rationale);
     const te = img.texts;
     const hls = te?.headlines || (te?.headline ? [te.headline] : []);
     const ci = hlC[img.id] ?? 0;
@@ -1829,11 +1951,7 @@ async function generateClientDocx(D, selections, lang) {
       sections.push(para([txt(concept, { size: 22 })]));
     }
 
-    // Rationale — reframed for client
-    if (rationale) {
-      sections.push(h3(isDE ? "Strategische Ausrichtung" : "Strategic Direction"));
-      sections.push(para([txt(rationale, { size: 22 })]));
-    }
+    // Rationale removed from designer/PDF export — irrelevant for designer
 
     // Text elements
     if (headline || subheadline || activeBullets.length > 0) {
@@ -2017,6 +2135,9 @@ export default function App() {
   const [feedbackRefineStatus, setFeedbackRefineStatus] = useState("");
   const [feedbackRefineError, setFeedbackRefineError] = useState(null);
   const [feedbackChanges, setFeedbackChanges] = useState(null); // {summary: string, changedImages: [{idx, label, changes: string[]}]}
+  // Baseline briefing snapshot — saved before first feedback is applied, restored when all feedback is deleted
+  const baselineBriefing = useRef(null);
+  const [feedbackProgress, setFeedbackProgress] = useState(0); // 0-100 real progress
   // Track the shared briefing ID so we can update it instead of creating duplicates
   const [sharedBriefingId, setSharedBriefingId] = useState(null);
   // Eyecatcher selection per main image (keyed by image id → selected eyecatcher index, -1 = none)
@@ -2331,7 +2452,7 @@ export default function App() {
             <div style={{ fontSize: 10, color: V.textDim }}>Diese Links und Notizen werden im Designer-Export sichtbar.</div>
           </div>
         </GC>}
-        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} imgDisabled={imgDisabled} setImgDisabled={setImgDisabled} refImages={refImages} setRefImages={setRefImages} ecSel={ecSel} setEcSel={setEcSel} pushUndo={pushUndo} onEditText={(imgIdx, type, textIdx, newVal) => {
+        {tab === "b" && <BildBriefing D={data} hlC={hlC} setHlC={setHlC} shC={shC} setShC={setShC} bulSel={bulSel} setBulSel={setBulSel} bdgSel={bdgSel} setBdgSel={setBdgSel} imgDisabled={imgDisabled} setImgDisabled={setImgDisabled} refImages={refImages} setRefImages={setRefImages} ecSel={ecSel} setEcSel={setEcSel} pushUndo={pushUndo} feedbackChanges={feedbackChanges} onEditText={(imgIdx, type, textIdx, newVal) => {
           pushUndo();
           setData(prev => {
             const next = JSON.parse(JSON.stringify(prev));
@@ -2342,6 +2463,7 @@ export default function App() {
             if (type === "badge") { const te = next.images[imgIdx]?.texts; if (te?.badges?.[textIdx] !== undefined) te.badges[textIdx] = newVal; else if (te?.callouts?.[textIdx - (te.badges?.length || 0)] !== undefined) te.callouts[textIdx - (te.badges?.length || 0)] = newVal; return next; }
             if (type === "reorder_bullets") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { const [from, to] = [textIdx, newVal]; const b = [...te.bullets]; const [moved] = b.splice(from, 1); b.splice(to, 0, moved); te.bullets = b; } return next; }
             if (type === "add_bullet") { const te = next.images[imgIdx]?.texts; if (te) { if (!te.bullets) te.bullets = []; const fmt = newVal || "bullet"; te.bullets.push(fmt === "bullet" ? "" : { text: "", format: fmt }); } return next; }
+            if (type === "add_badge") { const te = next.images[imgIdx]?.texts; if (te) { if (!te.badges) te.badges = []; te.badges.push(""); } else { next.images[imgIdx].texts = { badges: [""] }; } return next; }
             if (type === "delete_bullet") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { te.bullets.splice(textIdx, 1); } return next; }
             const te = next.images[imgIdx]?.texts;
             if (!te) return prev;
@@ -2378,14 +2500,18 @@ export default function App() {
             <div style={{ padding: "20px 22px", background: `linear-gradient(135deg, ${V.violet}08, ${V.blue}08)` }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <div style={{ width: 32, height: 32, borderRadius: 99, border: `3px solid ${V.violet}`, borderTopColor: "transparent", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: V.violet }}>Briefing wird verfeinert</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: V.violet }}>Briefing wird verfeinert</div>
+                    {feedbackProgress > 0 && <div style={{ fontSize: 12, fontWeight: 700, color: V.violet, fontVariantNumeric: "tabular-nums" }}>{feedbackProgress}%</div>}
+                  </div>
                   <div style={{ fontSize: 12, color: V.text, marginTop: 2 }}>{feedbackRefineStatus || "KI analysiert das Feedback..."}</div>
                 </div>
               </div>
-              <div style={{ marginTop: 14, height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 2, background: `linear-gradient(90deg, ${V.violet}, ${V.blue})`, animation: "spin 2s ease-in-out infinite", width: "60%", transformOrigin: "left" }} />
+              <div style={{ marginTop: 14, height: 6, borderRadius: 3, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                <div style={{ height: "100%", borderRadius: 3, background: `linear-gradient(90deg, ${V.violet}, ${V.blue})`, width: `${Math.max(feedbackProgress, 3)}%`, transition: "width 0.4s ease-out" }} />
               </div>
+              {feedbackProgress > 0 && <div style={{ fontSize: 10, color: V.textDim, marginTop: 6 }}>Echtzeit-Fortschritt basierend auf Claude-Streaming</div>}
             </div>
           </GC>}
           {/* Changes summary — after refinement */}
@@ -2435,7 +2561,9 @@ export default function App() {
                 const newFeedback = [...feedback, item];
                 setFeedback(newFeedback);
                 setFeedbackText(""); setFeedbackImages([]);
-                setFeedbackRefining(true); setFeedbackRefineStatus("Sende an Claude..."); setFeedbackRefineError(null); setFeedbackChanges(null);
+                setFeedbackRefining(true); setFeedbackRefineStatus("Sende an Claude..."); setFeedbackRefineError(null); setFeedbackChanges(null); setFeedbackProgress(0);
+                // Save baseline before first-ever feedback refinement
+                if (!baselineBriefing.current) baselineBriefing.current = JSON.parse(JSON.stringify(data));
                 const oldData = JSON.parse(JSON.stringify(data));
                 try {
                   const briefingJson = JSON.stringify(data, null, 2);
@@ -2467,6 +2595,7 @@ SCHRITT 3 — QUALITÄTSKONTROLLE:
 - Alle Textbausteine müssen den richtigen Format-Typ (format-Feld) haben
 - BEIDE Sprachversionen aktualisieren: concept+conceptEn, rationale+rationaleEn, visual+visualEn
 - Texte (headlines, subheadlines, bullets) NUR auf Deutsch
+- HARTE REGEL: KEINE Bindestriche (-), Gedankenstriche (–) oder Em-Dashes (—) in Textelementen. Empfohlene Textstruktur für Bullets: Erste Zeile **fett** als Kernaussage, zweite Zeile normaler Text (Zeilenumbruch per \\n). Kompakte Texte bevorzugt.
 
 AUSGABE-FORMAT:
 - NUR valides JSON — kein Markdown, keine Erklärungen, kein Text davor oder danach
@@ -2505,11 +2634,16 @@ AUSGABE-FORMAT:
                       else if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta" && evt.delta.text) {
                         const idx = contentBlocks.length - 1;
                         if (idx >= 0) contentBlocks[idx].text += evt.delta.text;
-                        // Live progress based on content length
+                        // Real progress: estimate output ≈ input size (JSON in → JSON out)
                         const total = contentBlocks.reduce((s, b) => s + b.text.length, 0);
-                        if (total > 5000) setFeedbackRefineStatus("Finalisiert Briefing-Texte...");
-                        else if (total > 2000) setFeedbackRefineStatus("Überarbeitet Bildkonzepte...");
-                        else if (total > 500) setFeedbackRefineStatus("Analysiert Feedback-Punkte...");
+                        const expectedSize = briefingJson.length * 1.05; // output ≈ input + _feedbackChanges overhead
+                        const pct = Math.min(95, Math.round((total / expectedSize) * 100));
+                        setFeedbackProgress(pct);
+                        // Status messages based on actual content analysis
+                        if (pct >= 80) setFeedbackRefineStatus("Finalisiert JSON & Änderungsbericht...");
+                        else if (pct >= 40) setFeedbackRefineStatus("Schreibt überarbeitete Bildkonzepte...");
+                        else if (pct >= 10) setFeedbackRefineStatus("Analysiert Feedback gegen Briefing...");
+                        else setFeedbackRefineStatus("Claude beginnt Analyse...");
                       } else if (evt.type === "message_delta" && evt.delta?.stop_reason) stopReason = evt.delta.stop_reason;
                       else if (evt.type === "error") throw new Error(evt.error?.message || "Stream-Fehler");
                     }
@@ -2517,7 +2651,7 @@ AUSGABE-FORMAT:
                   if (stopReason === "max_tokens") throw new Error("Antwort abgeschnitten — Briefing zu groß. Bitte erneut versuchen.");
                   const textBlocks = contentBlocks.filter(b => b.type === "text" && b.text).map(b => b.text);
                   if (!textBlocks.length) throw new Error("Keine Antwort erhalten.");
-                  setFeedbackRefineStatus("Verarbeitet Ergebnis...");
+                  setFeedbackProgress(100); setFeedbackRefineStatus("Verarbeitet Ergebnis...");
                   let p = null;
                   const full = textBlocks.join("").replace(/```json\s*|```\s*/g, "").trim();
                   try { p = JSON.parse(full); } catch {}
@@ -2528,7 +2662,7 @@ AUSGABE-FORMAT:
                   const fc = p._feedbackChanges; delete p._feedbackChanges;
                   // Build changes diff by comparing old vs new
                   const changes = { summary: fc?.summary || "", changedImages: [], noChanges: false };
-                  const imgLabel = (imgs, i) => { const isM = (imgs[i]?.id || "").toLowerCase().startsWith("main"); const mains = imgs.filter(x => (x.id || "").toLowerCase().startsWith("main")); return isM ? (mains.length > 1 ? `Main Image ${mains.indexOf(imgs[i]) + 1}` : "Main Image") : `PT.${String(imgs.filter((x, j) => j <= i && !(x.id || "").toLowerCase().startsWith("main")).length).padStart(2, "0")}`; };
+                  const imgLabel = (imgs, i) => { const isM = (imgs[i]?.id || "").toLowerCase().startsWith("main"); const mains = imgs.filter(x => (x.id || "").toLowerCase().startsWith("main")); return isM ? (mains.length > 1 ? `Main Image ${mains.indexOf(imgs[i]) + 1}` : "Main Image") : `PT${String(imgs.filter((x, j) => j <= i && !(x.id || "").toLowerCase().startsWith("main")).length).padStart(2, "0")}`; };
                   (p.images || []).forEach((newImg, i) => {
                     const oldImg = oldData.images?.[i];
                     if (!oldImg) return;
@@ -2564,7 +2698,7 @@ AUSGABE-FORMAT:
           {feedback.length > 0 && !feedbackRefining && <GC>
             <div style={{ padding: "14px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: V.ink }}>Gespeichertes Feedback ({feedback.length})</div>
-              <button onClick={() => setFeedback([])} style={{ fontSize: 10, color: V.rose, background: "none", border: "none", cursor: "pointer", fontFamily: FN, fontWeight: 700 }}>Alle löschen</button>
+              <button onClick={() => { if (baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; } setFeedback([]); setFeedbackChanges(null); }} style={{ fontSize: 10, color: V.rose, background: "none", border: "none", cursor: "pointer", fontFamily: FN, fontWeight: 700 }}>Alle löschen & Briefing zurücksetzen</button>
             </div>
             <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
               {feedback.map((fb, i) => <div key={fb.id} style={{ ...gS, padding: "12px 14px" }}>
@@ -2574,7 +2708,7 @@ AUSGABE-FORMAT:
                     {fb.text && <div style={{ fontSize: 13, color: V.text, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{fb.text}</div>}
                     {fb.images.length > 0 && <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>{fb.images.map((src, j) => <img key={j} src={src} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />)}</div>}
                   </div>
-                  <button onClick={() => setFeedback(prev => prev.filter(x => x.id !== fb.id))} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>×</button>
+                  <button onClick={() => { const remaining = feedback.filter(x => x.id !== fb.id); if (remaining.length === 0 && baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; setFeedbackChanges(null); } setFeedback(remaining); }} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>×</button>
                 </div>
               </div>)}
             </div>
