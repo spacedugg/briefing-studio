@@ -1913,6 +1913,16 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
 }
 
 // ═══════ CLIENT DOCX EXPORT ═══════
+// temoa agency logo as SVG — converted to PNG at export time via canvas
+const TEMOA_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="560" height="140" viewBox="0 0 280 70"><rect x="0" y="0" width="22" height="22" rx="3" fill="%23F59E0B"/><rect x="24" y="0" width="22" height="22" rx="3" fill="%23F59E0B"/><circle cx="35" cy="35" r="8" fill="%23EF4444"/><path d="M0 26L0 55Q0 65 11 65L22 65Q22 55 22 45L22 26Z" fill="%230F172A"/><path d="M24 45L24 58Q24 65 35 65L46 65L46 45Q35 50 24 45Z" fill="%2394A3B8" opacity="0.4"/><text x="58" y="52" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="48" fill="%230F172A" letter-spacing="-1">temoa</text></svg>`;
+function svgToPngBytes(svgStr, w, h) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => { const c = document.createElement("canvas"); c.width = w; c.height = h; const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, w, h); c.toBlob(async (blob) => { if (blob) { resolve(new Uint8Array(await blob.arrayBuffer())); } else { resolve(null); } }, "image/png"); };
+    img.onerror = () => resolve(null);
+    img.src = `data:image/svg+xml;charset=utf-8,${svgStr}`;
+  });
+}
 async function generateClientDocx(D, selections, lang, clientLogoData) {
   const isDE = lang === "de";
   const hlC = selections?.hlC || {}, shC = selections?.shC || {}, bulSel = selections?.bulSel || {}, bdgSel = selections?.bdgSel || {}, imgDisabled = selections?.imgDisabled || {}, ecSel = selections?.ecSel || {};
@@ -1936,16 +1946,21 @@ async function generateClientDocx(D, selections, lang, clientLogoData) {
   const dataUrlToUint8 = (dataUrl) => { const b64 = dataUrl.split(",")[1]; const bin = atob(b64); const arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); return arr; };
 
   const titleChildren = [];
-  // ── TITLE PAGE ──
-  // Logos row (company left, client right) — if available
-  const logoRow = [];
-  if (clientLogoData?.dataUrl) {
-    try {
-      const logoBytes = dataUrlToUint8(clientLogoData.dataUrl);
-      logoRow.push(new Paragraph({ children: [new ImageRun({ data: logoBytes, transformation: { width: 120, height: 50 }, type: clientLogoData.dataUrl.includes("image/png") ? "png" : "jpg" })], spacing: { after: 300 } }));
-    } catch (e) { /* skip logo on error */ }
-  }
-  titleChildren.push(...logoRow);
+  // ── LOGO HEADER — client logo left, temoa logo right ──
+  const temoaPng = await svgToPngBytes(TEMOA_LOGO_SVG, 560, 140);
+  let clientLogoPng = null;
+  if (clientLogoData?.dataUrl) { try { clientLogoPng = dataUrlToUint8(clientLogoData.dataUrl); } catch (e) { /* skip */ } }
+  const noBorder = { top: { style: BorderStyle.NONE, size: 0 }, bottom: { style: BorderStyle.NONE, size: 0 }, left: { style: BorderStyle.NONE, size: 0 }, right: { style: BorderStyle.NONE, size: 0 } };
+  const leftLogoChildren = clientLogoPng ? [new Paragraph({ children: [new ImageRun({ data: clientLogoPng, transformation: { width: 130, height: 52 } })], alignment: AlignmentType.LEFT })] : [para([txt("", { size: 10 })])];
+  const rightLogoChildren = temoaPng ? [new Paragraph({ children: [new ImageRun({ data: temoaPng, transformation: { width: 130, height: 32 } })], alignment: AlignmentType.RIGHT })] : [para([txt("temoa", { size: 20, bold: true, color: "0F172A" })], { alignment: AlignmentType.RIGHT })];
+  titleChildren.push(new Table({
+    rows: [new TableRow({ children: [
+      new TableCell({ children: leftLogoChildren, width: { size: 50, type: WidthType.PERCENTAGE }, borders: noBorder, verticalAlign: "center", margins: { top: 80, bottom: 80 } }),
+      new TableCell({ children: rightLogoChildren, width: { size: 50, type: WidthType.PERCENTAGE }, borders: noBorder, verticalAlign: "center", margins: { top: 80, bottom: 80 } })
+    ] })],
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: { top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE }, insideHorizontal: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE } }
+  }));
   titleChildren.push(spacer()); titleChildren.push(spacer()); titleChildren.push(spacer());
   titleChildren.push(para([txt(isDE ? "Listing Konzept" : "Listing Concept", { size: 20, color: "94A3B8", font: "Calibri", allCaps: true, characterSpacing: 120 })], { alignment: AlignmentType.LEFT }));
   titleChildren.push(para([bld(isDE ? `${productName}` : `${productName}`, { size: 52, color: "1E293B" })], { spacing: { after: 60 } }));
