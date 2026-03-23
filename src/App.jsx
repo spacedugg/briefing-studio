@@ -2017,6 +2017,9 @@ export default function App() {
   const [feedbackRefineStatus, setFeedbackRefineStatus] = useState("");
   const [feedbackRefineError, setFeedbackRefineError] = useState(null);
   const [feedbackChanges, setFeedbackChanges] = useState(null); // {summary: string, changedImages: [{idx, label, changes: string[]}]}
+  // Baseline briefing snapshot — saved before first feedback is applied, restored when all feedback is deleted
+  const baselineBriefing = useRef(null);
+  const [feedbackProgress, setFeedbackProgress] = useState(0); // 0-100 real progress
   // Track the shared briefing ID so we can update it instead of creating duplicates
   const [sharedBriefingId, setSharedBriefingId] = useState(null);
   // Eyecatcher selection per main image (keyed by image id → selected eyecatcher index, -1 = none)
@@ -2378,14 +2381,18 @@ export default function App() {
             <div style={{ padding: "20px 22px", background: `linear-gradient(135deg, ${V.violet}08, ${V.blue}08)` }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <div style={{ width: 32, height: 32, borderRadius: 99, border: `3px solid ${V.violet}`, borderTopColor: "transparent", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: V.violet }}>Briefing wird verfeinert</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: V.violet }}>Briefing wird verfeinert</div>
+                    {feedbackProgress > 0 && <div style={{ fontSize: 12, fontWeight: 700, color: V.violet, fontVariantNumeric: "tabular-nums" }}>{feedbackProgress}%</div>}
+                  </div>
                   <div style={{ fontSize: 12, color: V.text, marginTop: 2 }}>{feedbackRefineStatus || "KI analysiert das Feedback..."}</div>
                 </div>
               </div>
-              <div style={{ marginTop: 14, height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 2, background: `linear-gradient(90deg, ${V.violet}, ${V.blue})`, animation: "spin 2s ease-in-out infinite", width: "60%", transformOrigin: "left" }} />
+              <div style={{ marginTop: 14, height: 6, borderRadius: 3, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                <div style={{ height: "100%", borderRadius: 3, background: `linear-gradient(90deg, ${V.violet}, ${V.blue})`, width: `${Math.max(feedbackProgress, 3)}%`, transition: "width 0.4s ease-out" }} />
               </div>
+              {feedbackProgress > 0 && <div style={{ fontSize: 10, color: V.textDim, marginTop: 6 }}>Echtzeit-Fortschritt basierend auf Claude-Streaming</div>}
             </div>
           </GC>}
           {/* Changes summary — after refinement */}
@@ -2435,7 +2442,9 @@ export default function App() {
                 const newFeedback = [...feedback, item];
                 setFeedback(newFeedback);
                 setFeedbackText(""); setFeedbackImages([]);
-                setFeedbackRefining(true); setFeedbackRefineStatus("Sende an Claude..."); setFeedbackRefineError(null); setFeedbackChanges(null);
+                setFeedbackRefining(true); setFeedbackRefineStatus("Sende an Claude..."); setFeedbackRefineError(null); setFeedbackChanges(null); setFeedbackProgress(0);
+                // Save baseline before first-ever feedback refinement
+                if (!baselineBriefing.current) baselineBriefing.current = JSON.parse(JSON.stringify(data));
                 const oldData = JSON.parse(JSON.stringify(data));
                 try {
                   const briefingJson = JSON.stringify(data, null, 2);
@@ -2505,11 +2514,16 @@ AUSGABE-FORMAT:
                       else if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta" && evt.delta.text) {
                         const idx = contentBlocks.length - 1;
                         if (idx >= 0) contentBlocks[idx].text += evt.delta.text;
-                        // Live progress based on content length
+                        // Real progress: estimate output ≈ input size (JSON in → JSON out)
                         const total = contentBlocks.reduce((s, b) => s + b.text.length, 0);
-                        if (total > 5000) setFeedbackRefineStatus("Finalisiert Briefing-Texte...");
-                        else if (total > 2000) setFeedbackRefineStatus("Überarbeitet Bildkonzepte...");
-                        else if (total > 500) setFeedbackRefineStatus("Analysiert Feedback-Punkte...");
+                        const expectedSize = briefingJson.length * 1.05; // output ≈ input + _feedbackChanges overhead
+                        const pct = Math.min(95, Math.round((total / expectedSize) * 100));
+                        setFeedbackProgress(pct);
+                        // Status messages based on actual content analysis
+                        if (pct >= 80) setFeedbackRefineStatus("Finalisiert JSON & Änderungsbericht...");
+                        else if (pct >= 40) setFeedbackRefineStatus("Schreibt überarbeitete Bildkonzepte...");
+                        else if (pct >= 10) setFeedbackRefineStatus("Analysiert Feedback gegen Briefing...");
+                        else setFeedbackRefineStatus("Claude beginnt Analyse...");
                       } else if (evt.type === "message_delta" && evt.delta?.stop_reason) stopReason = evt.delta.stop_reason;
                       else if (evt.type === "error") throw new Error(evt.error?.message || "Stream-Fehler");
                     }
@@ -2517,7 +2531,7 @@ AUSGABE-FORMAT:
                   if (stopReason === "max_tokens") throw new Error("Antwort abgeschnitten — Briefing zu groß. Bitte erneut versuchen.");
                   const textBlocks = contentBlocks.filter(b => b.type === "text" && b.text).map(b => b.text);
                   if (!textBlocks.length) throw new Error("Keine Antwort erhalten.");
-                  setFeedbackRefineStatus("Verarbeitet Ergebnis...");
+                  setFeedbackProgress(100); setFeedbackRefineStatus("Verarbeitet Ergebnis...");
                   let p = null;
                   const full = textBlocks.join("").replace(/```json\s*|```\s*/g, "").trim();
                   try { p = JSON.parse(full); } catch {}
@@ -2564,7 +2578,7 @@ AUSGABE-FORMAT:
           {feedback.length > 0 && !feedbackRefining && <GC>
             <div style={{ padding: "14px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: V.ink }}>Gespeichertes Feedback ({feedback.length})</div>
-              <button onClick={() => setFeedback([])} style={{ fontSize: 10, color: V.rose, background: "none", border: "none", cursor: "pointer", fontFamily: FN, fontWeight: 700 }}>Alle löschen</button>
+              <button onClick={() => { if (baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; } setFeedback([]); setFeedbackChanges(null); }} style={{ fontSize: 10, color: V.rose, background: "none", border: "none", cursor: "pointer", fontFamily: FN, fontWeight: 700 }}>Alle löschen & Briefing zurücksetzen</button>
             </div>
             <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
               {feedback.map((fb, i) => <div key={fb.id} style={{ ...gS, padding: "12px 14px" }}>
@@ -2574,7 +2588,7 @@ AUSGABE-FORMAT:
                     {fb.text && <div style={{ fontSize: 13, color: V.text, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{fb.text}</div>}
                     {fb.images.length > 0 && <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>{fb.images.map((src, j) => <img key={j} src={src} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />)}</div>}
                   </div>
-                  <button onClick={() => setFeedback(prev => prev.filter(x => x.id !== fb.id))} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>×</button>
+                  <button onClick={() => { const remaining = feedback.filter(x => x.id !== fb.id); if (remaining.length === 0 && baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; setFeedbackChanges(null); } setFeedback(remaining); }} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>×</button>
                 </div>
               </div>)}
             </div>
