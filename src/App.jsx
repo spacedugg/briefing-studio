@@ -2010,12 +2010,13 @@ export default function App() {
   const [designerNotes, setDesignerNotes] = useState("");
   const [showLinks, setShowLinks] = useState(false);
   const [clientExportLoading, setClientExportLoading] = useState(false);
-  const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState([]); // [{id, timestamp, text, images:[]}]
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackImages, setFeedbackImages] = useState([]);
   const [feedbackRefining, setFeedbackRefining] = useState(false);
+  const [feedbackRefineStatus, setFeedbackRefineStatus] = useState("");
   const [feedbackRefineError, setFeedbackRefineError] = useState(null);
+  const [feedbackChanges, setFeedbackChanges] = useState(null); // {summary: string, changedImages: [{idx, label, changes: string[]}]}
   // Track the shared briefing ID so we can update it instead of creating duplicates
   const [sharedBriefingId, setSharedBriefingId] = useState(null);
   // Eyecatcher selection per main image (keyed by image id → selected eyecatcher index, -1 = none)
@@ -2364,46 +2365,58 @@ export default function App() {
             return next;
           });
         }} />}
-        {/* Feedback coverage warning — shown on Bild-Briefing tab when feedback exists */}
-        {tab === "b" && feedback.length > 0 && (() => {
-          const norm = s => (s || "").toLowerCase().replace(/[^a-zäöüß0-9\s]/g, "");
-          let allBriefingText = (data.images || []).map(im => {
-            const t = im.texts; if (!t) return [im.concept, im.rationale, im.visual].join(" ");
-            const h = t.headlines || (t.headline ? [t.headline] : []);
-            const ss = Array.isArray(t.subheadlines) ? t.subheadlines : (t.subheadline ? [t.subheadline] : []);
-            const bl = t.bullets || [];
-            return [im.concept, im.rationale, im.visual, ...h, ...ss, ...bl.map(b => typeof b === "string" ? b : b.text || "")].join(" ");
-          }).join(" ");
-          const allBriefingNorm = norm(allBriefingText);
-          const allFeedbackText = feedback.map(fb => fb.text).join(" ");
-          const stopWords = new Set(["haben", "nicht", "bitte", "sehen", "möchte", "sollte", "werden", "können", "wurde", "daher", "damit", "dieser", "diese", "dieses", "einen", "einer", "auch", "oder", "beim", "bild", "mehr", "noch", "dass", "wenn", "dann"]);
-          const feedbackWords = norm(allFeedbackText).split(/\s+/).filter(w => w.length >= 5 && !stopWords.has(w));
-          const uniqueKeywords = [...new Set(feedbackWords)];
-          const missing = uniqueKeywords.filter(w => !allBriefingNorm.includes(w));
-          if (!missing.length) return <div style={{ padding: "10px 16px", background: `${V.emerald}08`, border: `1.5px solid ${V.emerald}30`, borderRadius: 12, fontSize: 11, color: V.emerald, fontWeight: 700 }}>✓ Kunden-Feedback erscheint im Briefing berücksichtigt.</div>;
-          return <div style={{ padding: "14px 18px", background: `${V.rose}08`, border: `2px solid ${V.rose}30`, borderRadius: 14 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-              <span style={{ fontSize: 16, flexShrink: 0 }}>⚠</span>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 800, color: V.rose, marginBottom: 4 }}>Kunden-Feedback möglicherweise nicht vollständig umgesetzt</div>
-                <div style={{ fontSize: 11, color: V.text, lineHeight: 1.5, marginBottom: 6 }}>{feedback.length} Feedback-{feedback.length === 1 ? "Eintrag" : "Einträge"} vorhanden. Folgende Begriffe aus dem Feedback fehlen im aktuellen Briefing:</div>
-                {missing.slice(0, 10).map((w, i) => <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.rose, padding: "2px 8px", borderRadius: 6, background: `${V.rose}10`, display: "inline-block", marginRight: 4, marginBottom: 4 }}>{w}</span>)}
-                <div style={{ fontSize: 10, color: V.textDim, marginTop: 6 }}>Gehe zum <button onClick={() => setTab("f")} style={{ background: "none", border: "none", color: V.rose, fontWeight: 700, cursor: "pointer", fontSize: 10, padding: 0, textDecoration: "underline" }}>Feedback-Tab</button> und verfeinere das Briefing erneut.</div>
-              </div>
-            </div>
-          </div>;
-        })()}
+        {/* Feedback indicator — simple info when feedback exists, no unreliable keyword matching */}
+        {tab === "b" && feedback.length > 0 && <div style={{ padding: "10px 16px", background: `${V.orange}08`, border: `1.5px solid ${V.orange}25`, borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 11, color: V.orange, fontWeight: 700 }}>{feedback.length} Kunden-Feedback-{feedback.length === 1 ? "Eintrag" : "Einträge"} vorhanden</span>
+          <button onClick={() => setTab("f")} style={{ fontSize: 10, fontWeight: 700, color: V.orange, cursor: "pointer", fontFamily: FN, background: `${V.orange}12`, border: `1px solid ${V.orange}30`, borderRadius: 6, padding: "4px 10px" }}>Zum Feedback</button>
+        </div>}
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
         {tab === "f" && <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          {/* Refine progress overlay */}
+          {feedbackRefining && <GC style={{ border: `2px solid ${V.violet}40`, overflow: "hidden" }}>
+            <div style={{ padding: "20px 22px", background: `linear-gradient(135deg, ${V.violet}08, ${V.blue}08)` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 99, border: `3px solid ${V.violet}`, borderTopColor: "transparent", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: V.violet }}>Briefing wird verfeinert</div>
+                  <div style={{ fontSize: 12, color: V.text, marginTop: 2 }}>{feedbackRefineStatus || "KI analysiert das Feedback..."}</div>
+                </div>
+              </div>
+              <div style={{ marginTop: 14, height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                <div style={{ height: "100%", borderRadius: 2, background: `linear-gradient(90deg, ${V.violet}, ${V.blue})`, animation: "spin 2s ease-in-out infinite", width: "60%", transformOrigin: "left" }} />
+              </div>
+            </div>
+          </GC>}
+          {/* Changes summary — after refinement */}
+          {feedbackChanges && !feedbackRefining && <GC style={{ border: `2px solid ${V.emerald}40` }}>
+            <div style={{ padding: "16px 22px", background: `${V.emerald}06`, borderBottom: `1px solid ${V.emerald}20` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: V.emerald }}>Briefing erfolgreich aktualisiert</div>
+                <button onClick={() => setFeedbackChanges(null)} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer" }}>×</button>
+              </div>
+              {feedbackChanges.summary && <div style={{ fontSize: 12, color: V.text, lineHeight: 1.6, marginTop: 8 }}>{feedbackChanges.summary}</div>}
+            </div>
+            {feedbackChanges.changedImages?.length > 0 && <div style={{ padding: "14px 22px" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 8 }}>Geänderte Bilder:</div>
+              {feedbackChanges.changedImages.map((ci, i) => <div key={i} style={{ ...gS, padding: "10px 14px", marginBottom: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: V.violet, marginBottom: 4 }}>{ci.label}</div>
+                {ci.changes.map((c, j) => <div key={j} style={{ fontSize: 11, color: V.text, lineHeight: 1.5, paddingLeft: 10, borderLeft: `2px solid ${V.emerald}40`, marginBottom: 3 }}>{c}</div>)}
+              </div>)}
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button onClick={() => { setFeedbackChanges(null); setTab("b"); }} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>Zum Bild-Briefing</button>
+                <button onClick={() => { if (canUndo) doUndo(); setFeedbackChanges(null); }} style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${V.rose}30`, background: `${V.rose}08`, color: V.rose, fontSize: 11, fontWeight: 700, cursor: canUndo ? "pointer" : "not-allowed", fontFamily: FN, opacity: canUndo ? 1 : 0.4 }}>Änderungen rückgängig</button>
+              </div>
+            </div>}
+          </GC>}
           {/* Feedback input card */}
-          <GC>
+          {!feedbackRefining && <GC>
             <div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
               <div style={{ fontSize: 16, fontWeight: 800, color: V.ink }}>Kunden-Feedback</div>
-              <div style={{ fontSize: 12, color: V.textDim, marginTop: 2 }}>Füge Kundenfeedback hinzu — Text, Bilder oder beides. Das KI-System verfeinert das Briefing auf Basis aller Eingaben.</div>
+              <div style={{ fontSize: 12, color: V.textDim, marginTop: 2 }}>Feedback als Text und/oder Bilder eingeben. Claude analysiert alles und überarbeitet das Briefing — Konzepte, Texte, Designer-Anweisungen.</div>
             </div>
             <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
-              <textarea value={feedbackText} onChange={e => { setFeedbackText(e.target.value); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }} ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }} placeholder="Feedback des Kunden hier eingeben... z.B. 'Das Bild soll mehr die nachhaltige Verpackung zeigen' oder 'Bitte den Fokus auf die Familie legen, nicht auf Einzelpersonen'" style={{ ...inpS, resize: "none", lineHeight: 1.6, minHeight: 80, overflow: "hidden" }} />
+              <textarea value={feedbackText} onChange={e => { setFeedbackText(e.target.value); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }} ref={el => { if (el && el.value) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }} placeholder={"Feedback des Kunden hier eingeben...\n\nBeispiele:\n• \"Bitte mehr Fokus auf Nachhaltigkeit und Bio-Aspekte\"\n• \"Schriftart: Montserrat, Farben: #1A3B5C und #F5A623\"\n• \"Das Hauptbild gefällt uns gut, aber die Infografik-Bilder sollen familienfreundlicher wirken\"\n• \"Wir haben 5 Varianten, starten aber erst mit Schwarz\""} style={{ ...inpS, resize: "none", lineHeight: 1.6, minHeight: 100, overflow: "hidden" }} />
               {/* Image upload for feedback */}
               <div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6 }}>Bilder zum Feedback (optional)</div>
@@ -2414,48 +2427,121 @@ export default function App() {
                   </div>)}
                   <label style={{ width: 64, height: 64, borderRadius: 8, border: `2px dashed ${V.blue}30`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: V.blue, fontSize: 22 }}>+<input type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => { Array.from(e.target.files || []).forEach(f => { const r = new FileReader(); r.onload = ev => setFeedbackImages(p => [...p, ev.target.result]); r.readAsDataURL(f); }); e.target.value = ""; }} /></label>
                 </div>
-                <div style={{ fontSize: 10, color: V.textDim, marginTop: 4 }}>Bilder werden von der KI direkt analysiert (z.B. Stimmungsbilder, Produktfotos, Referenzbilder vom Kunden).</div>
               </div>
-              {feedbackRefineError && <div style={{ padding: "10px 14px", borderRadius: 10, background: `${V.rose}10`, border: `1px solid ${V.rose}30`, fontSize: 12, color: V.rose }}>{feedbackRefineError}</div>}
-              <div style={{ display: "flex", gap: 8 }}>
-                <button disabled={(!feedbackText.trim() && !feedbackImages.length) || feedbackRefining} onClick={async () => {
-                  if (!feedbackText.trim() && !feedbackImages.length) return;
-                  // Save feedback item
-                  const item = { id: Date.now().toString(36), timestamp: new Date().toISOString(), text: feedbackText.trim(), images: feedbackImages };
-                  const newFeedback = [...feedback, item];
-                  setFeedback(newFeedback);
-                  setFeedbackText(""); setFeedbackImages([]);
-                  // Trigger AI refinement
-                  setFeedbackRefining(true); setFeedbackRefineError(null);
-                  try {
-                    const briefingJson = JSON.stringify(data, null, 2);
-                    const feedbackSummary = newFeedback.map((fb, i) => `Feedback ${i + 1} (${new Date(fb.timestamp).toLocaleDateString("de-DE")}):\n${fb.text}${fb.images.length ? ` [+ ${fb.images.length} Bild(er)]` : ""}`).join("\n\n");
-                    const imgContent = newFeedback.flatMap(fb => fb.images.map(src => ({ type: "image", source: { type: "base64", media_type: src.startsWith("data:image/png") ? "image/png" : "image/jpeg", data: src.split(",")[1] } })));
-                    const messages = [{ role: "user", content: [
-                      { type: "text", text: `Du bist ein Experte für Amazon-Listing-Optimierung. Du hast das folgende Briefing erstellt:\n\n${briefingJson}\n\nDu hast jetzt folgendes Kunden-Feedback erhalten:\n\n${feedbackSummary}\n\nBitte überarbeite das Briefing basierend auf dem Feedback. Behalte die genaue JSON-Struktur bei. Gib NUR valides JSON zurück — kein Markdown, keine Erklärungen, nur den aktualisierten JSON-Objekt (gleiche Struktur wie das Input-Briefing). Wichtig: Alle Feedback-Punkte des Kunden müssen im überarbeiteten Briefing berücksichtigt werden.` },
-                      ...imgContent
-                    ] }];
-                    const resp = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 8000, messages }) });
-                    if (!resp.ok) throw new Error(`API Fehler: ${resp.status}`);
-                    const result = await resp.json();
-                    const raw = result?.content?.[0]?.text || "";
-                    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-                    if (!jsonMatch) throw new Error("KI hat kein valides JSON zurückgegeben.");
-                    const refined = JSON.parse(jsonMatch[0]);
-                    if (refined.images && refined.product) { pushUndo(); setData(refined); }
-                    else throw new Error("Unerwartetes JSON-Format von der KI.");
-                  } catch (err) {
-                    setFeedbackRefineError(err.message || "Unbekannter Fehler beim Verfeinern.");
-                  } finally {
-                    setFeedbackRefining(false);
+              {feedbackRefineError && <div style={{ padding: "10px 14px", borderRadius: 10, background: `${V.rose}10`, border: `1px solid ${V.rose}30`, fontSize: 12, color: V.rose, lineHeight: 1.5 }}>{feedbackRefineError}</div>}
+              <button disabled={(!feedbackText.trim() && !feedbackImages.length)} onClick={async () => {
+                if (!feedbackText.trim() && !feedbackImages.length) return;
+                const item = { id: Date.now().toString(36), timestamp: new Date().toISOString(), text: feedbackText.trim(), images: [...feedbackImages] };
+                const newFeedback = [...feedback, item];
+                setFeedback(newFeedback);
+                setFeedbackText(""); setFeedbackImages([]);
+                setFeedbackRefining(true); setFeedbackRefineStatus("Sende an Claude..."); setFeedbackRefineError(null); setFeedbackChanges(null);
+                const oldData = JSON.parse(JSON.stringify(data));
+                try {
+                  const briefingJson = JSON.stringify(data, null, 2);
+                  const feedbackSummary = newFeedback.map((fb, i) => `Feedback ${i + 1} (${new Date(fb.timestamp).toLocaleDateString("de-DE")}):\n${fb.text}${fb.images.length ? ` [+ ${fb.images.length} Bild(er) angehängt — bitte analysiere diese]` : ""}`).join("\n\n");
+                  const imgContent = [];
+                  for (const fb of newFeedback) {
+                    for (const src of fb.images) {
+                      const mt = src.startsWith("data:image/png") ? "image/png" : src.startsWith("data:image/webp") ? "image/webp" : "image/jpeg";
+                      imgContent.push({ type: "image", source: { type: "base64", media_type: mt, data: src.split(",")[1] } });
+                    }
                   }
-                }} style={{ flex: 1, padding: "10px 18px", borderRadius: 10, border: "none", background: feedbackRefining ? "rgba(0,0,0,0.08)" : `linear-gradient(135deg, ${V.orange}, ${V.rose})`, color: feedbackRefining ? V.textDim : "#fff", fontSize: 12, fontWeight: 800, cursor: ((!feedbackText.trim() && !feedbackImages.length) || feedbackRefining) ? "not-allowed" : "pointer", fontFamily: FN, opacity: (!feedbackText.trim() && !feedbackImages.length) ? 0.5 : 1 }}>{feedbackRefining ? "Briefing wird verfeinert..." : "Feedback speichern & Briefing verfeinern"}</button>
-              </div>
-              {feedbackRefining && <div style={{ fontSize: 11, color: V.textDim, textAlign: "center" }}>Claude analysiert das Feedback und überarbeitet das Briefing... Das kann 15-30 Sekunden dauern.</div>}
+                  const systemPrompt = `Du bist ein erfahrener Amazon-Listing-Stratege. Deine Aufgabe: Ein bestehendes Briefing anhand von Kundenfeedback überarbeiten.
+
+REGELN:
+1. Gib NUR valides JSON zurück — kein Markdown, keine Erklärungen, kein Text davor oder danach
+2. Behalte die EXAKTE JSON-Struktur bei (gleiche Felder, gleiche Hierarchie)
+3. Alle Feedback-Punkte des Kunden MÜSSEN im überarbeiteten Briefing berücksichtigt sein
+4. Wenn der Kunde Schriftarten, Farben oder allgemeine Vorgaben nennt: Integriere diese in die "visual"-Felder der relevanten Bilder
+5. Wenn der Kunde allgemeines Feedback gibt (z.B. Tonalität, Zielgruppe): Passe concept, rationale UND Texte entsprechend an
+6. Aktualisiere BEIDE Sprachversionen: concept+conceptEn, rationale+rationaleEn, visual+visualEn
+7. Texte (headlines, subheadlines, bullets) nur auf Deutsch — EN-Versionen nur für concept/rationale/visual
+8. Am Ende des JSON-Objekts füge ein Feld "_feedbackChanges" hinzu mit: { "summary": "Kurze Zusammenfassung der Änderungen", "changedImages": [{"idx": 0, "changes": ["Konzept angepasst: ...", "Headline geändert: ..."]}] }`;
+                  const messages = [{ role: "user", content: [
+                    { type: "text", text: `BESTEHENDES BRIEFING:\n${briefingJson}\n\nKUNDEN-FEEDBACK:\n${feedbackSummary}\n\nBitte überarbeite das Briefing. Antworte NUR mit dem aktualisierten JSON.` },
+                    ...imgContent
+                  ] }];
+                  setFeedbackRefineStatus("Claude analysiert das Feedback...");
+                  const r = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 16000, stream: true, system: systemPrompt, messages }) });
+                  if (!r.ok) {
+                    const errMsgs = { 400: "Ungültige Anfrage", 401: "API-Key nicht konfiguriert", 429: "Rate-Limit — bitte 30s warten", 500: "Serverfehler", 503: "KI-Service überlastet — bitte 1-2 Min warten" };
+                    let detail = ""; try { const e = await r.json(); detail = e.error?.message || ""; } catch {}
+                    throw new Error(`${errMsgs[r.status] || `Fehler ${r.status}`}${detail ? `: ${detail}` : ""}`);
+                  }
+                  setFeedbackRefineStatus("Claude schreibt das überarbeitete Briefing...");
+                  // Stream SSE
+                  const reader = r.body.getReader();
+                  const decoder = new TextDecoder();
+                  let sseBuffer = "", contentBlocks = [], stopReason = null;
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    sseBuffer += decoder.decode(value, { stream: true });
+                    const lines = sseBuffer.split("\n");
+                    sseBuffer = lines.pop() || "";
+                    for (const line of lines) {
+                      if (!line.startsWith("data: ")) continue;
+                      const raw = line.slice(6).trim();
+                      if (raw === "[DONE]") continue;
+                      let evt; try { evt = JSON.parse(raw); } catch { continue; }
+                      if (evt.type === "content_block_start") contentBlocks.push({ type: evt.content_block?.type || "text", text: "" });
+                      else if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta" && evt.delta.text) {
+                        const idx = contentBlocks.length - 1;
+                        if (idx >= 0) contentBlocks[idx].text += evt.delta.text;
+                        // Live progress based on content length
+                        const total = contentBlocks.reduce((s, b) => s + b.text.length, 0);
+                        if (total > 5000) setFeedbackRefineStatus("Finalisiert Briefing-Texte...");
+                        else if (total > 2000) setFeedbackRefineStatus("Überarbeitet Bildkonzepte...");
+                        else if (total > 500) setFeedbackRefineStatus("Analysiert Feedback-Punkte...");
+                      } else if (evt.type === "message_delta" && evt.delta?.stop_reason) stopReason = evt.delta.stop_reason;
+                      else if (evt.type === "error") throw new Error(evt.error?.message || "Stream-Fehler");
+                    }
+                  }
+                  if (stopReason === "max_tokens") throw new Error("Antwort abgeschnitten — Briefing zu groß. Bitte erneut versuchen.");
+                  const textBlocks = contentBlocks.filter(b => b.type === "text" && b.text).map(b => b.text);
+                  if (!textBlocks.length) throw new Error("Keine Antwort erhalten.");
+                  setFeedbackRefineStatus("Verarbeitet Ergebnis...");
+                  let p = null;
+                  const full = textBlocks.join("").replace(/```json\s*|```\s*/g, "").trim();
+                  try { p = JSON.parse(full); } catch {}
+                  if (!p) { const m = full.match(/\{[\s\S]*\}/); if (m) try { p = JSON.parse(m[0]); } catch {} }
+                  if (!p) throw new Error("KI-Antwort konnte nicht als JSON geparst werden. Bitte erneut versuchen.");
+                  if (!p.images || !p.product) throw new Error("Unvollständige Antwort — 'product' oder 'images' fehlt.");
+                  // Extract _feedbackChanges before applying
+                  const fc = p._feedbackChanges; delete p._feedbackChanges;
+                  pushUndo(); setData(p);
+                  // Build changes diff
+                  const changes = { summary: fc?.summary || "Briefing wurde aktualisiert.", changedImages: [] };
+                  const imgLabels = (imgs) => imgs.map((im, i) => { const isM = (im.id || "").toLowerCase().startsWith("main"); return isM ? "Main Image" : `PT.${String(i).padStart(2, "0")}`; });
+                  const oldLabels = imgLabels(oldData.images || []);
+                  (p.images || []).forEach((newImg, i) => {
+                    const oldImg = oldData.images?.[i];
+                    if (!oldImg) { changes.changedImages.push({ label: oldLabels[i] || `Bild ${i + 1}`, changes: ["Neues Bild hinzugefügt"] }); return; }
+                    const diffs = [];
+                    if (newImg.concept !== oldImg.concept) diffs.push("Bildkonzept angepasst");
+                    if (newImg.rationale !== oldImg.rationale) diffs.push("Strategische Begründung angepasst");
+                    if (newImg.visual !== oldImg.visual) diffs.push("Visuelle Hinweise angepasst");
+                    const newHls = newImg.texts?.headlines || []; const oldHls = oldImg.texts?.headlines || [];
+                    if (JSON.stringify(newHls) !== JSON.stringify(oldHls)) diffs.push("Headlines geändert");
+                    const newSubs = newImg.texts?.subheadlines || []; const oldSubs = oldImg.texts?.subheadlines || [];
+                    if (JSON.stringify(newSubs) !== JSON.stringify(oldSubs)) diffs.push("Subheadlines geändert");
+                    const newBul = newImg.texts?.bullets || []; const oldBul = oldImg.texts?.bullets || [];
+                    if (JSON.stringify(newBul) !== JSON.stringify(oldBul)) diffs.push("Textbausteine geändert");
+                    if (diffs.length > 0) changes.changedImages.push({ label: fc?.changedImages?.find(c => c.idx === i)?.label || oldLabels[i] || `Bild ${i + 1}`, changes: fc?.changedImages?.find(c => c.idx === i)?.changes || diffs });
+                  });
+                  if (changes.changedImages.length === 0) changes.changedImages.push({ label: "Alle Bilder", changes: ["Keine strukturellen Änderungen erkannt — bitte im Bild-Briefing prüfen"] });
+                  setFeedbackChanges(changes);
+                } catch (err) {
+                  setFeedbackRefineError(err.message || "Unbekannter Fehler.");
+                } finally {
+                  setFeedbackRefining(false); setFeedbackRefineStatus("");
+                }
+              }} style={{ padding: "12px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.orange}, ${V.rose})`, color: "#fff", fontSize: 13, fontWeight: 800, cursor: (!feedbackText.trim() && !feedbackImages.length) ? "not-allowed" : "pointer", fontFamily: FN, opacity: (!feedbackText.trim() && !feedbackImages.length) ? 0.5 : 1 }}>Feedback speichern & Briefing verfeinern</button>
             </div>
-          </GC>
+          </GC>}
           {/* Existing feedback history */}
-          {feedback.length > 0 && <GC>
+          {feedback.length > 0 && !feedbackRefining && <GC>
             <div style={{ padding: "14px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: V.ink }}>Gespeichertes Feedback ({feedback.length})</div>
               <button onClick={() => setFeedback([])} style={{ fontSize: 10, color: V.rose, background: "none", border: "none", cursor: "pointer", fontFamily: FN, fontWeight: 700 }}>Alle löschen</button>
@@ -2473,36 +2559,6 @@ export default function App() {
               </div>)}
             </div>
           </GC>}
-          {/* Feedback Coverage Warning */}
-          {feedback.length > 0 && data?.images && (() => {
-            const norm = s => (s || "").toLowerCase().replace(/[^a-zäöüß0-9\s]/g, "");
-            // Collect all current briefing text
-            let allBriefingText = (data.images || []).map(im => {
-              const t = im.texts; if (!t) return "";
-              const h = t.headlines || (t.headline ? [t.headline] : []);
-              const ss = Array.isArray(t.subheadlines) ? t.subheadlines : (t.subheadline ? [t.subheadline] : []);
-              const bl = t.bullets || [];
-              return [im.concept, im.rationale, im.visual, ...h, ...ss, ...bl.map(b => typeof b === "string" ? b : b.text || "")].join(" ");
-            }).join(" ");
-            const allBriefingNorm = norm(allBriefingText);
-            // Extract key phrases (nouns/words ≥5 chars) from feedback texts
-            const allFeedbackText = feedback.map(fb => fb.text).join(" ");
-            const feedbackWords = norm(allFeedbackText).split(/\s+/).filter(w => w.length >= 5);
-            const uniqueKeywords = [...new Set(feedbackWords)].filter(w => !["haben", "nicht", "bitte", "sehen", "möchte", "sollte", "werden", "können", "wurde", "daher", "damit"].includes(w));
-            const missing = uniqueKeywords.filter(w => !allBriefingNorm.includes(w));
-            if (missing.length === 0) return null;
-            return <div style={{ padding: "14px 18px", background: `${V.rose}08`, border: `2px solid ${V.rose}30`, borderRadius: 14 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                <span style={{ fontSize: 16, flexShrink: 0 }}>⚠</span>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: V.rose, marginBottom: 6 }}>Kundenfeedback möglicherweise nicht vollständig berücksichtigt</div>
-                  <div style={{ fontSize: 11, color: V.text, lineHeight: 1.6, marginBottom: 6 }}>Folgende Begriffe aus dem Kunden-Feedback erscheinen nicht erkennbar im aktuellen Briefing:</div>
-                  {missing.slice(0, 12).map((w, i) => <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.rose, padding: "2px 8px", borderRadius: 6, background: `${V.rose}10`, display: "inline-block", marginRight: 4, marginBottom: 4 }}>{w}</span>)}
-                  <div style={{ fontSize: 10, color: V.textDim, marginTop: 6 }}>Prüfe ob das Feedback im verfeinerten Briefing vollständig umgesetzt wurde, oder verfeinere erneut.</div>
-                </div>
-              </div>
-            </div>;
-          })()}
         </div>}
       </div>
       {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl?.startsWith("error") ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht in der Datenbank gespeichert werden.</p>{shareUrl.length > 6 && <p style={{ fontSize: 10, color: V.textDim, margin: "0 0 14px", wordBreak: "break-all" }}>Detail: {shareUrl.slice(6)}</p>}</> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
