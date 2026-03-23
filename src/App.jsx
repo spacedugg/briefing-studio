@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { jsPDF } from "jspdf";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ShadingType } from "docx";
 
 const MAX_HL = 35, SOFT_HL = 30, FN = "'Outfit', system-ui, sans-serif";
 const V = { violet: "#7C3AED", blue: "#2563EB", cyan: "#0891B2", teal: "#0D9488", emerald: "#059669", orange: "#EA580C", rose: "#E11D48", amber: "#D97706", ink: "#0F172A", text: "#334155", textMed: "#64748B", textDim: "#94A3B8" };
@@ -1763,6 +1764,116 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
   );
 }
 
+// ═══════ CLIENT DOCX EXPORT ═══════
+async function generateClientDocx(D, selections, lang) {
+  const isDE = lang === "de";
+  const hlC = selections?.hlC || {}, shC = selections?.shC || {}, bulSel = selections?.bulSel || {}, bdgSel = selections?.bdgSel || {}, imgDisabled = selections?.imgDisabled || {}, ecSel = selections?.ecSel || {};
+  const productName = D.product?.name || "";
+  const brand = D.product?.brand || "";
+  const sku = D.product?.sku || "";
+  const marketplace = D.product?.marketplace || "";
+
+  // helpers
+  const txt = (s, opts = {}) => new TextRun({ text: s || "", font: "Calibri", ...opts });
+  const bold = (s, opts = {}) => txt(s, { bold: true, ...opts });
+  const para = (children, opts = {}) => new Paragraph({ children: Array.isArray(children) ? children : [children], spacing: { after: 120 }, ...opts });
+  const h1 = (s) => new Paragraph({ children: [new TextRun({ text: s, bold: true, size: 36, color: "7C3AED", font: "Calibri" })], heading: HeadingLevel.HEADING_1, spacing: { before: 480, after: 160 } });
+  const h2 = (s) => new Paragraph({ children: [new TextRun({ text: s, bold: true, size: 28, color: "2563EB", font: "Calibri" })], heading: HeadingLevel.HEADING_2, spacing: { before: 320, after: 120 } });
+  const h3 = (s) => new Paragraph({ children: [new TextRun({ text: s, bold: true, size: 24, color: "334155", font: "Calibri" })], heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 80 } });
+  const divider = () => new Paragraph({ children: [], border: { bottom: { color: "E2E8F0", style: BorderStyle.SINGLE, size: 6 } }, spacing: { after: 200 } });
+  const getImgLabelStr = (images, i) => { const m = images.filter(x => (x.id || "").toLowerCase().startsWith("main")); const p = images.filter(x => !(x.id || "").toLowerCase().startsWith("main")); const isM = (images[i]?.id || "").toLowerCase().startsWith("main"); if (isM) { const mi = m.indexOf(images[i]); return m.length === 1 ? (isDE ? "Hauptbild" : "Main Image") : `${isDE ? "Hauptbild" : "Main Image"} ${mi + 1}`; } return `${isDE ? "Produktbild" : "Product Image"} ${p.indexOf(images[i]) + 1}`; };
+
+  const sections = [];
+
+  // ── TITLE PAGE ──
+  sections.push(para([bold(productName, { size: 52, color: "7C3AED" })]));
+  if (brand) sections.push(para([txt(brand, { size: 28, color: "64748B" })]));
+  sections.push(para([]));
+  if (sku) sections.push(para([bold(isDE ? "ASIN / SKU: " : "ASIN / SKU: "), txt(sku)]));
+  if (marketplace) sections.push(para([bold(isDE ? "Marktplatz: " : "Marketplace: "), txt(marketplace)]));
+  sections.push(para([bold(isDE ? "Erstellt am: " : "Created: "), txt(new Date().toLocaleDateString(isDE ? "de-DE" : "en-US"))]));
+  sections.push(divider());
+
+  // ── INTRO ──
+  sections.push(h1(isDE ? "Ihr Listing-Konzept" : "Your Listing Concept"));
+  sections.push(para([txt(isDE
+    ? `Dieses Dokument stellt das entwickelte Konzept für Ihr Amazon-Listing dar. Es umfasst das visuelle Konzept, die strategische Ausrichtung sowie die empfohlenen Textelemente für jedes Ihrer Produktbilder.`
+    : `This document presents the developed concept for your Amazon listing. It covers the visual concept, strategic direction, and recommended text elements for each of your product images.`,
+    { size: 24 })]));
+  sections.push(divider());
+
+  // ── PER IMAGE ──
+  const visibleImages = D.images.filter(im => !imgDisabled[im.id]);
+  for (let i = 0; i < visibleImages.length; i++) {
+    const img = visibleImages[i];
+    const realIdx = D.images.indexOf(img);
+    const label = getImgLabelStr(D.images, realIdx);
+    const concept = isDE ? img.concept : (img.conceptEn || img.concept);
+    const rationale = isDE ? img.rationale : (img.rationaleEn || img.rationale);
+    const te = img.texts;
+    const hls = te?.headlines || (te?.headline ? [te.headline] : []);
+    const ci = hlC[img.id] ?? 0;
+    const headline = hls[ci] || hls[0] || "";
+    const subs = te ? (Array.isArray(te.subheadlines) ? te.subheadlines : (te.subheadline ? [te.subheadline] : [])) : [];
+    const si = shC[img.id] ?? 0;
+    const subheadline = si !== -1 ? (subs[si] || subs[0] || "") : "";
+    const bullets = te?.bullets || [];
+    const bSelArr = bulSel[img.id] || bullets.map(() => true);
+    const activeBullets = bullets.filter((_, bi) => bSelArr[bi] !== false);
+
+    sections.push(h2(`${label}${img.theme ? ` — ${img.theme}` : ""}`));
+
+    // Concept
+    if (concept) {
+      sections.push(h3(isDE ? "Bildkonzept" : "Image Concept"));
+      sections.push(para([txt(concept, { size: 22 })]));
+    }
+
+    // Rationale — reframed for client
+    if (rationale) {
+      sections.push(h3(isDE ? "Strategische Ausrichtung" : "Strategic Direction"));
+      sections.push(para([txt(rationale, { size: 22 })]));
+    }
+
+    // Text elements
+    if (headline || subheadline || activeBullets.length > 0) {
+      sections.push(h3(isDE ? "Empfohlene Textelemente" : "Recommended Text Elements"));
+      if (headline) {
+        sections.push(para([bold(isDE ? "Überschrift: " : "Headline: "), txt(headline, { size: 22 })]));
+      }
+      if (subheadline) {
+        sections.push(para([bold(isDE ? "Unterzeile: " : "Subheadline: "), txt(subheadline, { size: 22 })]));
+      }
+      if (activeBullets.length > 0) {
+        sections.push(para([bold(isDE ? "Weitere Textelemente:" : "Additional text elements:")]));
+        for (const b of activeBullets) {
+          const bt = typeof b === "string" ? b : b.text || "";
+          const cleanBt = bt.replace(/\*\*(.+?)\*\*/g, "$1");
+          sections.push(new Paragraph({ children: [txt(`• ${cleanBt}`, { size: 22 })], spacing: { after: 80 }, indent: { left: 360 } }));
+        }
+      }
+    }
+
+    if (i < visibleImages.length - 1) sections.push(divider());
+  }
+
+  // ── FOOTER NOTE ──
+  sections.push(divider());
+  sections.push(para([txt(isDE
+    ? "Alle Konzepte und Texte sind urheberrechtlich geschützt und wurden exklusiv für dieses Projekt entwickelt."
+    : "All concepts and texts are protected by copyright and have been developed exclusively for this project.",
+    { size: 18, color: "94A3B8", italics: true })]));
+
+  const doc = new Document({ sections: [{ properties: {}, children: sections }], creator: "Briefing Studio", title: productName });
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${(productName || "briefing").replace(/\s+/g, "_")}_concept_${lang}.docx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ═══════ PDF (temoa CI) ═══════
 function exportPDF(D) {
   const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: [338.67, 190.5] });
@@ -1876,7 +1987,7 @@ function exportPDF(D) {
 }
 
 // ═══════ MAIN ═══════
-const TABS = [{ id: "b", l: "Bild-Briefing" }, { id: "r", l: "Bewertungen" }, { id: "a", l: "Analyse" }];
+const TABS = [{ id: "b", l: "Bild-Briefing" }, { id: "r", l: "Bewertungen" }, { id: "a", l: "Analyse" }, { id: "f", l: "Feedback" }];
 export default function App() {
   const [data, setData] = useState(null), [tab, setTab] = useState("b"), [showExp, setSE] = useState(false), [pdfL, setPL] = useState(false), [loading, setL] = useState(false), [status, setSt] = useState(""), [error, setE] = useState(null), [showNew, setSN] = useState(false), [pending, setP] = useState(null), [hlC, setHlC] = useState({}), [shC, setShC] = useState({}), [bulSel, setBulSel] = useState({}), [bdgSel, setBdgSel] = useState({}), [curAsin, setCurAsin] = useState(""), [showHist, setShowHist] = useState(false), [productData, setPD] = useState(null), [txtDensity, setTD] = useState("normal");
   const [shareUrl, setShareUrl] = useState(null);
@@ -1898,6 +2009,13 @@ export default function App() {
   const [psdUrl, setPsdUrl] = useState("");
   const [designerNotes, setDesignerNotes] = useState("");
   const [showLinks, setShowLinks] = useState(false);
+  const [clientExportLoading, setClientExportLoading] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedback, setFeedback] = useState([]); // [{id, timestamp, text, images:[]}]
+  const [feedbackText, setFeedbackText] = useState("");
+  const [feedbackImages, setFeedbackImages] = useState([]);
+  const [feedbackRefining, setFeedbackRefining] = useState(false);
+  const [feedbackRefineError, setFeedbackRefineError] = useState(null);
   // Track the shared briefing ID so we can update it instead of creating duplicates
   const [sharedBriefingId, setSharedBriefingId] = useState(null);
   // Eyecatcher selection per main image (keyed by image id → selected eyecatcher index, -1 = none)
@@ -1984,7 +2102,7 @@ export default function App() {
   const shareDesignerLink = useCallback(async () => {
     if (!data) return;
     setShareLoading(true);
-    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, links: { inputUrls: inputUrls.map(u => u.trim()).filter(Boolean), outputUrl: outputUrl.trim() || null, psdUrl: psdUrl.trim() || null }, designerNotes: designerNotes.trim() || null, userAsin: curAsin || "" } };
+    const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, links: { inputUrls: inputUrls.map(u => u.trim()).filter(Boolean), outputUrl: outputUrl.trim() || null, psdUrl: psdUrl.trim() || null }, designerNotes: designerNotes.trim() || null, feedback: feedback.length ? feedback : undefined, userAsin: curAsin || "" } };
     if (sharedBriefingId) payload._updateId = sharedBriefingId;
     try {
       const bodyStr = JSON.stringify(payload);
@@ -2022,21 +2140,21 @@ export default function App() {
       setShareUrl("error");
     }
     setShareLoading(false);
-  }, [data, hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, inputUrls, outputUrl, psdUrl, designerNotes, sharedBriefingId, curAsin]);
+  }, [data, hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, inputUrls, outputUrl, psdUrl, designerNotes, feedback, sharedBriefingId, curAsin]);
   // Auto-sync changes to designer link whenever data/selections change (debounced 3s)
   const autoSyncRef = useRef(null);
   useEffect(() => {
     if (!sharedBriefingId || !data) return;
     if (autoSyncRef.current) clearTimeout(autoSyncRef.current);
     autoSyncRef.current = setTimeout(async () => {
-      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, links: { inputUrls: inputUrls.map(u => u.trim()).filter(Boolean), outputUrl: outputUrl.trim() || null, psdUrl: psdUrl.trim() || null }, designerNotes: designerNotes.trim() || null, userAsin: curAsin || "" }, _updateId: sharedBriefingId };
+      const payload = { briefing: data, selections: { hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, links: { inputUrls: inputUrls.map(u => u.trim()).filter(Boolean), outputUrl: outputUrl.trim() || null, psdUrl: psdUrl.trim() || null }, designerNotes: designerNotes.trim() || null, feedback: feedback.length ? feedback : undefined, userAsin: curAsin || "" }, _updateId: sharedBriefingId };
       try {
         const r = await fetch("/api/briefing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         if (!r.ok) console.warn("[auto-sync] Failed:", r.status, await r.text().catch(() => ""));
       } catch (e) { console.warn("[auto-sync] Error:", e.message); }
     }, 3000);
     return () => clearTimeout(autoSyncRef.current);
-  }, [data, hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, inputUrls, outputUrl, psdUrl, designerNotes, sharedBriefingId, curAsin]);
+  }, [data, hlC, shC, bulSel, bdgSel, ecSel, imgDisabled, refImages, inputUrls, outputUrl, psdUrl, designerNotes, feedback, sharedBriefingId, curAsin]);
   const go = useCallback(async (a, m, p, f, refData, imgCount, h10Keywords, bestsellerAsin) => {
     setL(true); setE(null); setSt("Starte...");
     try {
@@ -2126,6 +2244,7 @@ export default function App() {
     if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
     if (sel.links?.psdUrl) setPsdUrl(sel.links.psdUrl);
     if (sel.designerNotes) setDesignerNotes(sel.designerNotes);
+    if (sel.feedback?.length) setFeedback(sel.feedback);
   }} txtDensity={txtDensity} setTD={setTD} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
@@ -2139,6 +2258,11 @@ export default function App() {
             <div style={{ display: "flex", gap: 2, marginLeft: 4 }}>
               <button onClick={doUndo} disabled={!canUndo} title="Rückgängig (Strg+Z)" style={{ ...gS, padding: "6px 8px", fontSize: 14, fontWeight: 700, color: canUndo ? V.ink : V.textDim, cursor: canUndo ? "pointer" : "default", fontFamily: FN, borderRadius: 8, opacity: canUndo ? 1 : 0.35, lineHeight: 1 }}>↩</button>
               <button onClick={doRedo} disabled={!canRedo} title="Wiederherstellen (Strg+Y)" style={{ ...gS, padding: "6px 8px", fontSize: 14, fontWeight: 700, color: canRedo ? V.ink : V.textDim, cursor: canRedo ? "pointer" : "default", fontFamily: FN, borderRadius: 8, opacity: canRedo ? 1 : 0.35, lineHeight: 1 }}>↪</button>
+            </div>
+            {/* Client DOCX export — DE / EN */}
+            <div style={{ display: "flex", gap: 2 }}>
+              <button onClick={async () => { setClientExportLoading(true); try { await generateClientDocx(data, { hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }, "de"); } finally { setClientExportLoading(false); } }} disabled={clientExportLoading} style={{ ...gS, padding: "7px 10px", fontSize: 10, fontWeight: 700, color: V.orange, cursor: clientExportLoading ? "wait" : "pointer", fontFamily: FN, borderRadius: "10px 0 0 10px", border: `1.5px solid ${V.orange}30`, background: `${V.orange}08` }} title="Kunden-Export als DOCX (Deutsch)">📄 DE</button>
+              <button onClick={async () => { setClientExportLoading(true); try { await generateClientDocx(data, { hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }, "en"); } finally { setClientExportLoading(false); } }} disabled={clientExportLoading} style={{ ...gS, padding: "7px 10px", fontSize: 10, fontWeight: 700, color: V.orange, cursor: clientExportLoading ? "wait" : "pointer", fontFamily: FN, borderRadius: "0 10px 10px 0", border: `1.5px solid ${V.orange}30`, borderLeft: "none", background: `${V.orange}08` }} title="Client Export as DOCX (English)">📄 EN</button>
             </div>
             {sharedBriefingId && <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: `1.5px solid ${V.emerald}40`, background: `${V.emerald}10`, color: V.emerald, fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Speichern..." : "Speichern"}</button>}
             <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30`, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Erstellen..." : "Designer-Link"}</button>
@@ -2160,6 +2284,7 @@ export default function App() {
               if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
               if (sel.links?.psdUrl) setPsdUrl(sel.links.psdUrl);
               if (sel.designerNotes) setDesignerNotes(sel.designerNotes);
+    if (sel.feedback?.length) setFeedback(sel.feedback);
             }
           }).catch(() => {});
         }} onClose={() => setShowHist(false)} />}
@@ -2239,8 +2364,146 @@ export default function App() {
             return next;
           });
         }} />}
+        {/* Feedback coverage warning — shown on Bild-Briefing tab when feedback exists */}
+        {tab === "b" && feedback.length > 0 && (() => {
+          const norm = s => (s || "").toLowerCase().replace(/[^a-zäöüß0-9\s]/g, "");
+          let allBriefingText = (data.images || []).map(im => {
+            const t = im.texts; if (!t) return [im.concept, im.rationale, im.visual].join(" ");
+            const h = t.headlines || (t.headline ? [t.headline] : []);
+            const ss = Array.isArray(t.subheadlines) ? t.subheadlines : (t.subheadline ? [t.subheadline] : []);
+            const bl = t.bullets || [];
+            return [im.concept, im.rationale, im.visual, ...h, ...ss, ...bl.map(b => typeof b === "string" ? b : b.text || "")].join(" ");
+          }).join(" ");
+          const allBriefingNorm = norm(allBriefingText);
+          const allFeedbackText = feedback.map(fb => fb.text).join(" ");
+          const stopWords = new Set(["haben", "nicht", "bitte", "sehen", "möchte", "sollte", "werden", "können", "wurde", "daher", "damit", "dieser", "diese", "dieses", "einen", "einer", "auch", "oder", "beim", "bild", "mehr", "noch", "dass", "wenn", "dann"]);
+          const feedbackWords = norm(allFeedbackText).split(/\s+/).filter(w => w.length >= 5 && !stopWords.has(w));
+          const uniqueKeywords = [...new Set(feedbackWords)];
+          const missing = uniqueKeywords.filter(w => !allBriefingNorm.includes(w));
+          if (!missing.length) return <div style={{ padding: "10px 16px", background: `${V.emerald}08`, border: `1.5px solid ${V.emerald}30`, borderRadius: 12, fontSize: 11, color: V.emerald, fontWeight: 700 }}>✓ Kunden-Feedback erscheint im Briefing berücksichtigt.</div>;
+          return <div style={{ padding: "14px 18px", background: `${V.rose}08`, border: `2px solid ${V.rose}30`, borderRadius: 14 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <span style={{ fontSize: 16, flexShrink: 0 }}>⚠</span>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: V.rose, marginBottom: 4 }}>Kunden-Feedback möglicherweise nicht vollständig umgesetzt</div>
+                <div style={{ fontSize: 11, color: V.text, lineHeight: 1.5, marginBottom: 6 }}>{feedback.length} Feedback-{feedback.length === 1 ? "Eintrag" : "Einträge"} vorhanden. Folgende Begriffe aus dem Feedback fehlen im aktuellen Briefing:</div>
+                {missing.slice(0, 10).map((w, i) => <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.rose, padding: "2px 8px", borderRadius: 6, background: `${V.rose}10`, display: "inline-block", marginRight: 4, marginBottom: 4 }}>{w}</span>)}
+                <div style={{ fontSize: 10, color: V.textDim, marginTop: 6 }}>Gehe zum <button onClick={() => setTab("f")} style={{ background: "none", border: "none", color: V.rose, fontWeight: 700, cursor: "pointer", fontSize: 10, padding: 0, textDecoration: "underline" }}>Feedback-Tab</button> und verfeinere das Briefing erneut.</div>
+              </div>
+            </div>
+          </div>;
+        })()}
         {tab === "r" && <ReviewsTab D={data} />}
         {tab === "a" && <AnalyseTab D={data} lqs={calcLQS(productData)} />}
+        {tab === "f" && <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          {/* Feedback input card */}
+          <GC>
+            <div style={{ padding: "16px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: V.ink }}>Kunden-Feedback</div>
+              <div style={{ fontSize: 12, color: V.textDim, marginTop: 2 }}>Füge Kundenfeedback hinzu — Text, Bilder oder beides. Das KI-System verfeinert das Briefing auf Basis aller Eingaben.</div>
+            </div>
+            <div style={{ padding: 22, display: "flex", flexDirection: "column", gap: 14 }}>
+              <textarea value={feedbackText} onChange={e => { setFeedbackText(e.target.value); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }} ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }} placeholder="Feedback des Kunden hier eingeben... z.B. 'Das Bild soll mehr die nachhaltige Verpackung zeigen' oder 'Bitte den Fokus auf die Familie legen, nicht auf Einzelpersonen'" style={{ ...inpS, resize: "none", lineHeight: 1.6, minHeight: 80, overflow: "hidden" }} />
+              {/* Image upload for feedback */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: V.textMed, marginBottom: 6 }}>Bilder zum Feedback (optional)</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  {feedbackImages.map((src, i) => <div key={i} style={{ position: "relative", width: 64, height: 64, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(0,0,0,0.08)" }}>
+                    <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <button onClick={() => setFeedbackImages(prev => prev.filter((_, j) => j !== i))} style={{ position: "absolute", top: 1, right: 1, width: 16, height: 16, borderRadius: 99, background: "rgba(0,0,0,0.6)", border: "none", color: "#fff", fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+                  </div>)}
+                  <label style={{ width: 64, height: 64, borderRadius: 8, border: `2px dashed ${V.blue}30`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: V.blue, fontSize: 22 }}>+<input type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => { Array.from(e.target.files || []).forEach(f => { const r = new FileReader(); r.onload = ev => setFeedbackImages(p => [...p, ev.target.result]); r.readAsDataURL(f); }); e.target.value = ""; }} /></label>
+                </div>
+                <div style={{ fontSize: 10, color: V.textDim, marginTop: 4 }}>Bilder werden von der KI direkt analysiert (z.B. Stimmungsbilder, Produktfotos, Referenzbilder vom Kunden).</div>
+              </div>
+              {feedbackRefineError && <div style={{ padding: "10px 14px", borderRadius: 10, background: `${V.rose}10`, border: `1px solid ${V.rose}30`, fontSize: 12, color: V.rose }}>{feedbackRefineError}</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button disabled={(!feedbackText.trim() && !feedbackImages.length) || feedbackRefining} onClick={async () => {
+                  if (!feedbackText.trim() && !feedbackImages.length) return;
+                  // Save feedback item
+                  const item = { id: Date.now().toString(36), timestamp: new Date().toISOString(), text: feedbackText.trim(), images: feedbackImages };
+                  const newFeedback = [...feedback, item];
+                  setFeedback(newFeedback);
+                  setFeedbackText(""); setFeedbackImages([]);
+                  // Trigger AI refinement
+                  setFeedbackRefining(true); setFeedbackRefineError(null);
+                  try {
+                    const briefingJson = JSON.stringify(data, null, 2);
+                    const feedbackSummary = newFeedback.map((fb, i) => `Feedback ${i + 1} (${new Date(fb.timestamp).toLocaleDateString("de-DE")}):\n${fb.text}${fb.images.length ? ` [+ ${fb.images.length} Bild(er)]` : ""}`).join("\n\n");
+                    const imgContent = newFeedback.flatMap(fb => fb.images.map(src => ({ type: "image", source: { type: "base64", media_type: src.startsWith("data:image/png") ? "image/png" : "image/jpeg", data: src.split(",")[1] } })));
+                    const messages = [{ role: "user", content: [
+                      { type: "text", text: `Du bist ein Experte für Amazon-Listing-Optimierung. Du hast das folgende Briefing erstellt:\n\n${briefingJson}\n\nDu hast jetzt folgendes Kunden-Feedback erhalten:\n\n${feedbackSummary}\n\nBitte überarbeite das Briefing basierend auf dem Feedback. Behalte die genaue JSON-Struktur bei. Gib NUR valides JSON zurück — kein Markdown, keine Erklärungen, nur den aktualisierten JSON-Objekt (gleiche Struktur wie das Input-Briefing). Wichtig: Alle Feedback-Punkte des Kunden müssen im überarbeiteten Briefing berücksichtigt werden.` },
+                      ...imgContent
+                    ] }];
+                    const resp = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 8000, messages }) });
+                    if (!resp.ok) throw new Error(`API Fehler: ${resp.status}`);
+                    const result = await resp.json();
+                    const raw = result?.content?.[0]?.text || "";
+                    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+                    if (!jsonMatch) throw new Error("KI hat kein valides JSON zurückgegeben.");
+                    const refined = JSON.parse(jsonMatch[0]);
+                    if (refined.images && refined.product) { pushUndo(); setData(refined); }
+                    else throw new Error("Unerwartetes JSON-Format von der KI.");
+                  } catch (err) {
+                    setFeedbackRefineError(err.message || "Unbekannter Fehler beim Verfeinern.");
+                  } finally {
+                    setFeedbackRefining(false);
+                  }
+                }} style={{ flex: 1, padding: "10px 18px", borderRadius: 10, border: "none", background: feedbackRefining ? "rgba(0,0,0,0.08)" : `linear-gradient(135deg, ${V.orange}, ${V.rose})`, color: feedbackRefining ? V.textDim : "#fff", fontSize: 12, fontWeight: 800, cursor: ((!feedbackText.trim() && !feedbackImages.length) || feedbackRefining) ? "not-allowed" : "pointer", fontFamily: FN, opacity: (!feedbackText.trim() && !feedbackImages.length) ? 0.5 : 1 }}>{feedbackRefining ? "Briefing wird verfeinert..." : "Feedback speichern & Briefing verfeinern"}</button>
+              </div>
+              {feedbackRefining && <div style={{ fontSize: 11, color: V.textDim, textAlign: "center" }}>Claude analysiert das Feedback und überarbeitet das Briefing... Das kann 15-30 Sekunden dauern.</div>}
+            </div>
+          </GC>
+          {/* Existing feedback history */}
+          {feedback.length > 0 && <GC>
+            <div style={{ padding: "14px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: V.ink }}>Gespeichertes Feedback ({feedback.length})</div>
+              <button onClick={() => setFeedback([])} style={{ fontSize: 10, color: V.rose, background: "none", border: "none", cursor: "pointer", fontFamily: FN, fontWeight: 700 }}>Alle löschen</button>
+            </div>
+            <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
+              {feedback.map((fb, i) => <div key={fb.id} style={{ ...gS, padding: "12px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, color: V.textDim, marginBottom: 4 }}>#{i + 1} · {new Date(fb.timestamp).toLocaleString("de-DE")}</div>
+                    {fb.text && <div style={{ fontSize: 13, color: V.text, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{fb.text}</div>}
+                    {fb.images.length > 0 && <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>{fb.images.map((src, j) => <img key={j} src={src} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />)}</div>}
+                  </div>
+                  <button onClick={() => setFeedback(prev => prev.filter(x => x.id !== fb.id))} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>×</button>
+                </div>
+              </div>)}
+            </div>
+          </GC>}
+          {/* Feedback Coverage Warning */}
+          {feedback.length > 0 && data?.images && (() => {
+            const norm = s => (s || "").toLowerCase().replace(/[^a-zäöüß0-9\s]/g, "");
+            // Collect all current briefing text
+            let allBriefingText = (data.images || []).map(im => {
+              const t = im.texts; if (!t) return "";
+              const h = t.headlines || (t.headline ? [t.headline] : []);
+              const ss = Array.isArray(t.subheadlines) ? t.subheadlines : (t.subheadline ? [t.subheadline] : []);
+              const bl = t.bullets || [];
+              return [im.concept, im.rationale, im.visual, ...h, ...ss, ...bl.map(b => typeof b === "string" ? b : b.text || "")].join(" ");
+            }).join(" ");
+            const allBriefingNorm = norm(allBriefingText);
+            // Extract key phrases (nouns/words ≥5 chars) from feedback texts
+            const allFeedbackText = feedback.map(fb => fb.text).join(" ");
+            const feedbackWords = norm(allFeedbackText).split(/\s+/).filter(w => w.length >= 5);
+            const uniqueKeywords = [...new Set(feedbackWords)].filter(w => !["haben", "nicht", "bitte", "sehen", "möchte", "sollte", "werden", "können", "wurde", "daher", "damit"].includes(w));
+            const missing = uniqueKeywords.filter(w => !allBriefingNorm.includes(w));
+            if (missing.length === 0) return null;
+            return <div style={{ padding: "14px 18px", background: `${V.rose}08`, border: `2px solid ${V.rose}30`, borderRadius: 14 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 16, flexShrink: 0 }}>⚠</span>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: V.rose, marginBottom: 6 }}>Kundenfeedback möglicherweise nicht vollständig berücksichtigt</div>
+                  <div style={{ fontSize: 11, color: V.text, lineHeight: 1.6, marginBottom: 6 }}>Folgende Begriffe aus dem Kunden-Feedback erscheinen nicht erkennbar im aktuellen Briefing:</div>
+                  {missing.slice(0, 12).map((w, i) => <span key={i} style={{ fontSize: 11, fontWeight: 700, color: V.rose, padding: "2px 8px", borderRadius: 6, background: `${V.rose}10`, display: "inline-block", marginRight: 4, marginBottom: 4 }}>{w}</span>)}
+                  <div style={{ fontSize: 10, color: V.textDim, marginTop: 6 }}>Prüfe ob das Feedback im verfeinerten Briefing vollständig umgesetzt wurde, oder verfeinere erneut.</div>
+                </div>
+              </div>
+            </div>;
+          })()}
+        </div>}
       </div>
       {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl?.startsWith("error") ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht in der Datenbank gespeichert werden.</p>{shareUrl.length > 6 && <p style={{ fontSize: 10, color: V.textDim, margin: "0 0 14px", wordBreak: "break-all" }}>Detail: {shareUrl.slice(6)}</p>}</> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
       {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic, p.h10, p.bs); }} onNo={() => setP(null)} />}
