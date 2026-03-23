@@ -1913,14 +1913,51 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
 }
 
 // ═══════ CLIENT DOCX EXPORT ═══════
-// temoa agency logo as SVG — converted to PNG at export time via canvas
+// temoa agency logo — loaded from ressources/ as PNG, with SVG fallback
 const TEMOA_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="560" height="140" viewBox="0 0 280 70"><rect x="0" y="0" width="22" height="22" rx="3" fill="%23F59E0B"/><rect x="24" y="0" width="22" height="22" rx="3" fill="%23F59E0B"/><circle cx="35" cy="35" r="8" fill="%23EF4444"/><path d="M0 26L0 55Q0 65 11 65L22 65Q22 55 22 45L22 26Z" fill="%230F172A"/><path d="M24 45L24 58Q24 65 35 65L46 65L46 45Q35 50 24 45Z" fill="%2394A3B8" opacity="0.4"/><text x="58" y="52" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="48" fill="%230F172A" letter-spacing="-1">temoa</text></svg>`;
+// Try loading the real temoa logo from ressources/ (PNG preferred)
+async function loadTemoaLogoPng() {
+  const candidates = ["/ressources/temoa-logo.png", "/ressources/temoa_logo.png", "/ressources/temoa-logo.jpg", "/ressources/temoa_logo.jpg"];
+  for (const path of candidates) {
+    try {
+      const resp = await fetch(path);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        if (blob.size > 0) return new Uint8Array(await blob.arrayBuffer());
+      }
+    } catch (e) { /* try next */ }
+  }
+  // Also try SVG from ressources and rasterize
+  for (const path of ["/ressources/temoa-logo.svg", "/ressources/temoa_logo.svg"]) {
+    try {
+      const resp = await fetch(path);
+      if (resp.ok) {
+        const svgText = await resp.text();
+        const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}`;
+        const png = await imgDataUrlToPng(dataUrl, 560, 140);
+        if (png) return png;
+      }
+    } catch (e) { /* try next */ }
+  }
+  return null;
+}
 function svgToPngBytes(svgStr, w, h) {
+  // Render at 4x resolution for crisp output, then encode at target size
+  const scale = 4;
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => { const c = document.createElement("canvas"); c.width = w; c.height = h; const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, w, h); c.toBlob(async (blob) => { if (blob) { resolve(new Uint8Array(await blob.arrayBuffer())); } else { resolve(null); } }, "image/png"); };
+    img.onload = () => { const c = document.createElement("canvas"); c.width = w * scale; c.height = h * scale; const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.drawImage(img, 0, 0, w * scale, h * scale); c.toBlob(async (blob) => { if (blob) { resolve(new Uint8Array(await blob.arrayBuffer())); } else { resolve(null); } }, "image/png"); };
     img.onerror = () => resolve(null);
     img.src = `data:image/svg+xml;charset=utf-8,${svgStr}`;
+  });
+}
+// Convert image dataUrl (including SVG) to PNG Uint8Array for DOCX embedding
+function imgDataUrlToPng(dataUrl, w, h) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => { const c = document.createElement("canvas"); c.width = w; c.height = h; const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.drawImage(img, 0, 0, w, h); c.toBlob(async (blob) => { if (blob) { resolve(new Uint8Array(await blob.arrayBuffer())); } else { resolve(null); } }, "image/png"); };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
   });
 }
 async function generateClientDocx(D, selections, lang, clientLogoData) {
@@ -1934,11 +1971,12 @@ async function generateClientDocx(D, selections, lang, clientLogoData) {
   const clean = (s) => (s || "").replace(/\u2014/g, " ").replace(/\u2013/g, " ").replace(/—/g, " ").replace(/–/g, " ").replace(/&amp;/g, "&").replace(/&/g, " und ");
 
   // helpers
-  const txt = (s, opts = {}) => new TextRun({ text: clean(s) || "", font: "Calibri", ...opts });
+  const FONT = "Caros";
+  const txt = (s, opts = {}) => new TextRun({ text: clean(s) || "", font: FONT, ...opts });
   const bld = (s, opts = {}) => txt(s, { bold: true, ...opts });
   const para = (children, opts = {}) => new Paragraph({ children: Array.isArray(children) ? children : [children], spacing: { after: 120 }, ...opts });
-  const h2 = (s) => new Paragraph({ children: [new TextRun({ text: clean(s), bold: true, size: 28, color: "2563EB", font: "Calibri" })], heading: HeadingLevel.HEADING_2, spacing: { before: 360, after: 140 }, border: { bottom: { color: "E2E8F0", style: BorderStyle.SINGLE, size: 4 } } });
-  const h3 = (s) => new Paragraph({ children: [new TextRun({ text: clean(s), bold: true, size: 22, color: "475569", font: "Calibri" })], heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 80 } });
+  const h2 = (s) => new Paragraph({ children: [new TextRun({ text: clean(s), bold: true, size: 28, color: "2563EB", font: FONT })], heading: HeadingLevel.HEADING_2, spacing: { before: 360, after: 140 }, border: { bottom: { color: "E2E8F0", style: BorderStyle.SINGLE, size: 4 } } });
+  const h3 = (s) => new Paragraph({ children: [new TextRun({ text: clean(s), bold: true, size: 22, color: "475569", font: FONT })], heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 80 } });
   const spacer = () => para([txt("", { size: 8 })]);
   const divider = () => new Paragraph({ children: [], border: { bottom: { color: "E2E8F0", style: BorderStyle.SINGLE, size: 4 } }, spacing: { before: 120, after: 200 } });
   const getImgLabelStr = (images, i) => { const m = images.filter(x => (x.id || "").toLowerCase().startsWith("main")); const p = images.filter(x => !(x.id || "").toLowerCase().startsWith("main")); const isM = (images[i]?.id || "").toLowerCase().startsWith("main"); if (isM) { const mi = m.indexOf(images[i]); return m.length === 1 ? "Main Image" : `Main Image ${mi + 1}`; } return `PT${String(p.indexOf(images[i]) + 1).padStart(2, "0")}`; };
@@ -1947,9 +1985,20 @@ async function generateClientDocx(D, selections, lang, clientLogoData) {
 
   const titleChildren = [];
   // ── LOGO HEADER — client logo left, temoa logo right ──
-  const temoaPng = await svgToPngBytes(TEMOA_LOGO_SVG, 560, 140);
+  // Try loading real logo from ressources/, fall back to SVG rendering
+  const temoaPng = await loadTemoaLogoPng() || await svgToPngBytes(TEMOA_LOGO_SVG, 560, 140);
   let clientLogoPng = null;
-  if (clientLogoData?.dataUrl) { try { clientLogoPng = dataUrlToUint8(clientLogoData.dataUrl); } catch (e) { /* skip */ } }
+  if (clientLogoData?.dataUrl) {
+    try {
+      // SVG logos must be rasterized to PNG for DOCX compatibility
+      if (clientLogoData.dataUrl.includes("image/svg")) {
+        clientLogoPng = await imgDataUrlToPng(clientLogoData.dataUrl, 520, 208);
+      } else {
+        // PNG/JPG — re-render via canvas to guarantee clean bytes and correct dimensions
+        clientLogoPng = await imgDataUrlToPng(clientLogoData.dataUrl, 520, 208);
+      }
+    } catch (e) { /* skip */ }
+  }
   const noBorder = { top: { style: BorderStyle.NONE, size: 0 }, bottom: { style: BorderStyle.NONE, size: 0 }, left: { style: BorderStyle.NONE, size: 0 }, right: { style: BorderStyle.NONE, size: 0 } };
   const leftLogoChildren = clientLogoPng ? [new Paragraph({ children: [new ImageRun({ data: clientLogoPng, transformation: { width: 130, height: 52 } })], alignment: AlignmentType.LEFT })] : [para([txt("", { size: 10 })])];
   const rightLogoChildren = temoaPng ? [new Paragraph({ children: [new ImageRun({ data: temoaPng, transformation: { width: 130, height: 32 } })], alignment: AlignmentType.RIGHT })] : [para([txt("temoa", { size: 20, bold: true, color: "0F172A" })], { alignment: AlignmentType.RIGHT })];
@@ -1962,7 +2011,7 @@ async function generateClientDocx(D, selections, lang, clientLogoData) {
     borders: { top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE }, insideHorizontal: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE } }
   }));
   titleChildren.push(spacer()); titleChildren.push(spacer()); titleChildren.push(spacer());
-  titleChildren.push(para([txt(isDE ? "Listing Konzept" : "Listing Concept", { size: 20, color: "94A3B8", font: "Calibri", allCaps: true, characterSpacing: 120 })], { alignment: AlignmentType.LEFT }));
+  titleChildren.push(para([txt(isDE ? "Listing Konzept" : "Listing Concept", { size: 20, color: "94A3B8", font: FONT, allCaps: true, characterSpacing: 120 })], { alignment: AlignmentType.LEFT }));
   titleChildren.push(para([bld(isDE ? `${productName}` : `${productName}`, { size: 52, color: "1E293B" })], { spacing: { after: 60 } }));
   if (brand) titleChildren.push(para([txt(brand, { size: 26, color: "64748B" })], { spacing: { after: 200 } }));
   titleChildren.push(spacer());
@@ -1978,7 +2027,7 @@ async function generateClientDocx(D, selections, lang, clientLogoData) {
   titleChildren.push(spacer());
   // Intro text — no direct address
   titleChildren.push(para([txt(isDE
-    ? "Dieses Dokument beschreibt das entwickelte Konzept fuer das Amazon-Listing. Es umfasst das visuelle Konzept sowie die empfohlenen Textelemente fuer jedes Produktbild."
+    ? "Dieses Dokument beschreibt das entwickelte Konzept für das Amazon-Listing. Es umfasst das visuelle Konzept sowie die empfohlenen Textelemente für jedes Produktbild."
     : "This document describes the developed concept for the Amazon listing. It covers the visual concept and recommended text elements for each product image.",
     { size: 22, color: "475569" })], { spacing: { after: 200 } }));
 
@@ -2012,6 +2061,13 @@ async function generateClientDocx(D, selections, lang, clientLogoData) {
     if (concept) {
       titleChildren.push(h3(isDE ? "Bildkonzept" : "Image Concept"));
       titleChildren.push(para([txt(concept, { size: 21, color: "334155" })], { spacing: { after: 140 } }));
+    }
+
+    // Rationale (strategic reasoning — client export only)
+    const rationale = clean(isDE ? img.rationale : (img.rationaleEn || img.rationale));
+    if (rationale) {
+      titleChildren.push(h3(isDE ? "Strategische Begründung" : "Strategic Rationale"));
+      titleChildren.push(para([txt(rationale, { size: 21, color: "475569", italics: true })], { spacing: { after: 140 } }));
     }
 
     // Text elements
@@ -2062,7 +2118,7 @@ async function generateClientDocx(D, selections, lang, clientLogoData) {
   // ── FOOTER ──
   titleChildren.push(divider());
   titleChildren.push(para([txt(isDE
-    ? "Alle Konzepte und Texte sind urheberrechtlich geschuetzt und wurden exklusiv fuer dieses Projekt entwickelt."
+    ? "Alle Konzepte und Texte sind urheberrechtlich geschützt und wurden exklusiv für dieses Projekt entwickelt."
     : "All concepts and texts are protected by copyright and have been developed exclusively for this project.",
     { size: 18, color: "94A3B8", italics: true })], { spacing: { before: 200 } }));
 
@@ -2528,7 +2584,7 @@ export default function App() {
           </div>
           {/* Preview info */}
           <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(0,0,0,0.02)", marginBottom: 20, fontSize: 11, color: V.textMed, lineHeight: 1.5 }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>Listing Konzept fuer {data.product?.name}</div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>Listing Konzept für {data.product?.name}</div>
             <div>{data.product?.brand}{curAsin ? ` | ${curAsin}` : ""}{data.product?.marketplace ? ` | ${data.product.marketplace}` : ""}</div>
             <div>{(data.images || []).filter(im => !imgDisabled[im.id]).length} {docxLang === "de" ? "Bilder" : "images"}</div>
           </div>
@@ -2872,13 +2928,13 @@ AUSGABE-FORMAT:
               <div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 12 }}>Feedback wirklich loeschen?</div>
               <div style={{ fontSize: 13, color: V.text, lineHeight: 1.7, marginBottom: 8 }}>
                 {feedbackDeleteConfirm === "all"
-                  ? "Alle gespeicherten Feedback-Eintraege werden entfernt."
+                  ? "Alle gespeicherten Feedback-Einträge werden entfernt."
                   : "Dieser Feedback-Eintrag wird entfernt."}
               </div>
               <div style={{ fontSize: 12, color: V.rose, lineHeight: 1.6, marginBottom: 20, padding: "10px 14px", borderRadius: 10, background: `${V.rose}06`, border: `1px solid ${V.rose}20` }}>
                 {feedbackDeleteConfirm === "all" || feedback.length <= 1
-                  ? "Das Briefing wird auf den Zustand VOR dem ersten Feedback zurueckgesetzt. Alle durch Feedback vorgenommenen Aenderungen an Texten, Konzepten und visuellen Hinweisen werden rueckgaengig gemacht."
-                  : "Bei diesem Eintrag wird nur das Feedback entfernt. Das Briefing bleibt unveraendert, da noch weitere Feedback-Eintraege vorhanden sind."}
+                  ? "Das Briefing wird auf den Zustand VOR dem ersten Feedback zurückgesetzt. Alle durch Feedback vorgenommenen Änderungen an Texten, Konzepten und visuellen Hinweisen werden rückgängig gemacht."
+                  : "Bei diesem Eintrag wird nur das Feedback entfernt. Das Briefing bleibt unverändert, da noch weitere Feedback-Einträge vorhanden sind."}
               </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                 <button onClick={() => setFeedbackDeleteConfirm(null)} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid rgba(0,0,0,0.1)", background: "transparent", color: V.textMed, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>Abbrechen</button>
