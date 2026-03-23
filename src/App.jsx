@@ -2229,6 +2229,7 @@ export default function App() {
   // Baseline briefing snapshot — saved before first feedback is applied, restored when all feedback is deleted
   const baselineBriefing = useRef(null);
   const [feedbackProgress, setFeedbackProgress] = useState(0); // 0-100 real progress
+  const [feedbackDeleteConfirm, setFeedbackDeleteConfirm] = useState(null); // null | "all" | feedbackId
   // Track the shared briefing ID so we can update it instead of creating duplicates
   const [sharedBriefingId, setSharedBriefingId] = useState(null);
   // Eyecatcher selection per main image (keyed by image id → selected eyecatcher index, -1 = none)
@@ -2849,7 +2850,7 @@ AUSGABE-FORMAT:
           {feedback.length > 0 && !feedbackRefining && <GC>
             <div style={{ padding: "14px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: V.ink }}>Gespeichertes Feedback ({feedback.length})</div>
-              <button onClick={() => { if (baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; } setFeedback([]); setFeedbackChanges(null); }} style={{ fontSize: 10, color: V.rose, background: "none", border: "none", cursor: "pointer", fontFamily: FN, fontWeight: 700 }}>Alle löschen & Briefing zurücksetzen</button>
+              <button onClick={() => setFeedbackDeleteConfirm("all")} style={{ fontSize: 10, color: V.rose, background: "none", border: "none", cursor: "pointer", fontFamily: FN, fontWeight: 700 }}>Alle löschen & Briefing zurücksetzen</button>
             </div>
             <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
               {feedback.map((fb, i) => <div key={fb.id} style={{ ...gS, padding: "12px 14px" }}>
@@ -2859,11 +2860,42 @@ AUSGABE-FORMAT:
                     {fb.text && <div style={{ fontSize: 13, color: V.text, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{fb.text}</div>}
                     {fb.images.length > 0 && <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>{fb.images.map((src, j) => <img key={j} src={src} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />)}</div>}
                   </div>
-                  <button onClick={() => { const remaining = feedback.filter(x => x.id !== fb.id); if (remaining.length === 0 && baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; setFeedbackChanges(null); } setFeedback(remaining); }} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>×</button>
+                  <button onClick={() => setFeedbackDeleteConfirm(fb.id)} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>×</button>
                 </div>
               </div>)}
             </div>
           </GC>}
+          {/* Feedback delete confirmation popup */}
+          {feedbackDeleteConfirm && <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)" }} onClick={() => setFeedbackDeleteConfirm(null)} />
+            <div style={{ position: "relative", width: 420, maxWidth: "90vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 80px rgba(0,0,0,0.2)", padding: "28px 32px", fontFamily: FN }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 12 }}>Feedback wirklich loeschen?</div>
+              <div style={{ fontSize: 13, color: V.text, lineHeight: 1.7, marginBottom: 8 }}>
+                {feedbackDeleteConfirm === "all"
+                  ? "Alle gespeicherten Feedback-Eintraege werden entfernt."
+                  : "Dieser Feedback-Eintrag wird entfernt."}
+              </div>
+              <div style={{ fontSize: 12, color: V.rose, lineHeight: 1.6, marginBottom: 20, padding: "10px 14px", borderRadius: 10, background: `${V.rose}06`, border: `1px solid ${V.rose}20` }}>
+                {feedbackDeleteConfirm === "all" || feedback.length <= 1
+                  ? "Das Briefing wird auf den Zustand VOR dem ersten Feedback zurueckgesetzt. Alle durch Feedback vorgenommenen Aenderungen an Texten, Konzepten und visuellen Hinweisen werden rueckgaengig gemacht."
+                  : "Bei diesem Eintrag wird nur das Feedback entfernt. Das Briefing bleibt unveraendert, da noch weitere Feedback-Eintraege vorhanden sind."}
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button onClick={() => setFeedbackDeleteConfirm(null)} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid rgba(0,0,0,0.1)", background: "transparent", color: V.textMed, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>Abbrechen</button>
+                <button onClick={() => {
+                  if (feedbackDeleteConfirm === "all") {
+                    if (baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; }
+                    setFeedback([]); setFeedbackChanges(null);
+                  } else {
+                    const remaining = feedback.filter(x => x.id !== feedbackDeleteConfirm);
+                    if (remaining.length === 0 && baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; setFeedbackChanges(null); }
+                    setFeedback(remaining);
+                  }
+                  setFeedbackDeleteConfirm(null);
+                }} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: V.rose, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Ja, Feedback loeschen</button>
+              </div>
+            </div>
+          </div>}
         </div>}
       </div>
       {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl?.startsWith("error") ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht in der Datenbank gespeichert werden.</p>{shareUrl.length > 6 && <p style={{ fontSize: 10, color: V.textDim, margin: "0 0 14px", wordBreak: "break-all" }}>Detail: {shareUrl.slice(6)}</p>}</> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
