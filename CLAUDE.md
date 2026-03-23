@@ -13,17 +13,18 @@ Briefings beschreiben KEINE "Bilder mit Text darüber", sondern INTEGRIERTE BILD
 Jedes Textelement hat eine konkrete Position, Größe und visuelle Beziehung zu Bildelementen.
 
 ### Textformat-Typen (bullets[].format)
-- `display`: Große Typografie als visuelles Zentrum
-- `headline`: Klassische Headline
-- `infocard`: Info-Karte mit Titel + Beschreibung
-- `zoom-label`: Text an Zoom-Inset/Detail
 - `annotation`: Label mit Pfeil/Linie an Produktteil
+- `badge-context`: Siegel mit Platzierungskontext (hat extra `context` Feld für Feature-Bezug)
+- `bullet`: Klassischer Aufzählungspunkt
+- `comparison`: Vergleichstext (eigenes Produkt vs. Alternative)
+- `display`: Große Typografie als visuelles Zentrum
 - `panel-text`: Text in Bild-Kachel (Grid)
 - `step-overlay`: Schrittnummer + Titel auf Lifestyle-Foto
-- `comparison`: Vergleichstext (eigenes Produkt vs. Alternative)
-- `badge-context`: Siegel mit Platzierungskontext
-- `benefit-pill`: Icon + Kurztext Pill-Shape
-- `bullet`: Klassischer Aufzählungspunkt
+- `zoom-label`: Text an Zoom-Inset/Detail
+
+Entfernte/gemappte Formate (abwärtskompatibel):
+- `headline` → bullet, `benefit-pill` → bullet, `infocard` → panel-text, `lifestyle` → bullet
+- Unbekannte Formate werden automatisch zu `bullet` gemappt
 
 ### Bullet-Datenformat (abwärtskompatibel)
 - Alt: `bullets: ["Text1", "Text2"]` (strings)

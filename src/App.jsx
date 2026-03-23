@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { jsPDF } from "jspdf";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ShadingType } from "docx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType, ShadingType, ImageRun, TabStopType, TabStopPosition, Tab, PageBreak } from "docx";
 
 const MAX_HL = 35, SOFT_HL = 30, FN = "'Outfit', system-ui, sans-serif";
 const V = { violet: "#7C3AED", blue: "#2563EB", cyan: "#0891B2", teal: "#0D9488", emerald: "#059669", orange: "#EA580C", rose: "#E11D48", amber: "#D97706", ink: "#0F172A", text: "#334155", textMed: "#64748B", textDim: "#94A3B8" };
@@ -17,26 +17,25 @@ const md2html = s => (s || "").replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 const html2md = s => (s || "").replace(/<b>(.*?)<\/b>/gi, '**$1**').replace(/<strong>(.*?)<\/strong>/gi, '**$1**').replace(/<[^>]+>/g, '');
 // Normalize bullet: handles both string "text" and {text, format} object format
 const bText = b => typeof b === "string" ? b : b?.text || "";
-const bFmt = b => { const f = typeof b === "string" ? "bullet" : (b?.format || "bullet"); return f === "headline" || f === "benefit-pill" ? "bullet" : f; };
-const formatLabels = { display: "Display-Typografie", infocard: "Info-Karte", "zoom-label": "Zoom-Label", annotation: "Annotation/Label", "panel-text": "Kachel-Text", "step-overlay": "Schritt-Overlay", comparison: "Vergleichstext", "badge-context": "Badge m. Kontext", bullet: "Bullet Point (+ Icon)" };
-const formatLabelsEn = { display: "Display Type", infocard: "Info Card", "zoom-label": "Zoom Label", annotation: "Annotation", "panel-text": "Panel Text", "step-overlay": "Step Overlay", comparison: "Comparison", "badge-context": "Badge", bullet: "Bullet Point (+ Icon)" };
-const formatColors = { display: "#7C3AED", infocard: "#2563EB", "zoom-label": "#0891B2", annotation: "#D97706", "panel-text": "#059669", "step-overlay": "#0D9488", comparison: "#E11D48", "badge-context": "#D97706", bullet: "#64748B" };
-const formatDescriptions = { display: "Große Typografie als visuelles Zentrum — Zahlen, Preise, Claims als Designelement", infocard: "Eigenständige Info-Karte mit Titel + Beschreibung", "zoom-label": "Text an einem Zoom-Inset oder Detail-Ausschnitt", annotation: "Label mit Pfeil/Linie an konkretem Produktteil", "panel-text": "Text innerhalb einer Bild-Kachel (Grid-Layout)", "step-overlay": "Schrittnummer + Titel auf Lifestyle-Foto", comparison: "Vergleichstext: eigenes Produkt vs. Alternative", "badge-context": "Siegel/Badge neben dem Feature das es belegt", bullet: "Aufzählungspunkt — Designer entscheidet ob mit/ohne Icon" };
-const formatDescriptionsEn = { display: "Large typography as visual center — numbers, prices, claims as design element", infocard: "Standalone info card with title + description", "zoom-label": "Text bound to a zoom inset or detail view", annotation: "Label with arrow/line at a specific product part", "panel-text": "Text inside an image tile in grid layouts", "step-overlay": "Step number + title on lifestyle photo", comparison: "Comparison text: own product vs. alternative", "badge-context": "Seal/badge next to the feature it certifies", bullet: "Bullet point — designer decides with/without icon" };
+const bFmt = b => { const f = typeof b === "string" ? "bullet" : (b?.format || "bullet"); const mapped = { headline: "bullet", "benefit-pill": "bullet", infocard: "panel-text", lifestyle: "bullet" }; return mapped[f] || (formatLabels[f] ? f : "bullet"); };
+const formatLabels = { annotation: "Annotation/Label", "badge-context": "Badge m. Kontext", bullet: "Bullet Point (+ Icon)", comparison: "Vergleichstext", display: "Display-Typografie", "panel-text": "Kachel-Text", "step-overlay": "Schritt-Overlay", "zoom-label": "Zoom-Label" };
+const formatLabelsEn = { annotation: "Annotation", "badge-context": "Badge", bullet: "Bullet Point (+ Icon)", comparison: "Comparison", display: "Display Type", "panel-text": "Panel Text", "step-overlay": "Step Overlay", "zoom-label": "Zoom Label" };
+const formatColors = { annotation: "#D97706", "badge-context": "#D97706", bullet: "#64748B", comparison: "#E11D48", display: "#7C3AED", "panel-text": "#059669", "step-overlay": "#0D9488", "zoom-label": "#0891B2" };
+const formatDescriptions = { annotation: "Label mit Pfeil/Linie an konkretem Produktteil", "badge-context": "Siegel/Badge neben dem Feature das es belegt", bullet: "Aufzählungspunkt — Designer entscheidet ob mit/ohne Icon", comparison: "Vergleichstext: eigenes Produkt vs. Alternative", display: "Große Typografie als visuelles Zentrum — Zahlen, Preise, Claims als Designelement", "panel-text": "Text innerhalb einer Bild-Kachel (Grid-Layout)", "step-overlay": "Schrittnummer + Titel auf Lifestyle-Foto", "zoom-label": "Text an einem Zoom-Inset oder Detail-Ausschnitt" };
+const formatDescriptionsEn = { annotation: "Label with arrow/line at a specific product part", "badge-context": "Seal/badge next to the feature it certifies", bullet: "Bullet point — designer decides with/without icon", comparison: "Comparison text: own product vs. alternative", display: "Large typography as visual center — numbers, prices, claims as design element", "panel-text": "Text inside an image tile in grid layouts", "step-overlay": "Step number + title on lifestyle photo", "zoom-label": "Text bound to a zoom inset or detail view" };
 // Eyecatcher helpers — backward compatible with old {idea, risk} format
 const ecType = ec => ec?.type || (ec?.idea?.length <= 40 && ec?.idea?.split(" ").length <= 5 && /^[A-ZÄÖÜ0-9]/.test(ec?.idea || "") ? "text" : "visual");
 const ecCopy = ec => ec?.copyText || (ecType(ec) !== "visual" ? ec?.idea : null);
 // Format legend component — explains text element types with wireframe sketches
 const formatWireframes = {
-  display: (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}08`} stroke={`${c}40`} strokeWidth="1"/><rect x="8" y="10" width="48" height="14" rx="2" fill={`${c}25`}/><text x="32" y="21" textAnchor="middle" fontSize="9" fontWeight="900" fill={c}>47%</text><rect x="18" y="28" width="28" height="3" rx="1" fill={`${c}15`}/></svg>,
-  infocard: (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><rect x="34" y="4" width="26" height="32" rx="3" fill="white" stroke={`${c}30`} strokeWidth="1"/><rect x="37" y="8" width="16" height="3" rx="1" fill={`${c}35`}/><rect x="37" y="14" width="20" height="2" rx="1" fill={`${c}15`}/><rect x="37" y="18" width="18" height="2" rx="1" fill={`${c}15`}/><rect x="37" y="22" width="20" height="2" rx="1" fill={`${c}15`}/><circle cx="16" cy="20" r="10" fill={`${c}10`} stroke={`${c}20`} strokeWidth="0.5" strokeDasharray="2 1"/></svg>,
-  "zoom-label": (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><circle cx="20" cy="20" r="12" fill={`${c}10`} stroke={`${c}20`} strokeWidth="0.5" strokeDasharray="2 1"/><circle cx="48" cy="14" r="8" fill="white" stroke={`${c}35`} strokeWidth="1.5"/><line x1="30" y1="16" x2="40" y2="14" stroke={`${c}30`} strokeWidth="0.5" strokeDasharray="1 1"/><rect x="38" y="25" width="22" height="4" rx="1" fill={`${c}25`}/><rect x="38" y="31" width="16" height="2" rx="1" fill={`${c}12`}/></svg>,
   annotation: (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><rect x="18" y="8" width="20" height="24" rx="2" fill={`${c}10`} stroke={`${c}20`} strokeWidth="0.5" strokeDasharray="2 1"/><line x1="38" y1="14" x2="50" y2="10" stroke={c} strokeWidth="0.8"/><circle cx="50" cy="10" r="1.2" fill={c}/><rect x="44" y="6" width="16" height="3" rx="1" fill={`${c}30`}/><line x1="38" y1="26" x2="50" y2="30" stroke={c} strokeWidth="0.8"/><circle cx="50" cy="30" r="1.2" fill={c}/><rect x="44" y="28" width="14" height="3" rx="1" fill={`${c}30`}/></svg>,
-  "panel-text": (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><rect x="4" y="4" width="27" height="15" rx="2" fill={`${c}12`} stroke={`${c}20`} strokeWidth="0.5"/><rect x="7" y="7" width="14" height="3" rx="1" fill={`${c}30`}/><rect x="7" y="12" width="20" height="2" rx="1" fill={`${c}15`}/><rect x="33" y="4" width="27" height="15" rx="2" fill={`${c}12`} stroke={`${c}20`} strokeWidth="0.5"/><rect x="36" y="7" width="12" height="3" rx="1" fill={`${c}30`}/><rect x="36" y="12" width="18" height="2" rx="1" fill={`${c}15`}/><rect x="4" y="21" width="27" height="15" rx="2" fill={`${c}12`} stroke={`${c}20`} strokeWidth="0.5"/><rect x="7" y="24" width="16" height="3" rx="1" fill={`${c}30`}/><rect x="7" y="29" width="20" height="2" rx="1" fill={`${c}15`}/><rect x="33" y="21" width="27" height="15" rx="2" fill={`${c}12`} stroke={`${c}20`} strokeWidth="0.5"/><rect x="36" y="24" width="14" height="3" rx="1" fill={`${c}30`}/><rect x="36" y="29" width="20" height="2" rx="1" fill={`${c}15`}/></svg>,
-  "step-overlay": (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><rect x="4" y="4" width="18" height="32" rx="2" fill={`${c}08`} stroke={`${c}15`} strokeWidth="0.5"/><circle cx="13" cy="10" r="4" fill={c}/><text x="13" y="12.5" textAnchor="middle" fontSize="6" fontWeight="900" fill="white">1</text><rect x="6" y="18" width="14" height="3" rx="1" fill={`${c}25`}/><rect x="23" y="4" width="18" height="32" rx="2" fill={`${c}08`} stroke={`${c}15`} strokeWidth="0.5"/><circle cx="32" cy="10" r="4" fill={c}/><text x="32" y="12.5" textAnchor="middle" fontSize="6" fontWeight="900" fill="white">2</text><rect x="25" y="18" width="14" height="3" rx="1" fill={`${c}25`}/><rect x="42" y="4" width="18" height="32" rx="2" fill={`${c}08`} stroke={`${c}15`} strokeWidth="0.5"/><circle cx="51" cy="10" r="4" fill={c}/><text x="51" y="12.5" textAnchor="middle" fontSize="6" fontWeight="900" fill="white">3</text><rect x="44" y="18" width="14" height="3" rx="1" fill={`${c}25`}/></svg>,
-  comparison: (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><line x1="32" y1="4" x2="32" y2="36" stroke={`${c}20`} strokeWidth="0.8" strokeDasharray="2 1"/><rect x="8" y="6" width="18" height="4" rx="1" fill="#05966930"/><text x="17" y="10" textAnchor="middle" fontSize="5" fill="#059669">Ours</text><rect x="38" y="6" width="18" height="4" rx="1" fill={`${c}25`}/><text x="47" y="10" textAnchor="middle" fontSize="5" fill={c}>Other</text><rect x="6" y="14" width="22" height="2" rx="1" fill="#05966918"/><rect x="6" y="19" width="20" height="2" rx="1" fill="#05966918"/><rect x="36" y="14" width="22" height="2" rx="1" fill={`${c}12`}/><rect x="36" y="19" width="18" height="2" rx="1" fill={`${c}12`}/></svg>,
   "badge-context": (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><rect x="20" y="10" width="20" height="20" rx="2" fill={`${c}10`} stroke={`${c}20`} strokeWidth="0.5" strokeDasharray="2 1"/><circle cx="50" cy="12" r="7" fill="white" stroke={c} strokeWidth="1.2"/><text x="50" y="14" textAnchor="middle" fontSize="5" fontWeight="700" fill={c}>TUV</text><rect x="42" y="22" width="18" height="3" rx="1" fill={`${c}20`}/><rect x="44" y="27" width="14" height="2" rx="1" fill={`${c}12`}/></svg>,
   bullet: (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><circle cx="10" cy="11" r="2" fill={c}/><rect x="16" y="9.5" width="40" height="3" rx="1" fill={`${c}20`}/><circle cx="10" cy="21" r="2" fill={c}/><rect x="16" y="19.5" width="36" height="3" rx="1" fill={`${c}20`}/><circle cx="10" cy="31" r="2" fill={c}/><rect x="16" y="29.5" width="32" height="3" rx="1" fill={`${c}20`}/></svg>,
+  comparison: (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><line x1="32" y1="4" x2="32" y2="36" stroke={`${c}20`} strokeWidth="0.8" strokeDasharray="2 1"/><rect x="8" y="6" width="18" height="4" rx="1" fill="#05966930"/><text x="17" y="10" textAnchor="middle" fontSize="5" fill="#059669">Ours</text><rect x="38" y="6" width="18" height="4" rx="1" fill={`${c}25`}/><text x="47" y="10" textAnchor="middle" fontSize="5" fill={c}>Other</text><rect x="6" y="14" width="22" height="2" rx="1" fill="#05966918"/><rect x="6" y="19" width="20" height="2" rx="1" fill="#05966918"/><rect x="36" y="14" width="22" height="2" rx="1" fill={`${c}12`}/><rect x="36" y="19" width="18" height="2" rx="1" fill={`${c}12`}/></svg>,
+  display: (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}08`} stroke={`${c}40`} strokeWidth="1"/><rect x="8" y="10" width="48" height="14" rx="2" fill={`${c}25`}/><text x="32" y="21" textAnchor="middle" fontSize="9" fontWeight="900" fill={c}>47%</text><rect x="18" y="28" width="28" height="3" rx="1" fill={`${c}15`}/></svg>,
+  "panel-text": (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><rect x="4" y="4" width="27" height="15" rx="2" fill={`${c}12`} stroke={`${c}20`} strokeWidth="0.5"/><rect x="7" y="7" width="14" height="3" rx="1" fill={`${c}30`}/><rect x="7" y="12" width="20" height="2" rx="1" fill={`${c}15`}/><rect x="33" y="4" width="27" height="15" rx="2" fill={`${c}12`} stroke={`${c}20`} strokeWidth="0.5"/><rect x="36" y="7" width="12" height="3" rx="1" fill={`${c}30`}/><rect x="36" y="12" width="18" height="2" rx="1" fill={`${c}15`}/><rect x="4" y="21" width="27" height="15" rx="2" fill={`${c}12`} stroke={`${c}20`} strokeWidth="0.5"/><rect x="7" y="24" width="16" height="3" rx="1" fill={`${c}30`}/><rect x="7" y="29" width="20" height="2" rx="1" fill={`${c}15`}/><rect x="33" y="21" width="27" height="15" rx="2" fill={`${c}12`} stroke={`${c}20`} strokeWidth="0.5"/><rect x="36" y="24" width="14" height="3" rx="1" fill={`${c}30`}/><rect x="36" y="29" width="20" height="2" rx="1" fill={`${c}15`}/></svg>,
+  "step-overlay": (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><rect x="4" y="4" width="18" height="32" rx="2" fill={`${c}08`} stroke={`${c}15`} strokeWidth="0.5"/><circle cx="13" cy="10" r="4" fill={c}/><text x="13" y="12.5" textAnchor="middle" fontSize="6" fontWeight="900" fill="white">1</text><rect x="6" y="18" width="14" height="3" rx="1" fill={`${c}25`}/><rect x="23" y="4" width="18" height="32" rx="2" fill={`${c}08`} stroke={`${c}15`} strokeWidth="0.5"/><circle cx="32" cy="10" r="4" fill={c}/><text x="32" y="12.5" textAnchor="middle" fontSize="6" fontWeight="900" fill="white">2</text><rect x="25" y="18" width="14" height="3" rx="1" fill={`${c}25`}/><rect x="42" y="4" width="18" height="32" rx="2" fill={`${c}08`} stroke={`${c}15`} strokeWidth="0.5"/><circle cx="51" cy="10" r="4" fill={c}/><text x="51" y="12.5" textAnchor="middle" fontSize="6" fontWeight="900" fill="white">3</text><rect x="44" y="18" width="14" height="3" rx="1" fill={`${c}25`}/></svg>,
+  "zoom-label": (c) => <svg width="64" height="40" viewBox="0 0 64 40"><rect x="1" y="1" width="62" height="38" rx="3" fill={`${c}06`} stroke={`${c}40`} strokeWidth="1"/><circle cx="20" cy="20" r="12" fill={`${c}10`} stroke={`${c}20`} strokeWidth="0.5" strokeDasharray="2 1"/><circle cx="48" cy="14" r="8" fill="white" stroke={`${c}35`} strokeWidth="1.5"/><line x1="30" y1="16" x2="40" y2="14" stroke={`${c}30`} strokeWidth="0.5" strokeDasharray="1 1"/><rect x="38" y="25" width="22" height="4" rx="1" fill={`${c}25`}/><rect x="38" y="31" width="16" height="2" rx="1" fill={`${c}12`}/></svg>,
 };
 function FormatLegend({ lang = "de", defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -315,14 +314,14 @@ ${pi ? "Produkt: " + pi : ""}${ft ? "\nHinweise: " + ft : ""}${scraped}${kwData}
 REGELN:
 - BILDKONZEPT-DENKEN: Beschreibe KEINE "Bilder mit Text darüber", sondern INTEGRIERTE BILDKONZEPTE. Jedes Textelement hat eine konkrete Position, Größe und visuelle Beziehung zu Bildelementen. Der Designer muss beim Lesen sofort das fertige Bild vor seinem inneren Auge sehen.
 - TEXTFORMAT-VIELFALT: Verwende verschiedene Textformate passend zum Bildinhalt. NICHT einfach nur "Bullet Points" — wähle das Format das den Inhalt am besten transportiert:
-  * "display": Große Typografie als visuelles Zentrum (Zahlen, Preise, Claims als Designelement)
-  * "infocard": Eigenständige Info-Karte mit Titel + Beschreibung neben dem Produkt
-  * "zoom-label": Text gebunden an ein Zoom-Inset oder Detail-Ansicht
   * "annotation": Label mit Pfeil/Linie an einem konkreten Produktteil
+  * "badge-context": Siegel/Badge mit spezifischer Platzierung neben dem Feature das es belegt. MUSS ein context-Feld haben das beschreibt neben welchem Feature/Element das Badge platziert werden soll
+  * "bullet": Aufzählungspunkt (Designer entscheidet ob mit/ohne Icon)
+  * "comparison": Vergleichstext (Zeile 1 = eigenes Produkt, Zeile 2 = Alternative, getrennt durch \n)
+  * "display": Große Typografie als visuelles Zentrum (Zahlen, Preise, Claims als Designelement)
   * "panel-text": Text innerhalb einer Bild-Kachel (bei Grid-Layouts)
   * "step-overlay": Schrittnummer + Titel + Erklärung auf Lifestyle-Foto
-  * "comparison": Vergleichstext (Zeile 1 = eigenes Produkt, Zeile 2 = Alternative, getrennt durch \n)
-  * "badge-context": Siegel/Badge mit spezifischer Platzierung neben dem Feature das es belegt
+  * "zoom-label": Text gebunden an ein Zoom-Inset oder Detail-Ansicht
   * "bullet": Aufzählungspunkt (Designer entscheidet ob mit/ohne Icon)
   KEIN "headline" Format verwenden — Headlines werden separat in texts.headlines definiert.
   WICHTIG: Wähle pro Bild die Formate die inhaltlich SINN ergeben. Ein Detailbild → zoom-labels + annotations. Eine Anleitung → step-overlays. Ein Vergleich → comparison. Features → info-cards oder bullets. NICHT alles als bullets.
@@ -1053,6 +1052,8 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
   const [dragIdx, setDragIdx] = useState(null); // bullet drag-and-drop
   const [dragOver, setDragOver] = useState(null);
   const [addFmtOpen, setAddFmtOpen] = useState(false); // format picker for new text elements
+  const [layoutHint, setLayoutHint] = useState(null); // {format, imgIdx} — show hint to update concept/visual
+  const [dismissedDupes, setDismissedDupes] = useState(new Set()); // dismissed duplicate overlap keys
   const dragIdxRef = useRef(null); // refs to avoid stale closures in drag events
   const dragOverRef = useRef(null);
   useEffect(() => { setEditField(null); setEditVal(""); }, [sel]);
@@ -1156,12 +1157,28 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
               <div onClick={e => { e.stopPropagation(); const next = [...(bulSel[bKey] || bullets.map(() => true))]; next[i] = !on; setBulSel(p => ({ ...p, [bKey]: next })); }} style={{ width: 18, height: 18, borderRadius: 4, border: on ? `2px solid ${fCol}` : "2px solid rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1, cursor: "pointer" }}>{on && <span style={{ color: fCol, fontSize: 12, fontWeight: 800 }}>✓</span>}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 {bf !== "bullet" && <span style={{ fontSize: 8, fontWeight: 800, color: fCol, textTransform: "uppercase", letterSpacing: ".06em", padding: "1px 5px", borderRadius: 3, background: `${fCol}12`, marginBottom: 3, display: "inline-block" }}>{formatLabels[bf] || bf}</span>}
+                {bf === "badge-context" && <div style={{ marginBottom: 4 }}><div style={{ fontSize: 9, fontWeight: 700, color: V.textDim, marginBottom: 2 }}>Platzierung neben:</div><input value={typeof b === "object" ? (b.context || "") : ""} onChange={e => { pushUndo(); onEditText(sel, "bul_context", i, e.target.value); }} placeholder="z.B. Verschlussmechanismus, Filtersystem…" style={{ ...inpS, fontSize: 11, padding: "3px 8px", width: "100%", color: V.amber, fontWeight: 600 }} /></div>}
                 {bf === "comparison" ? (
                   isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }} onClick={e => e.stopPropagation()}><div style={{ fontSize: 9, color: V.textDim, marginBottom: 2 }}>Zeile 1 = eigenes Produkt · Zeile 2 = Alternative/Vergleich</div><textarea autoFocus value={editVal} onChange={e => setEditVal(e.target.value)} onBlur={e => { onEditText(sel, "bul", i, editVal); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} style={{ ...inpS, fontSize: 12.5, padding: "8px 10px", minHeight: 56, resize: "vertical", lineHeight: 1.6 }} placeholder={"Eigenes Produkt: Vorteil\nAlternative: Nachteil"} /></div> : <div onClick={e => { e.stopPropagation(); startEdit("bul", i, bt); }} style={{ cursor: "text", display: "block", minHeight: 20 }} title="Klick zum Bearbeiten">{bt ? bt.split("\n").map((line, li) => <div key={li} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}><span style={{ fontSize: 9, fontWeight: 800, color: li === 0 ? V.emerald : V.rose, flexShrink: 0, width: 12, textAlign: "center" }}>{li === 0 ? "+" : "−"}</span><span style={{ fontSize: 12.5, color: li === 0 ? V.text : V.textDim, lineHeight: 1.5 }} dangerouslySetInnerHTML={{ __html: line.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A;font-weight:700">$1</b>') }} /></div>) : <span style={{ fontSize: 12.5, color: V.textDim, fontStyle: "italic" }}>Vergleich eingeben…</span>}</div>
                 ) : isEditing("bul", i) ? <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><div style={{ display: "flex", gap: 4, marginBottom: 2 }}><button onMouseDown={e => { e.preventDefault(); document.execCommand("bold"); }} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(0,0,0,0.12)", background: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 900, cursor: "pointer", fontFamily: FN, color: V.ink }}>B</button><span style={{ fontSize: 9, color: V.textDim, alignSelf: "center" }}>oder Strg+B</span></div><div contentEditable suppressContentEditableWarning ref={el => { if (el && !el.dataset.init) { el.innerHTML = editVal; el.dataset.init = "1"; } }} onBlur={e => { onEditText(sel, "bul", i, html2md(e.currentTarget.innerHTML)); setEditField(null); }} onKeyDown={e => { if (e.key === "Escape") cancelEdit(); if (e.key === "b" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); document.execCommand("bold"); } }} onClick={e => e.stopPropagation()} style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", minHeight: 28, outline: "none", lineHeight: 1.6 }} /></div> : <span onClick={e => { e.stopPropagation(); startEdit("bul", i, md2html(bt)); }} style={{ fontSize: 12.5, color: bt ? V.textMed : V.textDim, lineHeight: 1.6, cursor: "text", display: "block", minHeight: 20, fontStyle: bt ? "normal" : "italic" }} title="Klick zum Bearbeiten">{bt ? <span dangerouslySetInnerHTML={{ __html: bt.replace(/\*\*(.+?)\*\*/g, '<b style="color:#0F172A;font-weight:700">$1</b>') }} /> : "Text eingeben…"}</span>}
               </div>
               <button onClick={e => { e.stopPropagation(); onEditText(sel, "delete_bullet", i, null); }} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0, opacity: 0.5 }} title="Textbaustein löschen">×</button>
-            </div>; })}</>}<div style={{ position: "relative", marginTop: 8 }}><button onClick={() => setAddFmtOpen(!addFmtOpen)} style={{ padding: "6px 12px", borderRadius: 8, border: `1px dashed ${V.teal}40`, background: addFmtOpen ? `${V.teal}08` : "transparent", color: V.teal, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, width: "100%" }}>+ Textbaustein hinzufügen</button>{addFmtOpen && <><div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setAddFmtOpen(false)} /><div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, zIndex: 100, marginBottom: 4, background: "rgba(255,255,255,0.97)", backdropFilter: "blur(16px)", borderRadius: 12, border: "1px solid rgba(0,0,0,0.1)", boxShadow: "0 -8px 40px rgba(0,0,0,0.15)", padding: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, maxHeight: 360, overflowY: "auto" }}>{Object.keys(formatLabels).map(f => { const c = formatColors[f]; return <button key={f} onClick={() => { onEditText(sel, "add_bullet", bullets.length, f); setAddFmtOpen(false); setTimeout(() => startEdit("bul", bullets.length, f === "comparison" ? "" : ""), 50); }} onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.03)"; e.currentTarget.style.boxShadow = `0 2px 12px ${c}25`; e.currentTarget.style.borderColor = `${c}50`; }} onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; e.currentTarget.style.borderColor = `${c}20`; }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${c}20`, background: `${c}04`, cursor: "pointer", fontFamily: FN, textAlign: "left", transition: "all 0.15s" }}><div style={{ flexShrink: 0, width: 48, height: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>{formatWireframes[f]?.(c) || null}</div><div><div style={{ fontSize: 9, fontWeight: 800, color: c, textTransform: "uppercase", letterSpacing: ".04em" }}>{formatLabels[f]}</div><div style={{ fontSize: 8.5, color: V.textDim, lineHeight: 1.3, marginTop: 1 }}>{formatDescriptions[f]?.split("—")[0]?.trim() || ""}</div></div></button>; })}</div></>}</div></div>
+            </div>; })}</>}<div style={{ position: "relative", marginTop: 8 }}><button onClick={() => setAddFmtOpen(!addFmtOpen)} style={{ padding: "6px 12px", borderRadius: 8, border: `1px dashed ${V.teal}40`, background: addFmtOpen ? `${V.teal}08` : "transparent", color: V.teal, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN, width: "100%" }}>+ Textbaustein hinzufügen</button>{addFmtOpen && <><div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setAddFmtOpen(false)} /><div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, zIndex: 100, marginBottom: 4, background: "rgba(255,255,255,0.97)", backdropFilter: "blur(16px)", borderRadius: 12, border: "1px solid rgba(0,0,0,0.1)", boxShadow: "0 -8px 40px rgba(0,0,0,0.15)", padding: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, maxHeight: 360, overflowY: "auto" }}>{Object.keys(formatLabels).map(f => { const c = formatColors[f]; const layoutFormats = ["zoom-label", "panel-text", "step-overlay"]; return <button key={f} onClick={() => { onEditText(sel, "add_bullet", bullets.length, f); setAddFmtOpen(false); if (layoutFormats.includes(f)) setLayoutHint({ format: f, imgIdx: sel }); setTimeout(() => startEdit("bul", bullets.length, f === "comparison" ? "" : ""), 50); }} onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.03)"; e.currentTarget.style.boxShadow = `0 2px 12px ${c}25`; e.currentTarget.style.borderColor = `${c}50`; }} onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; e.currentTarget.style.borderColor = `${c}20`; }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${c}20`, background: `${c}04`, cursor: "pointer", fontFamily: FN, textAlign: "left", transition: "all 0.15s" }}><div style={{ flexShrink: 0, width: 48, height: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>{formatWireframes[f]?.(c) || null}</div><div><div style={{ fontSize: 9, fontWeight: 800, color: c, textTransform: "uppercase", letterSpacing: ".04em" }}>{formatLabels[f]}</div><div style={{ fontSize: 8.5, color: V.textDim, lineHeight: 1.3, marginTop: 1 }}>{formatDescriptions[f]?.split("—")[0]?.trim() || ""}</div></div></button>; })}</div></>}</div></div>
+            {/* Layout hint — prompt to update concept/visual when layout-relevant format is added */}
+            {layoutHint && layoutHint.imgIdx === sel && (() => { const fLabel = formatLabels[layoutHint.format] || layoutHint.format; return <div style={{ ...gS, padding: "12px 16px", marginBottom: 10, background: `${V.blue}06`, border: `2px solid ${V.blue}30`, borderRadius: 12 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 14, flexShrink: 0 }}>💡</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: V.blue, marginBottom: 4 }}>Bildaufbau-Hinweis</div>
+                  <div style={{ fontSize: 11, color: V.text, lineHeight: 1.6, marginBottom: 8 }}>Du hast einen <b>{fLabel}</b> hinzugefügt. Dieses Format erfordert einen bestimmten Bildaufbau. Möchtest du das Bildkonzept und die visuellen Hinweise für den Designer anpassen?</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => { setLayoutHint(null); startEdit("concept", 0, img.concept || ""); }} style={{ padding: "5px 12px", borderRadius: 8, border: `1px solid ${V.blue}40`, background: `${V.blue}10`, color: V.blue, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>Bildkonzept bearbeiten</button>
+                    <button onClick={() => { setLayoutHint(null); startEdit("visual", 0, img.visual || ""); }} style={{ padding: "5px 12px", borderRadius: 8, border: `1px solid ${V.textDim}30`, background: "rgba(0,0,0,0.03)", color: V.textMed, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>Visuelle Hinweise bearbeiten</button>
+                    <button onClick={() => setLayoutHint(null)} style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "transparent", color: V.textDim, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: FN }}>Überspringen</button>
+                  </div>
+                </div>
+              </div>
+            </div>; })()}
             {/* BADGE — select one from multiple options + inline editing + add new */}
             <div style={{ ...gS, padding: 14, marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}><Pill c={V.amber}>BADGE-VARIANTEN</Pill></div>
@@ -1352,7 +1369,10 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             }
           }
         }
-        if (!dupes.length) return null;
+        // Generate stable keys and filter dismissed
+        const keyedDupes = dupes.map(d => ({ ...d, key: `${d.a.imgIdx}:${d.a.fieldType}:${d.a.fieldIdx}|${d.b.imgIdx}:${d.b.fieldType}:${d.b.fieldIdx}` }));
+        const activeDupes = keyedDupes.filter(d => !dismissedDupes.has(d.key));
+        if (!activeDupes.length) return null;
         // Collect alternative suggestions from unselected options
         const getAlternatives = (item) => {
           const im = D.images[item.imgIdx]; if (!im?.texts) return [];
@@ -1373,19 +1393,23 @@ function BildBriefing({ D, hlC, setHlC, shC, setShC, bulSel, setBulSel, bdgSel, 
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: V.orange, marginBottom: 6 }}>Inhaltliche Überschneidungen erkannt</div>
               <div style={{ fontSize: 11, color: V.text, lineHeight: 1.6, marginBottom: 10 }}>Folgende ausgewählte Texte vermitteln eine ähnliche Aussage — das schwächt die Überzeugungskraft, weil der verfügbare Platz nicht für verschiedene Argumente genutzt wird:</div>
-              {dupes.map((d, di) => <div key={di} style={{ marginBottom: 14, padding: "12px 14px", borderRadius: 10, background: "rgba(255,255,255,0.7)", border: `1px solid ${V.orange}20` }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
-                  <div style={{ fontSize: 11, lineHeight: 1.5 }}>
-                    <span style={{ fontWeight: 700, color: V.orange }}>{d.a.label}</span>
-                    <span style={{ color: V.textDim }}> · {d.a.type}:</span>
-                    <span style={{ color: V.text, fontWeight: 600 }}> „{d.a.text}"</span>
+              {dismissedDupes.size > 0 && keyedDupes.length > activeDupes.length && <div style={{ fontSize: 10, color: V.textDim, marginBottom: 6, textAlign: "right" }}><button onClick={() => setDismissedDupes(new Set())} style={{ background: "none", border: "none", color: V.orange, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: FN, textDecoration: "underline" }}>Alle {keyedDupes.length - activeDupes.length} abgehakten wieder anzeigen</button></div>}
+              {activeDupes.map((d, di) => <div key={d.key} style={{ marginBottom: 14, padding: "12px 14px", borderRadius: 10, background: "rgba(255,255,255,0.7)", border: `1px solid ${V.orange}20` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+                    <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+                      <span style={{ fontWeight: 700, color: V.orange }}>{d.a.label}</span>
+                      <span style={{ color: V.textDim }}> · {d.a.type}:</span>
+                      <span style={{ color: V.text, fontWeight: 600 }}> „{d.a.text}"</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: V.textDim, paddingLeft: 8 }}>↕ überschneidet sich mit</div>
+                    <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+                      <span style={{ fontWeight: 700, color: V.orange }}>{d.b.label}</span>
+                      <span style={{ color: V.textDim }}> · {d.b.type}:</span>
+                      <span style={{ color: V.text, fontWeight: 600 }}> „{d.b.text}"</span>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 10, color: V.textDim, paddingLeft: 8 }}>↕ überschneidet sich mit</div>
-                  <div style={{ fontSize: 11, lineHeight: 1.5 }}>
-                    <span style={{ fontWeight: 700, color: V.orange }}>{d.b.label}</span>
-                    <span style={{ color: V.textDim }}> · {d.b.type}:</span>
-                    <span style={{ color: V.text, fontWeight: 600 }}> „{d.b.text}"</span>
-                  </div>
+                  <button onClick={() => setDismissedDupes(p => new Set([...p, d.key]))} style={{ flexShrink: 0, marginLeft: 8, padding: "4px 10px", borderRadius: 6, border: `1px solid ${V.emerald}30`, background: `${V.emerald}08`, color: V.emerald, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: FN }} title="Überschneidung akzeptieren und ausblenden">✓ OK</button>
                 </div>
                 <div style={{ fontSize: 10, color: V.textDim, marginBottom: 6 }}>Gemeinsame Kernbegriffe: {d.shared.slice(0, 5).map((s, i) => <span key={i} style={{ display: "inline-block", padding: "2px 6px", borderRadius: 4, background: `${V.orange}15`, fontWeight: 600, color: V.orange, marginRight: 4, marginBottom: 2 }}>{s}</span>)}</div>
                 {/* Alternatives for item A */}
@@ -1571,7 +1595,7 @@ function genBrief(D, hlC, shC, bulSel, bdgSel, imgDisabled, ecSel) {
       t += "\nTEXTS (DE):\n";
       if (h.length) t += `  Headline: "${h[ci] || h[0]}"\n`;
       if (si !== -1 && subs.length > 0) { t += `  Subheadline: "${subs[si] || subs[0]}"\n`; }
-      if (selBullets.length) t += `  Text Elements:\n${selBullets.map(b => { const f = bFmt(b); return `    - [${f}] "${strip(bText(b))}"` }).join("\n")}\n`;
+      if (selBullets.length) t += `  Text Elements:\n${selBullets.map(b => { const f = bFmt(b); const ctx = (typeof b === "object" && b?.context) ? ` (Placement: near ${b.context})` : ""; return `    - [${f}] "${strip(bText(b))}"${ctx}` }).join("\n")}\n`;
       if (selBadge) t += `  Badge: "${selBadge}"\n`;
       if (im.texts.footnotes?.length) t += `  Footnotes: ${im.texts.footnotes.map(f => `"${f}"`).join(" | ")}\n`;
     } else { t += "\nTEXTS: None — visual-only image\n"; }
@@ -1854,6 +1878,7 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
                       {bf === "bullet" && <span style={{ color: V.teal, fontWeight: 800, flexShrink: 0, marginTop: 2 }}>-</span>}
                       {bf === "comparison" ? <div>{bt.split("\n").map((line, li) => <div key={li} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0" }}><span style={{ fontSize: 9, fontWeight: 800, color: li === 0 ? V.emerald : V.rose, flexShrink: 0 }}>{li === 0 ? "+" : "−"}</span><span style={{ fontSize: 14, color: li === 0 ? V.text : V.textDim, lineHeight: 1.5 }} dangerouslySetInnerHTML={{ __html: line.replace(/\*\*(.+?)\*\*/g, '<b style="font-weight:700;color:#0F172A">$1</b>') }} /></div>)}</div> : <span style={{ fontSize: 14, color: V.text, lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: bt.replace(/\*\*(.+?)\*\*/g, '<b style="font-weight:700;color:#0F172A">$1</b>') }} />}
                     </div>
+                    {bf === "badge-context" && typeof b === "object" && b.context && <div style={{ fontSize: 10, color: V.amber, fontWeight: 600, marginTop: 2, paddingLeft: bf !== "bullet" ? 0 : 14 }}>Placement: near {b.context}</div>}
                   </ICopy>; })}
                 </div>}
                 {/* BADGES */}
@@ -1888,42 +1913,74 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
 }
 
 // ═══════ CLIENT DOCX EXPORT ═══════
-async function generateClientDocx(D, selections, lang) {
+// temoa agency logo as SVG — converted to PNG at export time via canvas
+const TEMOA_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="560" height="140" viewBox="0 0 280 70"><rect x="0" y="0" width="22" height="22" rx="3" fill="%23F59E0B"/><rect x="24" y="0" width="22" height="22" rx="3" fill="%23F59E0B"/><circle cx="35" cy="35" r="8" fill="%23EF4444"/><path d="M0 26L0 55Q0 65 11 65L22 65Q22 55 22 45L22 26Z" fill="%230F172A"/><path d="M24 45L24 58Q24 65 35 65L46 65L46 45Q35 50 24 45Z" fill="%2394A3B8" opacity="0.4"/><text x="58" y="52" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="48" fill="%230F172A" letter-spacing="-1">temoa</text></svg>`;
+function svgToPngBytes(svgStr, w, h) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => { const c = document.createElement("canvas"); c.width = w; c.height = h; const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, w, h); c.toBlob(async (blob) => { if (blob) { resolve(new Uint8Array(await blob.arrayBuffer())); } else { resolve(null); } }, "image/png"); };
+    img.onerror = () => resolve(null);
+    img.src = `data:image/svg+xml;charset=utf-8,${svgStr}`;
+  });
+}
+async function generateClientDocx(D, selections, lang, clientLogoData) {
   const isDE = lang === "de";
   const hlC = selections?.hlC || {}, shC = selections?.shC || {}, bulSel = selections?.bulSel || {}, bdgSel = selections?.bdgSel || {}, imgDisabled = selections?.imgDisabled || {}, ecSel = selections?.ecSel || {};
   const productName = D.product?.name || "";
   const brand = D.product?.brand || "";
   const sku = D.product?.sku || "";
   const marketplace = D.product?.marketplace || "";
+  // Clean text: remove em-dashes, en-dashes, fix ampersands, remove direct address
+  const clean = (s) => (s || "").replace(/\u2014/g, " ").replace(/\u2013/g, " ").replace(/—/g, " ").replace(/–/g, " ").replace(/&amp;/g, "&").replace(/&/g, " und ");
 
   // helpers
-  const txt = (s, opts = {}) => new TextRun({ text: s || "", font: "Calibri", ...opts });
-  const bold = (s, opts = {}) => txt(s, { bold: true, ...opts });
+  const txt = (s, opts = {}) => new TextRun({ text: clean(s) || "", font: "Calibri", ...opts });
+  const bld = (s, opts = {}) => txt(s, { bold: true, ...opts });
   const para = (children, opts = {}) => new Paragraph({ children: Array.isArray(children) ? children : [children], spacing: { after: 120 }, ...opts });
-  const h1 = (s) => new Paragraph({ children: [new TextRun({ text: s, bold: true, size: 36, color: "7C3AED", font: "Calibri" })], heading: HeadingLevel.HEADING_1, spacing: { before: 480, after: 160 } });
-  const h2 = (s) => new Paragraph({ children: [new TextRun({ text: s, bold: true, size: 28, color: "2563EB", font: "Calibri" })], heading: HeadingLevel.HEADING_2, spacing: { before: 320, after: 120 } });
-  const h3 = (s) => new Paragraph({ children: [new TextRun({ text: s, bold: true, size: 24, color: "334155", font: "Calibri" })], heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 80 } });
-  const divider = () => new Paragraph({ children: [], border: { bottom: { color: "E2E8F0", style: BorderStyle.SINGLE, size: 6 } }, spacing: { after: 200 } });
-  const getImgLabelStr = (images, i) => { const m = images.filter(x => (x.id || "").toLowerCase().startsWith("main")); const p = images.filter(x => !(x.id || "").toLowerCase().startsWith("main")); const isM = (images[i]?.id || "").toLowerCase().startsWith("main"); if (isM) { const mi = m.indexOf(images[i]); return m.length === 1 ? (isDE ? "Hauptbild" : "Main Image") : `${isDE ? "Hauptbild" : "Main Image"} ${mi + 1}`; } return `${isDE ? "Produktbild" : "Product Image"} ${p.indexOf(images[i]) + 1}`; };
+  const h2 = (s) => new Paragraph({ children: [new TextRun({ text: clean(s), bold: true, size: 28, color: "2563EB", font: "Calibri" })], heading: HeadingLevel.HEADING_2, spacing: { before: 360, after: 140 }, border: { bottom: { color: "E2E8F0", style: BorderStyle.SINGLE, size: 4 } } });
+  const h3 = (s) => new Paragraph({ children: [new TextRun({ text: clean(s), bold: true, size: 22, color: "475569", font: "Calibri" })], heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 80 } });
+  const spacer = () => para([txt("", { size: 8 })]);
+  const divider = () => new Paragraph({ children: [], border: { bottom: { color: "E2E8F0", style: BorderStyle.SINGLE, size: 4 } }, spacing: { before: 120, after: 200 } });
+  const getImgLabelStr = (images, i) => { const m = images.filter(x => (x.id || "").toLowerCase().startsWith("main")); const p = images.filter(x => !(x.id || "").toLowerCase().startsWith("main")); const isM = (images[i]?.id || "").toLowerCase().startsWith("main"); if (isM) { const mi = m.indexOf(images[i]); return m.length === 1 ? "Main Image" : `Main Image ${mi + 1}`; } return `PT${String(p.indexOf(images[i]) + 1).padStart(2, "0")}`; };
+  // Convert dataUrl to Uint8Array for ImageRun
+  const dataUrlToUint8 = (dataUrl) => { const b64 = dataUrl.split(",")[1]; const bin = atob(b64); const arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); return arr; };
 
-  const sections = [];
-
-  // ── TITLE PAGE ──
-  sections.push(para([bold(productName, { size: 52, color: "7C3AED" })]));
-  if (brand) sections.push(para([txt(brand, { size: 28, color: "64748B" })]));
-  sections.push(para([]));
-  if (sku) sections.push(para([bold(isDE ? "ASIN / SKU: " : "ASIN / SKU: "), txt(sku)]));
-  if (marketplace) sections.push(para([bold(isDE ? "Marktplatz: " : "Marketplace: "), txt(marketplace)]));
-  sections.push(para([bold(isDE ? "Erstellt am: " : "Created: "), txt(new Date().toLocaleDateString(isDE ? "de-DE" : "en-US"))]));
-  sections.push(divider());
-
-  // ── INTRO ──
-  sections.push(h1(isDE ? "Ihr Listing-Konzept" : "Your Listing Concept"));
-  sections.push(para([txt(isDE
-    ? `Dieses Dokument stellt das entwickelte Konzept für Ihr Amazon-Listing dar. Es umfasst das visuelle Konzept, die strategische Ausrichtung sowie die empfohlenen Textelemente für jedes Ihrer Produktbilder.`
-    : `This document presents the developed concept for your Amazon listing. It covers the visual concept, strategic direction, and recommended text elements for each of your product images.`,
-    { size: 24 })]));
-  sections.push(divider());
+  const titleChildren = [];
+  // ── LOGO HEADER — client logo left, temoa logo right ──
+  const temoaPng = await svgToPngBytes(TEMOA_LOGO_SVG, 560, 140);
+  let clientLogoPng = null;
+  if (clientLogoData?.dataUrl) { try { clientLogoPng = dataUrlToUint8(clientLogoData.dataUrl); } catch (e) { /* skip */ } }
+  const noBorder = { top: { style: BorderStyle.NONE, size: 0 }, bottom: { style: BorderStyle.NONE, size: 0 }, left: { style: BorderStyle.NONE, size: 0 }, right: { style: BorderStyle.NONE, size: 0 } };
+  const leftLogoChildren = clientLogoPng ? [new Paragraph({ children: [new ImageRun({ data: clientLogoPng, transformation: { width: 130, height: 52 } })], alignment: AlignmentType.LEFT })] : [para([txt("", { size: 10 })])];
+  const rightLogoChildren = temoaPng ? [new Paragraph({ children: [new ImageRun({ data: temoaPng, transformation: { width: 130, height: 32 } })], alignment: AlignmentType.RIGHT })] : [para([txt("temoa", { size: 20, bold: true, color: "0F172A" })], { alignment: AlignmentType.RIGHT })];
+  titleChildren.push(new Table({
+    rows: [new TableRow({ children: [
+      new TableCell({ children: leftLogoChildren, width: { size: 50, type: WidthType.PERCENTAGE }, borders: noBorder, verticalAlign: "center", margins: { top: 80, bottom: 80 } }),
+      new TableCell({ children: rightLogoChildren, width: { size: 50, type: WidthType.PERCENTAGE }, borders: noBorder, verticalAlign: "center", margins: { top: 80, bottom: 80 } })
+    ] })],
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: { top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE }, insideHorizontal: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE } }
+  }));
+  titleChildren.push(spacer()); titleChildren.push(spacer()); titleChildren.push(spacer());
+  titleChildren.push(para([txt(isDE ? "Listing Konzept" : "Listing Concept", { size: 20, color: "94A3B8", font: "Calibri", allCaps: true, characterSpacing: 120 })], { alignment: AlignmentType.LEFT }));
+  titleChildren.push(para([bld(isDE ? `${productName}` : `${productName}`, { size: 52, color: "1E293B" })], { spacing: { after: 60 } }));
+  if (brand) titleChildren.push(para([txt(brand, { size: 26, color: "64748B" })], { spacing: { after: 200 } }));
+  titleChildren.push(spacer());
+  // Metadata table
+  const metaRows = [];
+  if (sku) metaRows.push(["ASIN / SKU", sku]);
+  if (marketplace) metaRows.push([isDE ? "Marktplatz" : "Marketplace", marketplace]);
+  metaRows.push([isDE ? "Erstellt" : "Created", new Date().toLocaleDateString(isDE ? "de-DE" : "en-US", { year: "numeric", month: "long", day: "numeric" })]);
+  for (const [label, value] of metaRows) {
+    titleChildren.push(para([bld(`${label}:  `, { size: 20, color: "64748B" }), txt(value, { size: 20, color: "334155" })], { spacing: { after: 60 } }));
+  }
+  titleChildren.push(divider());
+  titleChildren.push(spacer());
+  // Intro text — no direct address
+  titleChildren.push(para([txt(isDE
+    ? "Dieses Dokument beschreibt das entwickelte Konzept fuer das Amazon-Listing. Es umfasst das visuelle Konzept sowie die empfohlenen Textelemente fuer jedes Produktbild."
+    : "This document describes the developed concept for the Amazon listing. It covers the visual concept and recommended text elements for each product image.",
+    { size: 22, color: "475569" })], { spacing: { after: 200 } }));
 
   // ── PER IMAGE ──
   const visibleImages = D.images.filter(im => !imgDisabled[im.id]);
@@ -1931,63 +1988,94 @@ async function generateClientDocx(D, selections, lang) {
     const img = visibleImages[i];
     const realIdx = D.images.indexOf(img);
     const label = getImgLabelStr(D.images, realIdx);
-    const concept = isDE ? img.concept : (img.conceptEn || img.concept);
+    const concept = clean(isDE ? img.concept : (img.conceptEn || img.concept));
     const te = img.texts;
     const hls = te?.headlines || (te?.headline ? [te.headline] : []);
     const ci = hlC[img.id] ?? 0;
-    const headline = hls[ci] || hls[0] || "";
+    const headline = clean(hls[ci] || hls[0] || "");
     const subs = te ? (Array.isArray(te.subheadlines) ? te.subheadlines : (te.subheadline ? [te.subheadline] : [])) : [];
     const si = shC[img.id] ?? 0;
-    const subheadline = si !== -1 ? (subs[si] || subs[0] || "") : "";
+    const subheadline = si !== -1 ? clean(subs[si] || subs[0] || "") : "";
     const bullets = te?.bullets || [];
     const bSelArr = bulSel[img.id] || bullets.map(() => true);
     const activeBullets = bullets.filter((_, bi) => bSelArr[bi] !== false);
+    // Badge
+    const allBdg = getAllBadges(te);
+    const { badge: selBadge } = getSelectedBadge(bdgSel, img.id, allBdg);
 
-    sections.push(h2(`${label}${img.theme ? ` — ${img.theme}` : ""}`));
+    if (i > 0) titleChildren.push(new Paragraph({ children: [new PageBreak()] }));
+    const themeStr = img.theme ? ` | ${clean(img.theme)}` : "";
+    titleChildren.push(h2(`${label}${themeStr}`));
+    if (img.role) titleChildren.push(para([txt(img.role, { size: 20, color: "94A3B8", italics: true })], { spacing: { after: 100 } }));
 
     // Concept
     if (concept) {
-      sections.push(h3(isDE ? "Bildkonzept" : "Image Concept"));
-      sections.push(para([txt(concept, { size: 22 })]));
+      titleChildren.push(h3(isDE ? "Bildkonzept" : "Image Concept"));
+      titleChildren.push(para([txt(concept, { size: 21, color: "334155" })], { spacing: { after: 140 } }));
     }
-
-    // Rationale removed from designer/PDF export — irrelevant for designer
 
     // Text elements
-    if (headline || subheadline || activeBullets.length > 0) {
-      sections.push(h3(isDE ? "Empfohlene Textelemente" : "Recommended Text Elements"));
+    if (headline || subheadline || activeBullets.length > 0 || selBadge) {
+      titleChildren.push(h3(isDE ? "Textelemente" : "Text Elements"));
       if (headline) {
-        sections.push(para([bold(isDE ? "Überschrift: " : "Headline: "), txt(headline, { size: 22 })]));
+        titleChildren.push(new Paragraph({
+          children: [bld(isDE ? "Headline" : "Headline", { size: 18, color: "7C3AED" }), txt("  "), txt(headline, { size: 24, bold: true, color: "1E293B" })],
+          spacing: { after: 80 }, shading: { type: ShadingType.SOLID, color: "F8F7FF" }, indent: { left: 120, right: 120 }
+        }));
       }
       if (subheadline) {
-        sections.push(para([bold(isDE ? "Unterzeile: " : "Subheadline: "), txt(subheadline, { size: 22 })]));
+        titleChildren.push(new Paragraph({
+          children: [bld(isDE ? "Subheadline" : "Subheadline", { size: 18, color: "2563EB" }), txt("  "), txt(subheadline, { size: 22, color: "334155" })],
+          spacing: { after: 80 }, indent: { left: 120, right: 120 }
+        }));
       }
       if (activeBullets.length > 0) {
-        sections.push(para([bold(isDE ? "Weitere Textelemente:" : "Additional text elements:")]));
         for (const b of activeBullets) {
-          const bt = typeof b === "string" ? b : b.text || "";
-          const cleanBt = bt.replace(/\*\*(.+?)\*\*/g, "$1");
-          sections.push(new Paragraph({ children: [txt(`• ${cleanBt}`, { size: 22 })], spacing: { after: 80 }, indent: { left: 360 } }));
+          const bt = clean(typeof b === "string" ? b : b.text || "");
+          const bf = bFmt(b);
+          const fLabel = bf !== "bullet" ? (isDE ? formatLabels[bf] : formatLabelsEn[bf]) || bf : "";
+          // Parse bold markdown
+          const parts = bt.replace(/\*\*(.+?)\*\*/g, "%%BOLD%%$1%%/BOLD%%").split(/(%%BOLD%%.+?%%\/BOLD%%)/);
+          const runs = [];
+          if (fLabel) runs.push(txt(`[${fLabel}]  `, { size: 16, color: "64748B", italics: true }));
+          for (const part of parts) {
+            if (part.startsWith("%%BOLD%%")) { runs.push(bld(part.replace(/%%\/?BOLD%%/g, ""), { size: 21, color: "1E293B" })); }
+            else if (part) { runs.push(txt(part, { size: 21, color: "334155" })); }
+          }
+          // Context for badge-context
+          if (bf === "badge-context" && typeof b === "object" && b.context) {
+            runs.push(txt(`  (${isDE ? "Platzierung" : "Placement"}: ${clean(b.context)})`, { size: 18, color: "D97706", italics: true }));
+          }
+          titleChildren.push(new Paragraph({ children: [txt("   ", { size: 21 }), ...runs], spacing: { after: 70 }, indent: { left: 240 } }));
         }
       }
+      if (selBadge) {
+        titleChildren.push(spacer());
+        titleChildren.push(new Paragraph({
+          children: [bld(isDE ? "Badge: " : "Badge: ", { size: 18, color: "D97706" }), txt(clean(selBadge), { size: 22, bold: true, color: "D97706" })],
+          spacing: { after: 80 }, indent: { left: 120 }
+        }));
+      }
     }
-
-    if (i < visibleImages.length - 1) sections.push(divider());
   }
 
-  // ── FOOTER NOTE ──
-  sections.push(divider());
-  sections.push(para([txt(isDE
-    ? "Alle Konzepte und Texte sind urheberrechtlich geschützt und wurden exklusiv für dieses Projekt entwickelt."
+  // ── FOOTER ──
+  titleChildren.push(divider());
+  titleChildren.push(para([txt(isDE
+    ? "Alle Konzepte und Texte sind urheberrechtlich geschuetzt und wurden exklusiv fuer dieses Projekt entwickelt."
     : "All concepts and texts are protected by copyright and have been developed exclusively for this project.",
-    { size: 18, color: "94A3B8", italics: true })]));
+    { size: 18, color: "94A3B8", italics: true })], { spacing: { before: 200 } }));
 
-  const doc = new Document({ sections: [{ properties: {}, children: sections }], creator: "Briefing Studio", title: productName });
+  const doc = new Document({
+    sections: [{ properties: { page: { margin: { top: 1200, bottom: 1000, left: 1100, right: 1100 } } }, children: titleChildren }],
+    creator: "Briefing Studio",
+    title: `${isDE ? "Listing Konzept" : "Listing Concept"} - ${productName}`
+  });
   const blob = await Packer.toBlob(doc);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${(productName || "briefing").replace(/\s+/g, "_")}_concept_${lang}.docx`;
+  a.download = `Listing_Konzept_${(productName || "briefing").replace(/[^a-zA-Z0-9äöüÄÖÜß]/g, "_")}.docx`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -2128,6 +2216,9 @@ export default function App() {
   const [designerNotes, setDesignerNotes] = useState("");
   const [showLinks, setShowLinks] = useState(false);
   const [clientExportLoading, setClientExportLoading] = useState(false);
+  const [showDocxPopup, setShowDocxPopup] = useState(false);
+  const [docxLang, setDocxLang] = useState("de");
+  const [clientLogo, setClientLogo] = useState(null); // { dataUrl, name }
   const [feedback, setFeedback] = useState([]); // [{id, timestamp, text, images:[]}]
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackImages, setFeedbackImages] = useState([]);
@@ -2138,6 +2229,7 @@ export default function App() {
   // Baseline briefing snapshot — saved before first feedback is applied, restored when all feedback is deleted
   const baselineBriefing = useRef(null);
   const [feedbackProgress, setFeedbackProgress] = useState(0); // 0-100 real progress
+  const [feedbackDeleteConfirm, setFeedbackDeleteConfirm] = useState(null); // null | "all" | feedbackId
   // Track the shared briefing ID so we can update it instead of creating duplicates
   const [sharedBriefingId, setSharedBriefingId] = useState(null);
   // Eyecatcher selection per main image (keyed by image id → selected eyecatcher index, -1 = none)
@@ -2337,7 +2429,10 @@ export default function App() {
       // Step 3: Run AI analysis with all scraped + researched data
       if (refData?.images?.length) setSt("Sende Referenz-Bilder an KI (Vision-Analyse)...");
       const result = await runAnalysis(a, m, p, f, setSt, pd, txtDensity, kwResult, rvResult, refData || null, imgCount || 7, h10Keywords || null);
-      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setEcSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); setSharedBriefingId(null); undoStack.current = []; redoStack.current = []; setCanUndo(false); setCanRedo(false); saveH(result, a);
+      setData(result); setTab("b"); setSN(false); setHlC({}); setShC({}); setBulSel({}); setBdgSel({}); setEcSel({}); setCurAsin(a || ""); setPD({ ...pd, imageCount: scrapeResult.images?.length || 0 }); setSharedBriefingId(null); undoStack.current = []; redoStack.current = []; setCanUndo(false); setCanRedo(false);
+      // Reset all briefing-scoped state for fresh briefing
+      setInputUrls([""]); setOutputUrl(""); setPsdUrl(""); setDesignerNotes(""); setFeedback([]); setFeedbackChanges(null); setFeedbackText(""); setFeedbackImages([]); setFeedbackRefineError(null); baselineBriefing.current = null; setImgDisabled({}); setRefImages({});
+      saveH(result, a);
       // Auto-save to DB with retry — every briefing must get a permanent ID
       const autoSavePayload = { briefing: result, selections: { hlC: {}, shC: {}, bulSel: {}, bdgSel: {}, ecSel: {}, imgDisabled: {}, refImages: {}, links: {}, userAsin: a || "" } };
       for (let att = 0; att < 3; att++) {
@@ -2361,12 +2456,16 @@ export default function App() {
     setHlC(sel.hlC || {}); setShC(sel.shC || {}); setBulSel(sel.bulSel || {}); setBdgSel(sel.bdgSel || {}); setEcSel(sel.ecSel || {});
     setImgDisabled(sel.imgDisabled || {}); setRefImages(sel.refImages || {});
     setCurAsin(briefingData.product?.sku || "");
-    if (briefingId) setSharedBriefingId(briefingId);
-    if (sel.links?.inputUrls?.length) setInputUrls(sel.links.inputUrls); else if (sel.links?.inputUrl) setInputUrls([sel.links.inputUrl]);
-    if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
-    if (sel.links?.psdUrl) setPsdUrl(sel.links.psdUrl);
-    if (sel.designerNotes) setDesignerNotes(sel.designerNotes);
-    if (sel.feedback?.length) setFeedback(sel.feedback);
+    if (briefingId) setSharedBriefingId(briefingId); else setSharedBriefingId(null);
+    // Always reset briefing-scoped state, then restore from selections
+    setInputUrls(sel.links?.inputUrls?.length ? sel.links.inputUrls : sel.links?.inputUrl ? [sel.links.inputUrl] : [""]);
+    setOutputUrl(sel.links?.outputUrl || "");
+    setPsdUrl(sel.links?.psdUrl || "");
+    setDesignerNotes(sel.designerNotes || "");
+    setFeedback(sel.feedback?.length ? sel.feedback : []);
+    setFeedbackChanges(null); setFeedbackText(""); setFeedbackImages([]); setFeedbackRefineError(null);
+    baselineBriefing.current = null;
+    undoStack.current = []; redoStack.current = []; setCanUndo(false); setCanRedo(false);
   }} txtDensity={txtDensity} setTD={setTD} />;
   return (
     <div style={{ minHeight: "100vh", fontFamily: FN, background: BG, backgroundAttachment: "fixed" }}><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" /><Orbs /><style>{`@keyframes spin{to{transform:rotate(360deg)}} *, *::before, *::after { box-sizing: border-box; }`}</style>
@@ -2381,17 +2480,66 @@ export default function App() {
               <button onClick={doUndo} disabled={!canUndo} title="Rückgängig (Strg+Z)" style={{ ...gS, padding: "6px 8px", fontSize: 14, fontWeight: 700, color: canUndo ? V.ink : V.textDim, cursor: canUndo ? "pointer" : "default", fontFamily: FN, borderRadius: 8, opacity: canUndo ? 1 : 0.35, lineHeight: 1 }}>↩</button>
               <button onClick={doRedo} disabled={!canRedo} title="Wiederherstellen (Strg+Y)" style={{ ...gS, padding: "6px 8px", fontSize: 14, fontWeight: 700, color: canRedo ? V.ink : V.textDim, cursor: canRedo ? "pointer" : "default", fontFamily: FN, borderRadius: 8, opacity: canRedo ? 1 : 0.35, lineHeight: 1 }}>↪</button>
             </div>
-            {/* Client DOCX export — DE / EN */}
-            <div style={{ display: "flex", gap: 2 }}>
-              <button onClick={async () => { setClientExportLoading(true); try { await generateClientDocx(data, { hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }, "de"); } finally { setClientExportLoading(false); } }} disabled={clientExportLoading} style={{ ...gS, padding: "7px 10px", fontSize: 10, fontWeight: 700, color: V.orange, cursor: clientExportLoading ? "wait" : "pointer", fontFamily: FN, borderRadius: "10px 0 0 10px", border: `1.5px solid ${V.orange}30`, background: `${V.orange}08` }} title="Kunden-Export als DOCX (Deutsch)">📄 DE</button>
-              <button onClick={async () => { setClientExportLoading(true); try { await generateClientDocx(data, { hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }, "en"); } finally { setClientExportLoading(false); } }} disabled={clientExportLoading} style={{ ...gS, padding: "7px 10px", fontSize: 10, fontWeight: 700, color: V.orange, cursor: clientExportLoading ? "wait" : "pointer", fontFamily: FN, borderRadius: "0 10px 10px 0", border: `1.5px solid ${V.orange}30`, borderLeft: "none", background: `${V.orange}08` }} title="Client Export as DOCX (English)">📄 EN</button>
-            </div>
+            <button onClick={() => setShowDocxPopup(true)} style={{ ...gS, padding: "7px 14px", fontSize: 10, fontWeight: 700, color: V.orange, cursor: "pointer", fontFamily: FN, borderRadius: 10, border: `1.5px solid ${V.orange}30`, background: `${V.orange}08` }} title="Kunden-Export als DOCX">📄 Export</button>
             {sharedBriefingId && <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: `1.5px solid ${V.emerald}40`, background: `${V.emerald}10`, color: V.emerald, fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Speichern..." : "Speichern"}</button>}
             <button onClick={shareDesignerLink} disabled={shareLoading} style={{ padding: "8px 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 11, fontWeight: 800, cursor: shareLoading ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 16px ${V.violet}30`, opacity: shareLoading ? 0.7 : 1 }}>{shareLoading ? "Erstellen..." : "Designer-Link"}</button>
           </div>
         </div>
         <div style={{ display: "flex" }}>{TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 20px", border: "none", background: "transparent", borderBottom: tab === t.id ? `2.5px solid ${V.violet}` : "2.5px solid transparent", color: tab === t.id ? V.violet : V.textDim, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>{t.l}</button>)}</div>
       </div></div>
+      {/* DOCX Export Popup */}
+      {showDocxPopup && <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)" }} onClick={() => setShowDocxPopup(false)} />
+        <div style={{ position: "relative", width: 440, maxWidth: "90vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 80px rgba(0,0,0,0.2)", padding: "28px 32px", fontFamily: FN }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: V.ink }}>Listing Konzept exportieren</div>
+            <button onClick={() => setShowDocxPopup(false)} style={{ background: "none", border: "none", fontSize: 18, color: V.textDim, cursor: "pointer", fontFamily: FN }}>x</button>
+          </div>
+          {/* Language selection */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Sprache / Language</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[["de", "Deutsch"], ["en", "English"]].map(([code, label]) => <button key={code} onClick={() => setDocxLang(code)} style={{ flex: 1, padding: "10px 16px", borderRadius: 10, border: docxLang === code ? `2px solid ${V.violet}` : "2px solid rgba(0,0,0,0.08)", background: docxLang === code ? `${V.violet}08` : "transparent", color: docxLang === code ? V.violet : V.textMed, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FN, transition: "all 0.15s" }}>{label}</button>)}
+            </div>
+          </div>
+          {/* Client logo upload */}
+          <div style={{ marginBottom: 22 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: V.textDim, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Kundenlogo (optional)</div>
+            <div
+              onClick={() => { const inp = document.createElement("input"); inp.type = "file"; inp.accept = "image/png,image/jpeg,image/svg+xml"; inp.onchange = (e) => { const f = e.target.files?.[0]; if (!f) return; const reader = new FileReader(); reader.onload = (ev) => setClientLogo({ dataUrl: ev.target.result, name: f.name }); reader.readAsDataURL(f); }; inp.click(); }}
+              onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = V.violet; e.currentTarget.style.background = `${V.violet}08`; }}
+              onDragLeave={e => { e.currentTarget.style.borderColor = "rgba(0,0,0,0.15)"; e.currentTarget.style.background = "transparent"; }}
+              onDrop={e => { e.preventDefault(); e.currentTarget.style.borderColor = "rgba(0,0,0,0.15)"; e.currentTarget.style.background = "transparent"; const f = e.dataTransfer.files?.[0]; if (!f || !f.type.startsWith("image/")) return; const reader = new FileReader(); reader.onload = (ev) => setClientLogo({ dataUrl: ev.target.result, name: f.name }); reader.readAsDataURL(f); }}
+              style={{ border: "2px dashed rgba(0,0,0,0.15)", borderRadius: 12, padding: clientLogo ? "12px 16px" : "24px 16px", textAlign: "center", cursor: "pointer", transition: "all 0.15s", background: "transparent" }}
+            >
+              {clientLogo ? <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <img src={clientLogo.dataUrl} alt="" style={{ maxHeight: 40, maxWidth: 100, objectFit: "contain" }} />
+                <div style={{ flex: 1, textAlign: "left" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: V.text }}>{clientLogo.name}</div>
+                  <div style={{ fontSize: 10, color: V.textDim }}>Klick oder Drag and Drop zum Ersetzen</div>
+                </div>
+                <button onClick={e => { e.stopPropagation(); setClientLogo(null); }} style={{ background: "none", border: "none", color: V.rose, fontSize: 14, fontWeight: 800, cursor: "pointer" }}>x</button>
+              </div> : <div>
+                <div style={{ fontSize: 24, marginBottom: 4 }}>+</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: V.textMed }}>Logo hierher ziehen</div>
+                <div style={{ fontSize: 10, color: V.textDim, marginTop: 2 }}>oder klicken zum Auswaehlen (PNG, JPG)</div>
+              </div>}
+            </div>
+          </div>
+          {/* Preview info */}
+          <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(0,0,0,0.02)", marginBottom: 20, fontSize: 11, color: V.textMed, lineHeight: 1.5 }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>Listing Konzept fuer {data.product?.name}</div>
+            <div>{data.product?.brand}{curAsin ? ` | ${curAsin}` : ""}{data.product?.marketplace ? ` | ${data.product.marketplace}` : ""}</div>
+            <div>{(data.images || []).filter(im => !imgDisabled[im.id]).length} {docxLang === "de" ? "Bilder" : "images"}</div>
+          </div>
+          {/* Export button */}
+          <button
+            onClick={async () => { setClientExportLoading(true); try { await generateClientDocx(data, { hlC, shC, bulSel, bdgSel, imgDisabled, ecSel }, docxLang, clientLogo); setShowDocxPopup(false); } finally { setClientExportLoading(false); } }}
+            disabled={clientExportLoading}
+            style={{ width: "100%", padding: "12px 20px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: clientExportLoading ? "wait" : "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}30`, opacity: clientExportLoading ? 0.7 : 1 }}
+          >{clientExportLoading ? "Wird erstellt..." : `DOCX exportieren (${docxLang === "de" ? "Deutsch" : "English"})`}</button>
+        </div>
+      </div>}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 80px", position: "relative", zIndex: 1 }}>
         {showHist && <ServerHistory items={serverHist} loading={histLoading} onLoad={(briefingId) => {
           fetch("/api/briefing?id=" + briefingId).then(r => r.ok ? r.json() : null).then(d => {
@@ -2402,11 +2550,14 @@ export default function App() {
               setCurAsin(d.data.briefing.product?.sku || "");
               setSharedBriefingId(briefingId);
               setShowHist(false);
-              if (sel.links?.inputUrls?.length) setInputUrls(sel.links.inputUrls); else if (sel.links?.inputUrl) setInputUrls([sel.links.inputUrl]);
-              if (sel.links?.outputUrl) setOutputUrl(sel.links.outputUrl);
-              if (sel.links?.psdUrl) setPsdUrl(sel.links.psdUrl);
-              if (sel.designerNotes) setDesignerNotes(sel.designerNotes);
-    if (sel.feedback?.length) setFeedback(sel.feedback);
+              // Always reset briefing-scoped state, then restore from selections
+              setInputUrls(sel.links?.inputUrls?.length ? sel.links.inputUrls : sel.links?.inputUrl ? [sel.links.inputUrl] : [""]);
+              setOutputUrl(sel.links?.outputUrl || "");
+              setPsdUrl(sel.links?.psdUrl || "");
+              setDesignerNotes(sel.designerNotes || "");
+              setFeedback(sel.feedback?.length ? sel.feedback : []);
+              setFeedbackChanges(null); setFeedbackText(""); setFeedbackImages([]); setFeedbackRefineError(null);
+              baselineBriefing.current = null;
             }
           }).catch(() => {});
         }} onClose={() => setShowHist(false)} />}
@@ -2465,6 +2616,7 @@ export default function App() {
             if (type === "add_bullet") { const te = next.images[imgIdx]?.texts; if (te) { if (!te.bullets) te.bullets = []; const fmt = newVal || "bullet"; te.bullets.push(fmt === "bullet" ? "" : { text: "", format: fmt }); } return next; }
             if (type === "add_badge") { const te = next.images[imgIdx]?.texts; if (te) { if (!te.badges) te.badges = []; te.badges.push(""); } else { next.images[imgIdx].texts = { badges: [""] }; } return next; }
             if (type === "delete_bullet") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { te.bullets.splice(textIdx, 1); } return next; }
+            if (type === "bul_context") { const te = next.images[imgIdx]?.texts; if (te?.bullets?.[textIdx]) { const old = te.bullets[textIdx]; if (typeof old === "object" && old !== null) { te.bullets[textIdx] = { ...old, context: newVal }; } else { te.bullets[textIdx] = { text: old || "", format: "badge-context", context: newVal }; } } return next; }
             const te = next.images[imgIdx]?.texts;
             if (!te) return prev;
             if (type === "hl") {
@@ -2698,7 +2850,7 @@ AUSGABE-FORMAT:
           {feedback.length > 0 && !feedbackRefining && <GC>
             <div style={{ padding: "14px 22px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: V.ink }}>Gespeichertes Feedback ({feedback.length})</div>
-              <button onClick={() => { if (baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; } setFeedback([]); setFeedbackChanges(null); }} style={{ fontSize: 10, color: V.rose, background: "none", border: "none", cursor: "pointer", fontFamily: FN, fontWeight: 700 }}>Alle löschen & Briefing zurücksetzen</button>
+              <button onClick={() => setFeedbackDeleteConfirm("all")} style={{ fontSize: 10, color: V.rose, background: "none", border: "none", cursor: "pointer", fontFamily: FN, fontWeight: 700 }}>Alle löschen & Briefing zurücksetzen</button>
             </div>
             <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
               {feedback.map((fb, i) => <div key={fb.id} style={{ ...gS, padding: "12px 14px" }}>
@@ -2708,11 +2860,42 @@ AUSGABE-FORMAT:
                     {fb.text && <div style={{ fontSize: 13, color: V.text, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{fb.text}</div>}
                     {fb.images.length > 0 && <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>{fb.images.map((src, j) => <img key={j} src={src} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />)}</div>}
                   </div>
-                  <button onClick={() => { const remaining = feedback.filter(x => x.id !== fb.id); if (remaining.length === 0 && baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; setFeedbackChanges(null); } setFeedback(remaining); }} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>×</button>
+                  <button onClick={() => setFeedbackDeleteConfirm(fb.id)} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer", padding: "2px 4px", flexShrink: 0 }}>×</button>
                 </div>
               </div>)}
             </div>
           </GC>}
+          {/* Feedback delete confirmation popup */}
+          {feedbackDeleteConfirm && <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)", backdropFilter: "blur(4px)" }} onClick={() => setFeedbackDeleteConfirm(null)} />
+            <div style={{ position: "relative", width: 420, maxWidth: "90vw", background: "#fff", borderRadius: 20, boxShadow: "0 24px 80px rgba(0,0,0,0.2)", padding: "28px 32px", fontFamily: FN }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 12 }}>Feedback wirklich loeschen?</div>
+              <div style={{ fontSize: 13, color: V.text, lineHeight: 1.7, marginBottom: 8 }}>
+                {feedbackDeleteConfirm === "all"
+                  ? "Alle gespeicherten Feedback-Eintraege werden entfernt."
+                  : "Dieser Feedback-Eintrag wird entfernt."}
+              </div>
+              <div style={{ fontSize: 12, color: V.rose, lineHeight: 1.6, marginBottom: 20, padding: "10px 14px", borderRadius: 10, background: `${V.rose}06`, border: `1px solid ${V.rose}20` }}>
+                {feedbackDeleteConfirm === "all" || feedback.length <= 1
+                  ? "Das Briefing wird auf den Zustand VOR dem ersten Feedback zurueckgesetzt. Alle durch Feedback vorgenommenen Aenderungen an Texten, Konzepten und visuellen Hinweisen werden rueckgaengig gemacht."
+                  : "Bei diesem Eintrag wird nur das Feedback entfernt. Das Briefing bleibt unveraendert, da noch weitere Feedback-Eintraege vorhanden sind."}
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button onClick={() => setFeedbackDeleteConfirm(null)} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid rgba(0,0,0,0.1)", background: "transparent", color: V.textMed, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>Abbrechen</button>
+                <button onClick={() => {
+                  if (feedbackDeleteConfirm === "all") {
+                    if (baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; }
+                    setFeedback([]); setFeedbackChanges(null);
+                  } else {
+                    const remaining = feedback.filter(x => x.id !== feedbackDeleteConfirm);
+                    if (remaining.length === 0 && baselineBriefing.current && data) { pushUndo(); setData(baselineBriefing.current); baselineBriefing.current = null; setFeedbackChanges(null); }
+                    setFeedback(remaining);
+                  }
+                  setFeedbackDeleteConfirm(null);
+                }} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: V.rose, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Ja, Feedback loeschen</button>
+              </div>
+            </div>
+          </div>}
         </div>}
       </div>
       {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl?.startsWith("error") ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht in der Datenbank gespeichert werden.</p>{shareUrl.length > 6 && <p style={{ fontSize: 10, color: V.textDim, margin: "0 0 14px", wordBreak: "break-all" }}>Detail: {shareUrl.slice(6)}</p>}</> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
