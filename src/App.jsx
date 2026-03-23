@@ -1916,11 +1916,22 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
 // temoa agency logo as SVG — converted to PNG at export time via canvas
 const TEMOA_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="560" height="140" viewBox="0 0 280 70"><rect x="0" y="0" width="22" height="22" rx="3" fill="%23F59E0B"/><rect x="24" y="0" width="22" height="22" rx="3" fill="%23F59E0B"/><circle cx="35" cy="35" r="8" fill="%23EF4444"/><path d="M0 26L0 55Q0 65 11 65L22 65Q22 55 22 45L22 26Z" fill="%230F172A"/><path d="M24 45L24 58Q24 65 35 65L46 65L46 45Q35 50 24 45Z" fill="%2394A3B8" opacity="0.4"/><text x="58" y="52" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="48" fill="%230F172A" letter-spacing="-1">temoa</text></svg>`;
 function svgToPngBytes(svgStr, w, h) {
+  // Render at 4x resolution for crisp output, then encode at target size
+  const scale = 4;
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => { const c = document.createElement("canvas"); c.width = w; c.height = h; const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, w, h); c.toBlob(async (blob) => { if (blob) { resolve(new Uint8Array(await blob.arrayBuffer())); } else { resolve(null); } }, "image/png"); };
+    img.onload = () => { const c = document.createElement("canvas"); c.width = w * scale; c.height = h * scale; const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.drawImage(img, 0, 0, w * scale, h * scale); c.toBlob(async (blob) => { if (blob) { resolve(new Uint8Array(await blob.arrayBuffer())); } else { resolve(null); } }, "image/png"); };
     img.onerror = () => resolve(null);
     img.src = `data:image/svg+xml;charset=utf-8,${svgStr}`;
+  });
+}
+// Convert image dataUrl (including SVG) to PNG Uint8Array for DOCX embedding
+function imgDataUrlToPng(dataUrl, w, h) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => { const c = document.createElement("canvas"); c.width = w; c.height = h; const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.drawImage(img, 0, 0, w, h); c.toBlob(async (blob) => { if (blob) { resolve(new Uint8Array(await blob.arrayBuffer())); } else { resolve(null); } }, "image/png"); };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
   });
 }
 async function generateClientDocx(D, selections, lang, clientLogoData) {
@@ -1949,7 +1960,17 @@ async function generateClientDocx(D, selections, lang, clientLogoData) {
   // ── LOGO HEADER — client logo left, temoa logo right ──
   const temoaPng = await svgToPngBytes(TEMOA_LOGO_SVG, 560, 140);
   let clientLogoPng = null;
-  if (clientLogoData?.dataUrl) { try { clientLogoPng = dataUrlToUint8(clientLogoData.dataUrl); } catch (e) { /* skip */ } }
+  if (clientLogoData?.dataUrl) {
+    try {
+      // SVG logos must be rasterized to PNG for DOCX compatibility
+      if (clientLogoData.dataUrl.includes("image/svg")) {
+        clientLogoPng = await imgDataUrlToPng(clientLogoData.dataUrl, 520, 208);
+      } else {
+        // PNG/JPG — re-render via canvas to guarantee clean bytes and correct dimensions
+        clientLogoPng = await imgDataUrlToPng(clientLogoData.dataUrl, 520, 208);
+      }
+    } catch (e) { /* skip */ }
+  }
   const noBorder = { top: { style: BorderStyle.NONE, size: 0 }, bottom: { style: BorderStyle.NONE, size: 0 }, left: { style: BorderStyle.NONE, size: 0 }, right: { style: BorderStyle.NONE, size: 0 } };
   const leftLogoChildren = clientLogoPng ? [new Paragraph({ children: [new ImageRun({ data: clientLogoPng, transformation: { width: 130, height: 52 } })], alignment: AlignmentType.LEFT })] : [para([txt("", { size: 10 })])];
   const rightLogoChildren = temoaPng ? [new Paragraph({ children: [new ImageRun({ data: temoaPng, transformation: { width: 130, height: 32 } })], alignment: AlignmentType.RIGHT })] : [para([txt("temoa", { size: 20, bold: true, color: "0F172A" })], { alignment: AlignmentType.RIGHT })];
@@ -2012,6 +2033,13 @@ async function generateClientDocx(D, selections, lang, clientLogoData) {
     if (concept) {
       titleChildren.push(h3(isDE ? "Bildkonzept" : "Image Concept"));
       titleChildren.push(para([txt(concept, { size: 21, color: "334155" })], { spacing: { after: 140 } }));
+    }
+
+    // Rationale (strategic reasoning — client export only)
+    const rationale = clean(isDE ? img.rationale : (img.rationaleEn || img.rationale));
+    if (rationale) {
+      titleChildren.push(h3(isDE ? "Strategische Begruendung" : "Strategic Rationale"));
+      titleChildren.push(para([txt(rationale, { size: 21, color: "475569", italics: true })], { spacing: { after: 140 } }));
     }
 
     // Text elements
