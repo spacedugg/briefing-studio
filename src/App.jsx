@@ -2389,10 +2389,10 @@ export default function App() {
             </div>
           </GC>}
           {/* Changes summary — after refinement */}
-          {feedbackChanges && !feedbackRefining && <GC style={{ border: `2px solid ${V.emerald}40` }}>
-            <div style={{ padding: "16px 22px", background: `${V.emerald}06`, borderBottom: `1px solid ${V.emerald}20` }}>
+          {feedbackChanges && !feedbackRefining && <GC style={{ border: feedbackChanges.noChanges ? `2px solid ${V.blue}40` : `2px solid ${V.emerald}40` }}>
+            <div style={{ padding: "16px 22px", background: feedbackChanges.noChanges ? `${V.blue}06` : `${V.emerald}06`, borderBottom: `1px solid ${feedbackChanges.noChanges ? V.blue : V.emerald}20` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: V.emerald }}>Briefing erfolgreich aktualisiert</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: feedbackChanges.noChanges ? V.blue : V.emerald }}>{feedbackChanges.noChanges ? "Feedback analysiert — keine Änderungen nötig" : "Briefing erfolgreich aktualisiert"}</div>
                 <button onClick={() => setFeedbackChanges(null)} style={{ background: "none", border: "none", color: V.textDim, fontSize: 14, cursor: "pointer" }}>×</button>
               </div>
               {feedbackChanges.summary && <div style={{ fontSize: 12, color: V.text, lineHeight: 1.6, marginTop: 8 }}>{feedbackChanges.summary}</div>}
@@ -2447,19 +2447,35 @@ export default function App() {
                       imgContent.push({ type: "image", source: { type: "base64", media_type: mt, data: src.split(",")[1] } });
                     }
                   }
-                  const systemPrompt = `Du bist ein erfahrener Amazon-Listing-Stratege. Deine Aufgabe: Ein bestehendes Briefing anhand von Kundenfeedback überarbeiten.
+                  const systemPrompt = `Du bist ein erfahrener Amazon-Listing-Stratege. Du erhältst ein bestehendes Briefing und Kundenfeedback. Dein Vorgehen ist analytisch und strukturiert.
 
-REGELN:
-1. Gib NUR valides JSON zurück — kein Markdown, keine Erklärungen, kein Text davor oder danach
-2. Behalte die EXAKTE JSON-Struktur bei (gleiche Felder, gleiche Hierarchie)
-3. Alle Feedback-Punkte des Kunden MÜSSEN im überarbeiteten Briefing berücksichtigt sein
-4. Wenn der Kunde Schriftarten, Farben oder allgemeine Vorgaben nennt: Integriere diese in die "visual"-Felder der relevanten Bilder
-5. Wenn der Kunde allgemeines Feedback gibt (z.B. Tonalität, Zielgruppe): Passe concept, rationale UND Texte entsprechend an
-6. Aktualisiere BEIDE Sprachversionen: concept+conceptEn, rationale+rationaleEn, visual+visualEn
-7. Texte (headlines, subheadlines, bullets) nur auf Deutsch — EN-Versionen nur für concept/rationale/visual
-8. Am Ende des JSON-Objekts füge ein Feld "_feedbackChanges" hinzu mit: { "summary": "Kurze Zusammenfassung der Änderungen", "changedImages": [{"idx": 0, "changes": ["Konzept angepasst: ...", "Headline geändert: ..."]}] }`;
+SCHRITT 1 — FEEDBACK ANALYSIEREN:
+Prüfe JEDEN Feedback-Punkt: Ist dieser Aspekt im bestehenden Briefing BEREITS abgedeckt?
+- Wenn JA: Keine Änderung nötig für diesen Punkt. Kunden geben manchmal vorsichtshalber Feedback zu Dingen, die bereits im Briefing stehen.
+- Wenn NEIN: Dieser Punkt muss integriert werden → weiter zu Schritt 2.
+- Wenn das gesamte Feedback bereits abgedeckt ist: Gib das Briefing UNVERÄNDERT zurück. Ändere nichts, nur weil Feedback eingegangen ist.
+
+SCHRITT 2 — INTEGRATION PLANEN (nur für NICHT abgedeckte Punkte):
+a) ERSETZEN statt HINZUFÜGEN: Prüfe ob ein ähnliches/verwandtes Element bereits existiert und ersetze es, statt ein neues daneben zu stellen. KEINE inhaltlichen Dopplungen oder Dreifachnennungen.
+b) BILD-KAPAZITÄT: Prüfe ob ein Bild nach der Änderung zu viele Textelemente hat. Wenn ja: Entferne das schwächste bestehende Element oder verteile Inhalte auf andere Bilder um.
+c) DESIGNER-ANWEISUNGEN: Wenn sich das Konzept eines Bildes ändert, MÜSSEN die visuellen Hinweise (visual/visualEn) konsequent angepasst werden.
+d) ALLGEMEINES FEEDBACK: Schriftarten, Farben, Tonalität → In ALLE relevanten visual-Felder integrieren. Auch concept/rationale anpassen wenn die Strategie sich ändert.
+
+SCHRITT 3 — QUALITÄTSKONTROLLE:
+- Kein Punkt darf inhaltlich doppelt vorkommen (auch nicht in Paraphrase)
+- Jedes Bild: Max. sinnvolle Textmenge (typisch: 1 Headline + optional Subheadline + 2-5 Textbausteine + optional Badge)
+- Alle Textbausteine müssen den richtigen Format-Typ (format-Feld) haben
+- BEIDE Sprachversionen aktualisieren: concept+conceptEn, rationale+rationaleEn, visual+visualEn
+- Texte (headlines, subheadlines, bullets) NUR auf Deutsch
+
+AUSGABE-FORMAT:
+- NUR valides JSON — kein Markdown, keine Erklärungen, kein Text davor oder danach
+- EXAKT gleiche JSON-Struktur wie das Input-Briefing
+- Am Ende des JSON-Objekts ein Feld "_feedbackChanges" mit:
+  { "summary": "Was wurde geändert (oder: 'Alle Feedback-Punkte waren bereits im Briefing abgedeckt — keine Änderungen nötig.')", "changedImages": [{"idx": 0, "label": "Main Image", "changes": ["Konzept: Fokus auf Nachhaltigkeit ergänzt", "Bullet 3 ersetzt: 'Langlebig' → 'Nachhaltig & langlebig'"]}] }
+- Wenn KEINE Änderungen nötig: changedImages = [] und summary erklärt warum`;
                   const messages = [{ role: "user", content: [
-                    { type: "text", text: `BESTEHENDES BRIEFING:\n${briefingJson}\n\nKUNDEN-FEEDBACK:\n${feedbackSummary}\n\nBitte überarbeite das Briefing. Antworte NUR mit dem aktualisierten JSON.` },
+                    { type: "text", text: `BESTEHENDES BRIEFING:\n${briefingJson}\n\nKUNDEN-FEEDBACK:\n${feedbackSummary}\n\nAnalysiere das Feedback gegen das bestehende Briefing. Ändere NUR was wirklich nicht abgedeckt ist. Antworte mit dem (ggf. unveränderten) JSON.` },
                     ...imgContent
                   ] }];
                   setFeedbackRefineStatus("Claude analysiert das Feedback...");
@@ -2510,27 +2526,31 @@ REGELN:
                   if (!p.images || !p.product) throw new Error("Unvollständige Antwort — 'product' oder 'images' fehlt.");
                   // Extract _feedbackChanges before applying
                   const fc = p._feedbackChanges; delete p._feedbackChanges;
-                  pushUndo(); setData(p);
-                  // Build changes diff
-                  const changes = { summary: fc?.summary || "Briefing wurde aktualisiert.", changedImages: [] };
-                  const imgLabels = (imgs) => imgs.map((im, i) => { const isM = (im.id || "").toLowerCase().startsWith("main"); return isM ? "Main Image" : `PT.${String(i).padStart(2, "0")}`; });
-                  const oldLabels = imgLabels(oldData.images || []);
+                  // Build changes diff by comparing old vs new
+                  const changes = { summary: fc?.summary || "", changedImages: [], noChanges: false };
+                  const imgLabel = (imgs, i) => { const isM = (imgs[i]?.id || "").toLowerCase().startsWith("main"); const mains = imgs.filter(x => (x.id || "").toLowerCase().startsWith("main")); return isM ? (mains.length > 1 ? `Main Image ${mains.indexOf(imgs[i]) + 1}` : "Main Image") : `PT.${String(imgs.filter((x, j) => j <= i && !(x.id || "").toLowerCase().startsWith("main")).length).padStart(2, "0")}`; };
                   (p.images || []).forEach((newImg, i) => {
                     const oldImg = oldData.images?.[i];
-                    if (!oldImg) { changes.changedImages.push({ label: oldLabels[i] || `Bild ${i + 1}`, changes: ["Neues Bild hinzugefügt"] }); return; }
+                    if (!oldImg) return;
                     const diffs = [];
                     if (newImg.concept !== oldImg.concept) diffs.push("Bildkonzept angepasst");
                     if (newImg.rationale !== oldImg.rationale) diffs.push("Strategische Begründung angepasst");
                     if (newImg.visual !== oldImg.visual) diffs.push("Visuelle Hinweise angepasst");
-                    const newHls = newImg.texts?.headlines || []; const oldHls = oldImg.texts?.headlines || [];
-                    if (JSON.stringify(newHls) !== JSON.stringify(oldHls)) diffs.push("Headlines geändert");
-                    const newSubs = newImg.texts?.subheadlines || []; const oldSubs = oldImg.texts?.subheadlines || [];
-                    if (JSON.stringify(newSubs) !== JSON.stringify(oldSubs)) diffs.push("Subheadlines geändert");
-                    const newBul = newImg.texts?.bullets || []; const oldBul = oldImg.texts?.bullets || [];
-                    if (JSON.stringify(newBul) !== JSON.stringify(oldBul)) diffs.push("Textbausteine geändert");
-                    if (diffs.length > 0) changes.changedImages.push({ label: fc?.changedImages?.find(c => c.idx === i)?.label || oldLabels[i] || `Bild ${i + 1}`, changes: fc?.changedImages?.find(c => c.idx === i)?.changes || diffs });
+                    if (JSON.stringify(newImg.texts?.headlines || []) !== JSON.stringify(oldImg.texts?.headlines || [])) diffs.push("Headlines geändert");
+                    if (JSON.stringify(newImg.texts?.subheadlines || []) !== JSON.stringify(oldImg.texts?.subheadlines || [])) diffs.push("Subheadlines geändert");
+                    if (JSON.stringify(newImg.texts?.bullets || []) !== JSON.stringify(oldImg.texts?.bullets || [])) diffs.push("Textbausteine geändert");
+                    if (JSON.stringify(newImg.texts?.badges || []) !== JSON.stringify(oldImg.texts?.badges || [])) diffs.push("Badges geändert");
+                    // Use AI-generated descriptions if available, otherwise our diff
+                    if (diffs.length > 0) changes.changedImages.push({ label: fc?.changedImages?.find(c => c.idx === i)?.label || imgLabel(p.images, i), changes: fc?.changedImages?.find(c => c.idx === i)?.changes || diffs });
                   });
-                  if (changes.changedImages.length === 0) changes.changedImages.push({ label: "Alle Bilder", changes: ["Keine strukturellen Änderungen erkannt — bitte im Bild-Briefing prüfen"] });
+                  // Determine if anything actually changed
+                  const briefingChanged = changes.changedImages.length > 0;
+                  if (briefingChanged) {
+                    pushUndo(); setData(p);
+                  } else {
+                    changes.noChanges = true;
+                    if (!changes.summary) changes.summary = "Alle Feedback-Punkte waren bereits im Briefing abgedeckt — keine Änderungen vorgenommen.";
+                  }
                   setFeedbackChanges(changes);
                 } catch (err) {
                   setFeedbackRefineError(err.message || "Unbekannter Fehler.");
