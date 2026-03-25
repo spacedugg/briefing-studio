@@ -1609,6 +1609,8 @@ function FileNameCopy({ name }) {
   return <span onClick={() => { navigator.clipboard.writeText(name); set(true); setTimeout(() => set(false), 1200); }} style={{ fontSize: 12, fontWeight: 700, color: ok ? V.emerald : V.violet, padding: "4px 10px", borderRadius: 6, background: ok ? `${V.emerald}15` : `${V.violet}10`, fontFamily: "monospace", cursor: "pointer", border: ok ? `1px solid ${V.emerald}30` : "1px solid transparent", transition: "all 0.15s", userSelect: "all" }}>{ok ? "Copied!" : name}</span>;
 }
 // ═══════ DESIGNER VIEW (standalone shareable page - final decisions only) ═══════
+// Ensure URLs have a protocol so they open externally instead of as relative paths
+const ensureUrl = (u) => { if (!u) return u; const s = u.trim(); if (/^https?:\/\//i.test(s)) return s; if (/^\/\//.test(s)) return "https:" + s; return "https://" + s; };
 function DesignerView({ D: initialD, selections: initialSelections, briefingId, serverVersion, userAsin: initialUserAsin }) {
   const [liveD, setLiveD] = useState(initialD);
   const [liveSelections, setLiveSelections] = useState(initialSelections);
@@ -1784,9 +1786,9 @@ function DesignerView({ D: initialD, selections: initialSelections, briefingId, 
         </div>
         {/* Links section */}
         {(links.inputUrls?.length > 0 || links.inputUrl || links.outputUrl || links.psdUrl) && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {(links.inputUrls || (links.inputUrl ? [links.inputUrl] : [])).map((u, i) => u && <a key={i} href={u} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>{(links.inputUrls?.length || 0) > 1 ? `Assets ${i + 1}` : "Assets / Source Files"}</a>)}
-          {links.outputUrl && <a href={links.outputUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.emerald}, ${V.teal})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Upload Results</a>}
-          {links.psdUrl && <a href={links.psdUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.violet}, ${V.rose})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>PSD Files</a>}
+          {(links.inputUrls || (links.inputUrl ? [links.inputUrl] : [])).map((u, i) => u && <a key={i} href={ensureUrl(u)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.blue}, ${V.violet})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>{(links.inputUrls?.length || 0) > 1 ? `Assets ${i + 1}` : "Assets / Source Files"}</a>)}
+          {links.outputUrl && <a href={ensureUrl(links.outputUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.emerald}, ${V.teal})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>Upload Results</a>}
+          {links.psdUrl && <a href={ensureUrl(links.psdUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 10, background: `linear-gradient(135deg, ${V.violet}, ${V.rose})`, color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", fontFamily: FN }}>PSD Files</a>}
         </div>}
         {/* Designer Notes */}
         {designerNotes && <div style={{ ...glass, padding: "14px 22px", marginBottom: 18, border: `1px solid ${V.orange}20` }}>
