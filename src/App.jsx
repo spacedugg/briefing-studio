@@ -2327,6 +2327,40 @@ export default function App() {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [doUndo, doRedo]);
+  // Translate edited German text to English in background (for designer view)
+  const translateAbort = useRef({}); // key: "imgIdx-field" → AbortController
+  const translateToEn = useCallback(async (imgIdx, field, deText) => {
+    if (!deText?.trim()) return;
+    const key = `${imgIdx}-${field}`;
+    const enField = field + "En"; // concept → conceptEn, visual → visualEn, rationale → rationaleEn
+    // Abort any in-flight translation for this same field
+    if (translateAbort.current[key]) translateAbort.current[key].abort();
+    const ac = new AbortController();
+    translateAbort.current[key] = ac;
+    try {
+      const r = await fetch("/api/analyze", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        signal: ac.signal,
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514", max_tokens: 2000, stream: false,
+          system: "You are a professional translator. Translate the given German Amazon product listing text to English. Keep the same tone, style and formatting. Output ONLY the translated text, nothing else.",
+          messages: [{ role: "user", content: deText }]
+        })
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      const enText = (d?.content?.[0]?.text || d?.text || "").trim();
+      if (!enText) return;
+      setData(prev => {
+        if (!prev?.images?.[imgIdx]) return prev;
+        // Only apply if the German text hasn't changed since we started
+        if (prev.images[imgIdx][field] !== deText) return prev;
+        const next = JSON.parse(JSON.stringify(prev));
+        next.images[imgIdx][enField] = enText;
+        return next;
+      });
+    } catch (e) { if (e.name !== "AbortError") { /* translation failed silently */ } }
+  }, []);
   // Load briefing from shared URL on mount (short ID or legacy hash)
   useEffect(() => {
     const hash = window.location.hash.slice(1);
@@ -2665,9 +2699,9 @@ export default function App() {
           pushUndo();
           setData(prev => {
             const next = JSON.parse(JSON.stringify(prev));
-            if (type === "concept") { next.images[imgIdx].concept = newVal; delete next.images[imgIdx].conceptEn; return next; }
-            if (type === "visual") { next.images[imgIdx].visual = newVal; delete next.images[imgIdx].visualEn; return next; }
-            if (type === "rationale") { next.images[imgIdx].rationale = newVal; delete next.images[imgIdx].rationaleEn; return next; }
+            if (type === "concept") { next.images[imgIdx].concept = newVal; delete next.images[imgIdx].conceptEn; translateToEn(imgIdx, "concept", newVal); return next; }
+            if (type === "visual") { next.images[imgIdx].visual = newVal; delete next.images[imgIdx].visualEn; translateToEn(imgIdx, "visual", newVal); return next; }
+            if (type === "rationale") { next.images[imgIdx].rationale = newVal; delete next.images[imgIdx].rationaleEn; translateToEn(imgIdx, "rationale", newVal); return next; }
             if (type === "eyecatcher") { if (next.images[imgIdx].eyecatchers?.[textIdx]) { const ec = next.images[imgIdx].eyecatchers[textIdx]; if (ec.copyText !== undefined) { ec.copyText = newVal; } else { ec.idea = newVal; } } return next; }
             if (type === "badge") { const te = next.images[imgIdx]?.texts; if (te?.badges?.[textIdx] !== undefined) te.badges[textIdx] = newVal; else if (te?.callouts?.[textIdx - (te.badges?.length || 0)] !== undefined) te.callouts[textIdx - (te.badges?.length || 0)] = newVal; return next; }
             if (type === "reorder_bullets") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { const [from, to] = [textIdx, newVal]; const b = [...te.bullets]; const [moved] = b.splice(from, 1); b.splice(to, 0, moved); te.bullets = b; } return next; }
