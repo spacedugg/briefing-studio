@@ -333,7 +333,7 @@ REGELN:
   2. "Kundenvorteil": Der NUTZEN aus Kundensicht — was ändert sich im Alltag des Kunden? Formuliere das ERGEBNIS das der Kunde erlebt, NICHT das Feature. Beispiele: "Nie wieder Verbrennungen", "Den ganzen Tag Musik", "Schluss mit Kabelsalat". Die USP-Headline sagt WAS das Produkt hat, die Kundenvorteil-Headline sagt WAS DER KUNDE DAVON HAT.
   3. "Kreativ": Emotionale, aufmerksamkeitsstarke Variante. MUSS ein grammatisch vollständiger, natürlich klingender deutscher Ausdruck sein (z.B. "Kochen wie ein Profi", "Dein Küchen-Upgrade", "Endlich sorglos grillen"). KEINE einzelnen Adjektive oder abgehackten Wortfragmente. Jede kreative Headline MUSS im normalen Sprachgebrauch Sinn ergeben.
 - Subheadlines: 3 Varianten (kurz/erklärend/emotional). Dürfen auch leer bleiben falls nicht nötig. KEINE Gedankenstriche.
-- Bullets/Textbausteine: Jeder Textbaustein hat ein "format" Feld das seinen Typ beschreibt. So viele wie inhaltlich sinnvoll (2-6), NICHT immer gleich viele pro Bild. KEINE Bindestriche, Gedankenstriche (–), Em-Dashes (—) oder Trennstriche (-) verwenden — NIEMALS, HARTE REGEL. Empfohlene Textstruktur: Erste Zeile **fett** als Kernaussage, zweite Zeile normaler Text als Erklärung (Zeilenumbruch per \\n). Texte dürfen auch kürzer ausfallen — kompakte Texte wirken oft überzeugender. Max 1-2 Fettungen pro Eintrag. Korrekte deutsche Grammatik. Format-Mix erwünscht!
+- Bullets/Textbausteine: Jeder Textbaustein hat ein "format" Feld das seinen Typ beschreibt. So viele wie inhaltlich sinnvoll (2-6), NICHT immer gleich viele pro Bild. KEINE Bindestriche, Gedankenstriche (–), Em-Dashes (—) oder Trennstriche (-) verwenden — NIEMALS, HARTE REGEL. Textstruktur: KURZE, kompakte Bullets mit maximal ca. 35 Zeichen. KEINE zweizeilige Struktur. Stattdessen: Die wichtigsten Schlüsselwörter innerhalb des Bullets mit **fett** markieren (1-2 Wörter pro Bullet). Beispiele: "**Edelstahl** für lange Haltbarkeit", "Passt in **jede Tasche**", "**BPA-frei** und spülmaschinenfest". Korrekte deutsche Grammatik. Format-Mix erwünscht!
 - Badge: Max 1 Badge pro Bild. Nur bei wirklich herausragenden Fakten. badges ist ein Array mit 0 oder 1 Einträgen. KEINE Gedankenstriche.
 - Bildtexte DE. Concept/Rationale/Visual jeweils ZWEISPRACHIG: concept(DE) + conceptEn(EN), rationale(DE) + rationaleEn(EN), visual(DE) + visualEn(EN). Keywords integrieren.
 - Lifestyle ohne Text-Overlay: concept+visual DETAILLIERT (Szenerie, Personen, Stimmung, Kamera). "Kein Text" ist eine bewusste, valide Option — texts:null setzen.
@@ -2327,6 +2327,40 @@ export default function App() {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [doUndo, doRedo]);
+  // Translate edited German text to English in background (for designer view)
+  const translateAbort = useRef({}); // key: "imgIdx-field" → AbortController
+  const translateToEn = useCallback(async (imgIdx, field, deText) => {
+    if (!deText?.trim()) return;
+    const key = `${imgIdx}-${field}`;
+    const enField = field + "En"; // concept → conceptEn, visual → visualEn, rationale → rationaleEn
+    // Abort any in-flight translation for this same field
+    if (translateAbort.current[key]) translateAbort.current[key].abort();
+    const ac = new AbortController();
+    translateAbort.current[key] = ac;
+    try {
+      const r = await fetch("/api/analyze", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        signal: ac.signal,
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514", max_tokens: 2000, stream: false,
+          system: "You are a professional translator. Translate the given German Amazon product listing text to English. Keep the same tone, style and formatting. Output ONLY the translated text, nothing else.",
+          messages: [{ role: "user", content: deText }]
+        })
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      const enText = (d?.content?.[0]?.text || d?.text || "").trim();
+      if (!enText) return;
+      setData(prev => {
+        if (!prev?.images?.[imgIdx]) return prev;
+        // Only apply if the German text hasn't changed since we started
+        if (prev.images[imgIdx][field] !== deText) return prev;
+        const next = JSON.parse(JSON.stringify(prev));
+        next.images[imgIdx][enField] = enText;
+        return next;
+      });
+    } catch (e) { if (e.name !== "AbortError") { /* translation failed silently */ } }
+  }, []);
   // Load briefing from shared URL on mount (short ID or legacy hash)
   useEffect(() => {
     const hash = window.location.hash.slice(1);
@@ -2665,9 +2699,9 @@ export default function App() {
           pushUndo();
           setData(prev => {
             const next = JSON.parse(JSON.stringify(prev));
-            if (type === "concept") { next.images[imgIdx].concept = newVal; delete next.images[imgIdx].conceptEn; return next; }
-            if (type === "visual") { next.images[imgIdx].visual = newVal; delete next.images[imgIdx].visualEn; return next; }
-            if (type === "rationale") { next.images[imgIdx].rationale = newVal; delete next.images[imgIdx].rationaleEn; return next; }
+            if (type === "concept") { next.images[imgIdx].concept = newVal; delete next.images[imgIdx].conceptEn; translateToEn(imgIdx, "concept", newVal); return next; }
+            if (type === "visual") { next.images[imgIdx].visual = newVal; delete next.images[imgIdx].visualEn; translateToEn(imgIdx, "visual", newVal); return next; }
+            if (type === "rationale") { next.images[imgIdx].rationale = newVal; delete next.images[imgIdx].rationaleEn; translateToEn(imgIdx, "rationale", newVal); return next; }
             if (type === "eyecatcher") { if (next.images[imgIdx].eyecatchers?.[textIdx]) { const ec = next.images[imgIdx].eyecatchers[textIdx]; if (ec.copyText !== undefined) { ec.copyText = newVal; } else { ec.idea = newVal; } } return next; }
             if (type === "badge") { const te = next.images[imgIdx]?.texts; if (te?.badges?.[textIdx] !== undefined) te.badges[textIdx] = newVal; else if (te?.callouts?.[textIdx - (te.badges?.length || 0)] !== undefined) te.callouts[textIdx - (te.badges?.length || 0)] = newVal; return next; }
             if (type === "reorder_bullets") { const te = next.images[imgIdx]?.texts; if (te?.bullets) { const [from, to] = [textIdx, newVal]; const b = [...te.bullets]; const [moved] = b.splice(from, 1); b.splice(to, 0, moved); te.bullets = b; } return next; }
@@ -2805,7 +2839,7 @@ SCHRITT 3 — QUALITÄTSKONTROLLE:
 - Alle Textbausteine müssen den richtigen Format-Typ (format-Feld) haben
 - BEIDE Sprachversionen aktualisieren: concept+conceptEn, rationale+rationaleEn, visual+visualEn
 - Texte (headlines, subheadlines, bullets) NUR auf Deutsch
-- HARTE REGEL: KEINE Bindestriche (-), Gedankenstriche (–) oder Em-Dashes (—) in Textelementen. Empfohlene Textstruktur für Bullets: Erste Zeile **fett** als Kernaussage, zweite Zeile normaler Text (Zeilenumbruch per \\n). Kompakte Texte bevorzugt.
+- HARTE REGEL: KEINE Bindestriche (-), Gedankenstriche (–) oder Em-Dashes (—) in Textelementen. Textstruktur für Bullets: KURZE Bullets (max ~35 Zeichen). KEINE zweizeilige Struktur. Stattdessen die wichtigsten 1-2 Schlüsselwörter im Bullet mit **fett** hervorheben.
 
 AUSGABE-FORMAT:
 - NUR valides JSON — kein Markdown, keine Erklärungen, kein Text davor oder danach
