@@ -631,9 +631,65 @@ const RelBar = ({ pct, maxPct, color }) => { const w = maxPct > 0 ? (pct / maxPc
 const GC = ({ children, style: s = {}, onClick: oc }) => <div style={{ ...glass, ...s }} onClick={oc}>{children}</div>;
 const Lbl = ({ children, c = V.violet }) => <div style={{ fontSize: 10, fontWeight: 800, color: c, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 10 }}>{children}</div>;
 const Check = ({ on }) => <span style={{ color: on ? V.emerald : V.textDim, fontSize: 11, fontWeight: 800 }}>{on ? "✓" : "○"}</span>;
-const Err = ({ msg, onX }) => msg ? <div style={{ ...gS, padding: "12px 18px", background: `${V.rose}10`, border: `1px solid ${V.rose}25`, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><span style={{ fontSize: 12, color: V.rose, fontWeight: 600, lineHeight: 1.5 }}>{msg}</span>{onX && <button onClick={onX} style={{ background: "none", border: "none", color: V.rose, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 16 }}>×</button>}</div> : null;
+// ═══════ USER-FRIENDLY ERROR HANDLING ═══════
+// Map raw error messages to user-friendly German messages with actionable hints
+const ERROR_PATTERNS = [
+  { match: /overload/i, title: "Service überlastet", msg: "Der KI-Service ist gerade stark ausgelastet.", hint: "Bitte 1–2 Minuten warten und erneut versuchen.", icon: "⏳", color: "amber" },
+  { match: /529/, title: "Service überlastet", msg: "Der KI-Service ist gerade stark ausgelastet.", hint: "Bitte 1–2 Minuten warten und erneut versuchen.", icon: "⏳", color: "amber" },
+  { match: /rate.limit|429|too many/i, title: "Zu viele Anfragen", msg: "Du hast zu viele Anfragen in kurzer Zeit gesendet.", hint: "Bitte 30 Sekunden warten und erneut versuchen.", icon: "⏳", color: "amber" },
+  { match: /timeout|zeitüberschreitung|504|abgeschnitten/i, title: "Zeitüberschreitung", msg: "Die Analyse hat zu lange gedauert.", hint: "Versuch es erneut — evtl. weniger Referenzbilder nutzen.", icon: "⏱", color: "orange" },
+  { match: /network|fetch|ERR_NETWORK|failed to fetch|net::/i, title: "Verbindungsproblem", msg: "Keine Verbindung zum Server möglich.", hint: "Bitte Internetverbindung prüfen und erneut versuchen.", icon: "📡", color: "orange" },
+  { match: /401|api.key.*invalid|not configured/i, title: "Konfigurationsfehler", msg: "Der API-Schlüssel ist nicht korrekt konfiguriert.", hint: "Bitte den Administrator kontaktieren.", icon: "🔑", color: "rose" },
+  { match: /403|zugriff.*verweigert/i, title: "Zugriff verweigert", msg: "Keine Berechtigung für diese Aktion.", hint: "Bitte den Administrator kontaktieren.", icon: "🚫", color: "rose" },
+  { match: /413|zu groß|too large/i, title: "Anfrage zu groß", msg: "Zu viele Daten in einer Anfrage.", hint: "Weniger Referenzbilder verwenden oder Text kürzen.", icon: "📦", color: "orange" },
+  { match: /500|internal.*server/i, title: "Serverfehler", msg: "Ein interner Fehler ist aufgetreten.", hint: "Bitte erneut versuchen. Wenn das Problem bestehen bleibt, den Administrator kontaktieren.", icon: "⚙️", color: "rose" },
+  { match: /503|unavailable|nicht verfügbar/i, title: "Service nicht verfügbar", msg: "Der KI-Service ist vorübergehend nicht erreichbar.", hint: "Bitte 1–2 Minuten warten und erneut versuchen.", icon: "🔧", color: "amber" },
+  { match: /JSON.*pars|nicht geparst/i, title: "Verarbeitungsfehler", msg: "Die KI-Antwort konnte nicht verarbeitet werden.", hint: "Bitte erneut versuchen.", icon: "📄", color: "orange" },
+  { match: /product.*fehlt|images.*fehlt|Unvollständig/i, title: "Unvollständige Antwort", msg: "Die KI hat keine vollständige Antwort generiert.", hint: "Bitte erneut versuchen.", icon: "📋", color: "orange" },
+  { match: /nicht gefunden|not found|404/i, title: "Nicht gefunden", msg: "Die angeforderte Ressource wurde nicht gefunden.", hint: "Bitte den Link oder die ASIN überprüfen.", icon: "🔍", color: "orange" },
+  { match: /SCRAPE_ERROR/i, title: "Scraping fehlgeschlagen", msg: "Produktdaten konnten nicht von Amazon abgerufen werden.", hint: "ASIN und Marketplace prüfen, dann erneut versuchen.", icon: "🛒", color: "orange" },
+];
+function friendlyError(raw) {
+  if (!raw) return null;
+  const s = String(raw);
+  for (const p of ERROR_PATTERNS) {
+    if (p.match.test(s)) return { ...p, raw: s };
+  }
+  return { title: "Fehler aufgetreten", msg: "Ein unerwarteter Fehler ist aufgetreten.", hint: "Bitte erneut versuchen. Wenn das Problem bestehen bleibt, den Administrator kontaktieren.", icon: "⚠️", color: "rose", raw: s };
+}
+// Send alert to admin when critical errors occur (non-blocking, fire-and-forget)
+function alertAdmin(errorMsg, context = {}) {
+  try {
+    const payload = {
+      text: `🚨 *Briefing Studio Error*\n*Error:* ${String(errorMsg).slice(0, 500)}\n*Context:* ${JSON.stringify(context).slice(0, 300)}\n*Time:* ${new Date().toISOString()}\n*URL:* ${window.location.href}`,
+    };
+    // POST to /api/alert — if endpoint exists, admin gets notified; if not, silently ignored
+    fetch("/api/alert", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => {});
+  } catch (e) { /* never break the app for alerting */ }
+}
+const Err = ({ msg, onX, onRetry }) => {
+  if (!msg) return null;
+  const e = friendlyError(msg);
+  const c = V[e.color] || V.rose;
+  return <div style={{ ...gS, padding: "16px 20px", background: `${c}08`, border: `1.5px solid ${c}25`, marginBottom: 14, borderRadius: 14 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flex: 1 }}>
+        <span style={{ fontSize: 22, flexShrink: 0, lineHeight: 1 }}>{e.icon}</span>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: c, marginBottom: 4 }}>{e.title}</div>
+          <div style={{ fontSize: 12.5, color: V.text, lineHeight: 1.6, marginBottom: 4 }}>{e.msg}</div>
+          <div style={{ fontSize: 11.5, color: V.textMed, lineHeight: 1.5 }}>{e.hint}</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        {onRetry && <button onClick={onRetry} style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${c}30`, background: `${c}10`, color: c, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FN }}>Erneut versuchen</button>}
+        {onX && <button onClick={onX} style={{ background: "none", border: "none", color: c, fontWeight: 800, cursor: "pointer", fontFamily: FN, fontSize: 18, padding: "2px 4px", lineHeight: 1 }}>×</button>}
+      </div>
+    </div>
+  </div>;
+};
 const AsinNotFoundErr = ({ onReset }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }}><div style={{ ...glass, maxWidth: 440, width: "100%", padding: "36px 32px", background: "rgba(255,255,255,0.92)", textAlign: "center" }}><div style={{ width: 56, height: 56, borderRadius: 99, background: `${V.rose}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><span style={{ fontSize: 28, color: V.rose }}>!</span></div><div style={{ fontSize: 20, fontWeight: 800, color: V.rose, marginBottom: 8 }}>ASIN nicht gefunden</div><p style={{ fontSize: 14, color: V.text, lineHeight: 1.7, margin: "0 0 24px" }}>Bright Data hat keine Produktdaten für diese ASIN zurückgegeben. Bitte überprüfe die ASIN und den Marketplace.</p><button onClick={onReset} style={{ padding: "12px 28px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}35` }}>Neues Briefing starten</button></div></div>;
-const ScrapeErr = ({ error, onReset }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }}><div style={{ ...glass, maxWidth: 480, width: "100%", padding: "36px 32px", background: "rgba(255,255,255,0.92)", textAlign: "center" }}><div style={{ width: 56, height: 56, borderRadius: 99, background: `${V.orange}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><span style={{ fontSize: 28, color: V.orange }}>⚠</span></div><div style={{ fontSize: 20, fontWeight: 800, color: V.orange, marginBottom: 8 }}>Scraping fehlgeschlagen</div><p style={{ fontSize: 14, color: V.text, lineHeight: 1.7, margin: "0 0 12px" }}>Die Produktdaten konnten nicht von Amazon abgerufen werden. Das kann an der Bright Data API liegen.</p><div style={{ ...gS, padding: "10px 14px", fontSize: 12, color: V.rose, fontFamily: "monospace", textAlign: "left", wordBreak: "break-all", marginBottom: 20 }}>{error}</div><button onClick={onReset} style={{ padding: "12px 28px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}35` }}>Erneut versuchen</button></div></div>;
+const ScrapeErr = ({ error, onReset }) => <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", backdropFilter: "blur(8px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }}><div style={{ ...glass, maxWidth: 480, width: "100%", padding: "36px 32px", background: "rgba(255,255,255,0.92)", textAlign: "center" }}><div style={{ width: 56, height: 56, borderRadius: 99, background: `${V.orange}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}><span style={{ fontSize: 28 }}>🛒</span></div><div style={{ fontSize: 20, fontWeight: 800, color: V.orange, marginBottom: 8 }}>Scraping fehlgeschlagen</div><p style={{ fontSize: 14, color: V.text, lineHeight: 1.7, margin: "0 0 12px" }}>Die Produktdaten konnten nicht von Amazon abgerufen werden. Das kann an der Bright Data API oder an einer ungültigen ASIN liegen.</p><p style={{ fontSize: 12.5, color: V.textMed, lineHeight: 1.6, margin: "0 0 20px" }}>Bitte ASIN und Marketplace überprüfen und erneut versuchen.</p><button onClick={onReset} style={{ padding: "12px 28px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: FN, boxShadow: `0 4px 20px ${V.violet}35` }}>Erneut versuchen</button></div></div>;
 
 // ═══════ TIME TRACKER (persistent per ASIN, restores on reload, time only increases) ═══════
 function TimeTracker({ productName, brand, asin, marketplace, briefingUrl, outputUrl, projectId }) {
@@ -2396,7 +2452,7 @@ export default function App() {
           const detail = !d ? "Keine Antwort" : !d.data ? "Keine Daten" : !d.data.briefing ? "Kein Briefing in Daten" : "Kein Produkt in Briefing";
           setE(`Briefing nicht gefunden (${detail}). Der Link ist möglicherweise ungültig oder abgelaufen.`);
         }
-      }).catch(e => { console.error("[load-briefing]", e); setE("Briefing konnte nicht geladen werden: " + e.message); }).finally(() => setDesignerLoading(false));
+      }).catch(e => { console.error("[load-briefing]", e); setE("Briefing konnte nicht geladen werden: " + e.message); alertAdmin(e.message, { phase: "load-briefing" }); }).finally(() => setDesignerLoading(false));
     }
   }, []);
   // Fetch server-side history when panel opens
@@ -2425,7 +2481,8 @@ export default function App() {
           console.log("[share] Verify response:", verifyRes.status, verifyData ? "has data" : "no data", verifyData?.data?.briefing?.product ? "valid" : "INVALID");
           if (!verifyRes.ok || !verifyData?.data?.briefing?.product) {
             console.error("[share] Verification failed! Save returned ID but GET cannot find it.", { status: verifyRes.status, hasData: !!verifyData?.data, hasBriefing: !!verifyData?.data?.briefing });
-            setShareUrl("error:Briefing wurde gespeichert (ID: " + id + ") aber kann nicht geladen werden. Mögliches Datenbank-Problem. Prüfe TURSO_DATABASE_URL und TURSO_AUTH_TOKEN in Vercel.");
+            setShareUrl("error:db-verify-failed");
+            alertAdmin("Briefing saved (ID: " + id + ") but verification GET failed", { phase: "share-verify", id });
             setShareLoading(false);
             return;
           }
@@ -2439,7 +2496,8 @@ export default function App() {
       } else {
         const errText = await res.text().catch(() => "");
         console.error("[share] DB save failed:", res.status, errText);
-        setShareUrl("error:" + (errText || res.status));
+        setShareUrl("error:" + res.status);
+        alertAdmin("DB save failed: " + res.status + " " + errText, { phase: "share-save" });
       }
     } catch (err) {
       console.error("[share] Network error:", err);
@@ -2535,7 +2593,7 @@ export default function App() {
         } catch (e) { console.error("[auto-save] Attempt", att + 1, "error:", e.message); }
         if (att < 2) await new Promise(ok => setTimeout(ok, 2000 * (att + 1)));
       }
-    } catch (e) { setE(e.message); }
+    } catch (e) { setE(e.message); alertAdmin(e.message, { phase: "briefing-generation", asin: curAsin }); }
     setL(false); setSt("");
   }, [txtDensity]);
   const goNew = useCallback((a, m, p, f, ref, ic, h10, bs) => { data ? setP({ a, m, p, f, ref, ic, h10, bs }) : go(a, m, p, f, ref, ic, h10, bs); }, [data, go]);
@@ -2798,7 +2856,7 @@ export default function App() {
                   <label style={{ width: 64, height: 64, borderRadius: 8, border: `2px dashed ${V.blue}30`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: V.blue, fontSize: 22 }}>+<input type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => { Array.from(e.target.files || []).forEach(f => { const r = new FileReader(); r.onload = ev => setFeedbackImages(p => [...p, ev.target.result]); r.readAsDataURL(f); }); e.target.value = ""; }} /></label>
                 </div>
               </div>
-              {feedbackRefineError && <div style={{ padding: "10px 14px", borderRadius: 10, background: `${V.rose}10`, border: `1px solid ${V.rose}30`, fontSize: 12, color: V.rose, lineHeight: 1.5 }}>{feedbackRefineError}</div>}
+              {feedbackRefineError && <Err msg={feedbackRefineError} onX={() => setFeedbackRefineError(null)} />}
               <button disabled={(!feedbackText.trim() && !feedbackImages.length)} onClick={async () => {
                 if (!feedbackText.trim() && !feedbackImages.length) return;
                 const item = { id: Date.now().toString(36), timestamp: new Date().toISOString(), text: feedbackText.trim(), images: [...feedbackImages] };
@@ -2931,7 +2989,7 @@ AUSGABE-FORMAT:
                   }
                   setFeedbackChanges(changes);
                 } catch (err) {
-                  setFeedbackRefineError(err.message || "Unbekannter Fehler.");
+                  setFeedbackRefineError(err.message || "Unbekannter Fehler."); alertAdmin(err.message, { phase: "feedback-refine" });
                 } finally {
                   setFeedbackRefining(false); setFeedbackRefineStatus("");
                 }
@@ -2990,7 +3048,7 @@ AUSGABE-FORMAT:
           </div>}
         </div>}
       </div>
-      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl?.startsWith("error") ? <><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Das Briefing konnte nicht in der Datenbank gespeichert werden.</p>{shareUrl.length > 6 && <p style={{ fontSize: 10, color: V.textDim, margin: "0 0 14px", wordBreak: "break-all" }}>Detail: {shareUrl.slice(6)}</p>}</> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
+      {shareUrl && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", backdropFilter: "blur(6px)", zIndex: 300, display: "flex", justifyContent: "center", alignItems: "center", padding: 24 }} onClick={() => setShareUrl(null)}><GC style={{ maxWidth: 520, width: "100%", padding: 28, background: "rgba(255,255,255,0.92)", textAlign: "center" }} onClick={e => e.stopPropagation()}>{shareUrl?.startsWith("error") ? <><div style={{ width: 48, height: 48, borderRadius: 99, background: `${V.rose}12`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}><span style={{ fontSize: 24 }}>⚙️</span></div><div style={{ fontSize: 18, fontWeight: 800, color: V.rose, marginBottom: 8 }}>Speichern fehlgeschlagen</div><p style={{ fontSize: 13, color: V.text, margin: "0 0 6px", lineHeight: 1.6 }}>Das Briefing konnte nicht in der Datenbank gespeichert werden.</p><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Bitte erneut versuchen. Wenn das Problem bestehen bleibt, den Administrator kontaktieren.</p></> : <><div style={{ fontSize: 18, fontWeight: 800, color: V.ink, marginBottom: 8 }}>Briefing-Link</div><p style={{ fontSize: 12, color: V.textMed, margin: "0 0 14px" }}>Link wurde in die Zwischenablage kopiert.</p><input value={shareUrl} readOnly onClick={e => e.target.select()} style={{ ...inpS, fontSize: 11, textAlign: "center" }} /></>}<button onClick={() => setShareUrl(null)} style={{ marginTop: 14, padding: "10px 24px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${V.violet}, ${V.blue})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FN }}>Schließen</button></GC></div>}
       {pending && <OverwriteWarn name={data.product?.name || "Produkt"} onOk={() => { const p = pending; setP(null); setData(null); setSN(false); go(p.a, p.m, p.p, p.f, p.ref, p.ic, p.h10, p.bs); }} onNo={() => setP(null)} />}
     </div>
   );
